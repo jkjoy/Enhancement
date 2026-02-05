@@ -5,7 +5,7 @@
  * 具体功能包含:友情链接,瞬间,网站地图,编辑器增强等
  * @package Enhancement
  * @author jkjoy
- * @version 1.0.1
+ * @version 1.0.2
  * @link HTTPS://IMSUN.ORG
  * @dependence 14.10.10-*
  */
@@ -308,6 +308,24 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             _t('评论通过/回复时发送邮件提醒')
         );
         $form->addInput($enableCommentNotifier);
+
+        $enableAvatarMirror = new Typecho_Widget_Helper_Form_Element_Radio(
+            'enable_avatar_mirror',
+            array('1' => _t('启用'), '0' => _t('禁用')),
+            '1',
+            _t('<h3 class="enhancement-title">头像设置</h3>头像镜像加速'),
+            _t('启用后使用镜像地址加载邮箱头像，改善国内访问速度')
+        );
+        $form->addInput($enableAvatarMirror);
+
+        $avatarMirrorUrl = new Typecho_Widget_Helper_Form_Element_Text(
+            'avatar_mirror_url',
+            null,
+            'https://cn.cravatar.com/avatar/',
+            _t('镜像地址'),
+            _t('示例：https://cn.cravatar.com/avatar/（需以 /avatar/ 结尾；禁用时将使用 Gravatar 官方地址）')
+        );
+        $form->addInput($avatarMirrorUrl->addRule('maxLength', _t('地址最多200个字符'), 200));
 
         $defaultQqApi = defined('__TYPECHO_COMMENT_BY_QQ_API_URL__')
             ? __TYPECHO_COMMENT_BY_QQ_API_URL__
@@ -1236,6 +1254,10 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             }
         }
 
+        $commentMail = isset($comment->mail) ? $comment->mail : '';
+        $avatarUrl = self::buildAvatarUrl($commentMail, 40, 'monsterid');
+        $PavatarUrl = self::buildAvatarUrl($Pmail, 40, 'monsterid');
+
         $postAuthor = '';
         try {
             $post = Helper::widgetById('Contents', $comment->cid);
@@ -1272,6 +1294,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             '{author}',
             '{mail}',
             '{md5}',
+            '{avatar}',
             '{ip}',
             '{permalink}',
             '{siteUrl}',
@@ -1280,6 +1303,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             '{Ptext}',
             '{Pmail}',
             '{Pmd5}',
+            '{Pavatar}',
             '{url}',
             '{manageurl}',
             '{status}',
@@ -1292,6 +1316,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             $comment->author,
             $comment->mail,
             md5($comment->mail),
+            $avatarUrl,
             $comment->ip,
             $comment->permalink,
             $options->siteUrl,
@@ -1300,6 +1325,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             $Ptext,
             $Pmail,
             $Pmd5,
+            $PavatarUrl,
             $options->pluginUrl . '/Enhancement/CommentNotifier/template/' . $template . '/',
             $options->adminUrl . '/manage-comments.php',
             isset($status[$comment->status]) ? $status[$comment->status] : $comment->status
@@ -1329,6 +1355,69 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         } else {
             return call_user_func($method, $value) ? $default : $value;
         }
+    }
+
+    public static function avatarMirrorEnabled(): bool
+    {
+        $settings = Typecho_Widget::widget('Widget_Options')->plugin('Enhancement');
+        if (!isset($settings->enable_avatar_mirror)) {
+            return true;
+        }
+        return $settings->enable_avatar_mirror == '1';
+    }
+
+    public static function avatarBaseUrl(): string
+    {
+        $settings = Typecho_Widget::widget('Widget_Options')->plugin('Enhancement');
+        $defaultMirror = 'https://cn.cravatar.com/avatar/';
+        $defaultGravatar = 'https://secure.gravatar.com/avatar/';
+        $enabled = !isset($settings->enable_avatar_mirror) || $settings->enable_avatar_mirror == '1';
+
+        if ($enabled) {
+            $base = !empty($settings->avatar_mirror_url) ? $settings->avatar_mirror_url : $defaultMirror;
+        } else {
+            $base = $defaultGravatar;
+        }
+
+        $base = trim((string)$base);
+        if ($base === '') {
+            $base = $enabled ? $defaultMirror : $defaultGravatar;
+        }
+
+        return self::normalizeAvatarBase($base);
+    }
+
+    public static function buildAvatarUrl($email, $size = null, $default = null, array $extra = array()): string
+    {
+        $hash = md5(strtolower(trim((string)$email)));
+        $params = array();
+        if ($size !== null) {
+            $params['s'] = intval($size);
+        }
+        if ($default !== null && $default !== '') {
+            $params['d'] = $default;
+        }
+        if (!empty($extra)) {
+            foreach ($extra as $key => $value) {
+                if ($value !== null && $value !== '') {
+                    $params[$key] = $value;
+                }
+            }
+        }
+        $query = http_build_query($params);
+        return self::avatarBaseUrl() . $hash . ($query ? '?' . $query : '');
+    }
+
+    private static function normalizeAvatarBase(string $base): string
+    {
+        $base = trim($base);
+        if ($base === '') {
+            return 'https://cn.cravatar.com/avatar/';
+        }
+        if (substr($base, -1) !== '/') {
+            $base .= '/';
+        }
+        return $base;
     }
 
     public static function writePostBottom()
@@ -1411,7 +1500,7 @@ while ($tags->next()) {
             if ($item['image'] == null) {
                 $item['image'] = $nopic_url;
                 if ($item['email'] != null) {
-                    $item['image'] = 'https://cn.cravatar.com/avatar/' . md5($item['email']) . '?s=' . $size . '&d=mm';
+                    $item['image'] = self::buildAvatarUrl($item['email'], $size, 'mm');
                 }
             }
             if ($item['state'] == 1) {

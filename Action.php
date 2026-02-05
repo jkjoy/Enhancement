@@ -218,7 +218,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
                     $g = 'https://q.qlogo.cn/g?b=qq&nk=' . $f . '&s=100';
                 }
             } else {
-                $g = 'https://cn.cravatar.com/avatar/' . md5($email) . '?s=100';
+                $g = Enhancement_Plugin::buildAvatarUrl($email, 100, null);
             }
             $r = array('url' => $g);
             if ($type == 'txt') {
