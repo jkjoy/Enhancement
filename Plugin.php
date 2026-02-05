@@ -5,7 +5,7 @@
  * 具体功能包含:友情链接,瞬间,网站地图,编辑器增强等
  * @package Enhancement
  * @author jkjoy
- * @version 1.0.3
+ * @version 1.0.4
  * @link HTTPS://IMSUN.ORG
  * @dependence 14.10.10-*
  */

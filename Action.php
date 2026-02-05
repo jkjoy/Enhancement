@@ -190,7 +190,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
     {
         /* 邮箱头像解API接口 by 懵仙兔兔 */
         $type = $this->request->type;
-        $email = $this->request->email;
+        $email = trim((string)$this->request->email);
 
         if ($email == null || $email == '') {
             $this->response->throwJson('请提交邮箱链接 [email=abc@abc.com]');
@@ -199,9 +199,15 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             $this->response->throwJson('请提交type类型 [type=txt, type=json]');
             exit;
         } else {
-            $f = str_replace('@qq.com', '', $email);
-            $email = $f . '@qq.com';
-            if (is_numeric($f) && strlen($f) < 11 && strlen($f) > 4) {
+            $lower = strtolower($email);
+            $qqNumber = null;
+            if (is_numeric($email)) {
+                $qqNumber = $email;
+            } elseif (substr($lower, -7) === '@qq.com') {
+                $qqNumber = substr($lower, 0, -7);
+            }
+
+            if ($qqNumber !== null && is_numeric($qqNumber) && strlen($qqNumber) < 11 && strlen($qqNumber) > 4) {
                 stream_context_set_default([
                     'ssl' => [
                         'verify_host' => false,
@@ -209,13 +215,13 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
                         'verify_peer_name' => false,
                     ],
                 ]);
-                $geturl = 'https://s.p.qq.com/pub/get_face?img_type=3&uin=' . $f;
+                $geturl = 'https://s.p.qq.com/pub/get_face?img_type=3&uin=' . $qqNumber;
                 $headers = get_headers($geturl, TRUE);
                 if ($headers) {
                     $g = $headers['Location'];
                     $g = str_replace("http:", "https:", $g);
                 } else {
-                    $g = 'https://q.qlogo.cn/g?b=qq&nk=' . $f . '&s=100';
+                    $g = 'https://q.qlogo.cn/g?b=qq&nk=' . $qqNumber . '&s=100';
                 }
             } else {
                 $g = Enhancement_Plugin::buildAvatarUrl($email, 100, null);
