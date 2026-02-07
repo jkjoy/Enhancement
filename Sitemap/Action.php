@@ -6,7 +6,11 @@ class Enhancement_Sitemap_Action extends Typecho_Widget implements Widget_Interf
     public function action()
     {
         $options = Typecho_Widget::widget('Widget_Options');
-        $settings = $options->plugin('Enhancement');
+        try {
+            $settings = $options->plugin('Enhancement');
+        } catch (Exception $e) {
+            $settings = (object) array();
+        }
         if (isset($settings->enable_sitemap) && $settings->enable_sitemap != '1') {
             header("HTTP/1.1 404 Not Found");
             echo 'Not Found';

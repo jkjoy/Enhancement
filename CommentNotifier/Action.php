@@ -17,7 +17,12 @@ class Enhancement_CommentNotifier_Action extends Typecho_Widget implements Widge
     public function action($data = "")
     {
         $options = Options::alloc();
-        $plugin = $options->plugin('Enhancement');
+        try {
+            $plugin = $options->plugin('Enhancement');
+        } catch (Exception $e) {
+            echo '插件配置缺失';
+            return;
+        }
 
         if (!isset($_REQUEST['auth']) || $_REQUEST['auth'] != $plugin->auth) {
             echo '密钥不正确';

@@ -5,7 +5,7 @@
  * 具体功能包含:友情链接,瞬间,网站地图,编辑器增强,常见视频链接 音乐链接 解析等
  * @package Enhancement
  * @author jkjoy
- * @version 1.0.6
+ * @version 1.0.7
  * @link HTTPS://IMSUN.ORG
  * @dependence 14.10.10-*
  */
@@ -13,6 +13,25 @@
 class Enhancement_Plugin implements Typecho_Plugin_Interface
 {
     public static $commentNotifierPanel = 'Enhancement/CommentNotifier/console.php';
+
+    private static function pluginSettings($options = null)
+    {
+        if ($options === null) {
+            $options = Typecho_Widget::widget('Widget_Options');
+        }
+
+        try {
+            $settings = $options->plugin('Enhancement');
+            if (is_object($settings)) {
+                return $settings;
+            }
+        } catch (Exception $e) {
+            // 配置缺失时返回空配置，避免前台致命错误
+        }
+
+        return (object) array();
+    }
+
     /**
      * 激活插件方法,如果激活失败,直接抛出异常
      * 
@@ -29,6 +48,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         Helper::addRoute('sitemap', '/sitemap.xml', 'Enhancement_Sitemap_Action', 'action');
         Helper::addRoute('memos_api', '/api/v1/memos', 'Enhancement_Memos_Action', 'action');
         Helper::addRoute('zemail', '/zemail', 'Enhancement_CommentNotifier_Action', 'action');
+        Helper::addRoute('go', '/go/[target]', 'Enhancement_Action', 'goRedirect');
         Helper::addAction('enhancement-edit', 'Enhancement_Action');
         Helper::addAction('enhancement-submit', 'Enhancement_Action');
         Helper::addAction('enhancement-moments-edit', 'Enhancement_Action');
@@ -57,7 +77,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
     public static function deactivate()
     {
         $options = Typecho_Widget::widget('Widget_Options');
-        $settings = $options->plugin('Enhancement');
+        $settings = self::pluginSettings($options);
         $legacyDeleteTables = isset($settings->delete_tables_on_deactivate) && $settings->delete_tables_on_deactivate == '1';
         $deleteLinksTable = isset($settings->delete_links_table_on_deactivate) && $settings->delete_links_table_on_deactivate == '1';
         $deleteMomentsTable = isset($settings->delete_moments_table_on_deactivate) && $settings->delete_moments_table_on_deactivate == '1';
@@ -74,6 +94,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         Helper::removeRoute('sitemap');
         Helper::removeRoute('memos_api');
         Helper::removeRoute('zemail');
+        Helper::removeRoute('go');
         Helper::removeAction('enhancement-edit');
         Helper::removeAction('enhancement-submit');
         Helper::removeAction('enhancement-moments-edit');
@@ -329,6 +350,24 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         );
         $form->addInput($enableBlankTarget);
 
+        $enableGoRedirect = new Typecho_Widget_Helper_Form_Element_Radio(
+            'enable_go_redirect',
+            array('1' => _t('启用'), '0' => _t('禁用')),
+            '1',
+            _t('外链 go 跳转'),
+            _t('启用后文章、评论与评论者网站外链统一使用 /go/xxx 跳转页')
+        );
+        $form->addInput($enableGoRedirect);
+
+        $goRedirectWhitelist = new Typecho_Widget_Helper_Form_Element_Textarea(
+            'go_redirect_whitelist',
+            null,
+            '',
+            _t('外链跳转白名单'),
+            _t('白名单域名不使用 go 跳转；支持一行一个或逗号分隔，如 example.com, github.com')
+        );
+        $form->addInput($goRedirectWhitelist->addRule('maxLength', _t('白名单最多2000个字符'), 2000));
+
         $enableCommentByQQ = new Typecho_Widget_Helper_Form_Element_Radio(
             'enable_comment_by_qq',
             array('1' => _t('启用'), '0' => _t('禁用')),
@@ -500,7 +539,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         $form->addInput($biaoqing);
 
         $options = Typecho_Widget::widget('Widget_Options');
-        $settings = $options->plugin('Enhancement');
+        $settings = self::pluginSettings($options);
         $legacyDeleteTables = isset($settings->delete_tables_on_deactivate) && $settings->delete_tables_on_deactivate == '1';
         $deleteLinksDefault = $legacyDeleteTables ? '1' : '0';
         $deleteMomentsDefault = $legacyDeleteTables ? '1' : '0';
@@ -936,7 +975,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             $cleanedContent = trim($cleanedContent);
             if ($cleanedContent === '' && !empty($media)) {
                 $options = Typecho_Widget::widget('Widget_Options');
-                $settings = $options->plugin('Enhancement');
+                $settings = self::pluginSettings($options);
                 $fallback = isset($settings->moments_image_text) ? trim((string)$settings->moments_image_text) : '';
                 if ($fallback === '') {
                     $fallback = '图片';
@@ -978,23 +1017,36 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
     public static function finishComment($comment)
     {
         $options = Typecho_Widget::widget('Widget_Options');
-        $settings = $options->plugin('Enhancement');
+        $settings = self::pluginSettings($options);
+        $user = Typecho_Widget::widget('Widget_User');
+        $commentUrl = isset($comment->url) ? trim((string)$comment->url) : '';
+        $commentUrl = self::convertExternalUrlToGo($commentUrl);
+        if ($commentUrl !== '') {
+            $comment->url = $commentUrl;
+        }
+
         if (!isset($settings->enable_comment_sync) || $settings->enable_comment_sync == '1') {
-            $user = Typecho_Widget::widget('Widget_User');
             $db = Typecho_Db::get();
 
             if (!$user->hasLogin()) {
-                if (!empty($comment->url)) {
+                if (!empty($commentUrl)) {
                     $update = $db->update('table.comments')
-                        ->rows(array('url' => $comment->url))
+                        ->rows(array('url' => $commentUrl))
                         ->where('ip =? and mail =? and authorId =?', $comment->ip, $comment->mail, '0');
                     $db->query($update);
                 }
             } else {
+                $userUrl = isset($user->url) ? trim((string)$user->url) : '';
+                $userUrl = self::convertExternalUrlToGo($userUrl);
                 $update = $db->update('table.comments')
-                    ->rows(array('url' => $user->url, 'mail' => $user->mail, 'author' => $user->screenName))
+                    ->rows(array('url' => $userUrl, 'mail' => $user->mail, 'author' => $user->screenName))
                     ->where('authorId =?', $user->uid);
                 $db->query($update);
+            }
+        } else {
+            $coid = isset($comment->coid) ? intval($comment->coid) : 0;
+            if ($coid > 0 && $commentUrl !== '') {
+                self::upgradeCommentUrlByCoid($coid, $commentUrl);
             }
         }
 
@@ -1012,7 +1064,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
     public static function commentByQQ($comment)
     {
         $options = Typecho_Widget::widget('Widget_Options');
-        $settings = $options->plugin('Enhancement');
+        $settings = self::pluginSettings($options);
 
         if ($comment->status != 'approved') {
             return;
@@ -1105,7 +1157,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
     public static function commentNotifierGetAuthor($comment): array
     {
         $options = Typecho_Widget::widget('Widget_Options');
-        $plugin = $options->plugin('Enhancement');
+        $plugin = self::pluginSettings($options);
         $db = Typecho_Db::get();
         $ae = $db->fetchRow($db->select()->from('table.users')->where('table.users.uid=?', $comment->ownerId));
         $mail = isset($ae['mail']) ? $ae['mail'] : '';
@@ -1121,7 +1173,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
     public static function commentNotifierMark($comment, $edit, $status)
     {
         $options = Typecho_Widget::widget('Widget_Options');
-        $plugin = $options->plugin('Enhancement');
+        $plugin = self::pluginSettings($options);
         if (isset($plugin->enable_comment_notifier) && $plugin->enable_comment_notifier != '1') {
             return;
         }
@@ -1155,7 +1207,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
     public static function commentNotifierRefinishComment($comment)
     {
         $options = Typecho_Widget::widget('Widget_Options');
-        $plugin = $options->plugin('Enhancement');
+        $plugin = self::pluginSettings($options);
         if (isset($plugin->enable_comment_notifier) && $plugin->enable_comment_notifier != '1') {
             return;
         }
@@ -1193,7 +1245,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             return;
         }
         $options = Typecho_Widget::widget('Widget_Options');
-        $plugin = $options->plugin('Enhancement');
+        $plugin = self::pluginSettings($options);
         if (isset($plugin->enable_comment_notifier) && $plugin->enable_comment_notifier != '1') {
             return;
         }
@@ -1223,7 +1275,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
     public static function commentNotifierResendMail($param)
     {
         $options = Typecho_Widget::widget('Widget_Options');
-        $plugin = $options->plugin('Enhancement');
+        $plugin = self::pluginSettings($options);
         if (isset($plugin->enable_comment_notifier) && $plugin->enable_comment_notifier != '1') {
             return;
         }
@@ -1242,7 +1294,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
     public static function commentNotifierSend($param)
     {
         $options = Typecho_Widget::widget('Widget_Options');
-        $plugin = $options->plugin('Enhancement');
+        $plugin = self::pluginSettings($options);
         if (isset($plugin->enable_comment_notifier) && $plugin->enable_comment_notifier != '1') {
             return;
         }
@@ -1252,7 +1304,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
     public static function commentNotifierZemail($param)
     {
         $options = Typecho_Widget::widget('Widget_Options');
-        $plugin = $options->plugin('Enhancement');
+        $plugin = self::pluginSettings($options);
 
         $flag = true;
         try {
@@ -1316,7 +1368,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
 
     private static function commentNotifierMailBody($comment, $options, $type): string
     {
-        $plugin = $options->plugin('Enhancement');
+        $plugin = self::pluginSettings($options);
         $commentAt = new Typecho_Date($comment->created);
         $commentAt = $commentAt->format('Y-m-d H:i:s');
         $commentText = isset($comment->content) ? $comment->content : (isset($comment->text) ? $comment->text : '');
@@ -1437,7 +1489,8 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
 
     public static function commentNotifierConfigStr(string $key, $default = '', string $method = 'empty'): string
     {
-        $value = Typecho_Widget::widget('Widget_Options')->plugin('Enhancement')->$key ?? null;
+        $settings = self::pluginSettings(Typecho_Widget::widget('Widget_Options'));
+        $value = isset($settings->$key) ? $settings->$key : null;
         if ($method === 'empty') {
             return empty($value) ? $default : $value;
         } else {
@@ -1447,7 +1500,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
 
     public static function avatarMirrorEnabled(): bool
     {
-        $settings = Typecho_Widget::widget('Widget_Options')->plugin('Enhancement');
+        $settings = self::pluginSettings(Typecho_Widget::widget('Widget_Options'));
         if (!isset($settings->enable_avatar_mirror)) {
             return true;
         }
@@ -1456,7 +1509,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
 
     public static function avatarBaseUrl(): string
     {
-        $settings = Typecho_Widget::widget('Widget_Options')->plugin('Enhancement');
+        $settings = self::pluginSettings(Typecho_Widget::widget('Widget_Options'));
         $defaultMirror = 'https://cn.cravatar.com/avatar/';
         $defaultGravatar = 'https://secure.gravatar.com/avatar/';
         $enabled = !isset($settings->enable_avatar_mirror) || $settings->enable_avatar_mirror == '1';
@@ -1477,6 +1530,8 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
 
     public static function applyAvatarPrefix($archive = null, $select = null)
     {
+        self::upgradeLegacyCommentUrls();
+
         if (!self::avatarMirrorEnabled()) {
             return;
         }
@@ -1532,7 +1587,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
     public static function tagsList()
     {
         $options = Typecho_Widget::widget('Widget_Options');
-        $settings = $options->plugin('Enhancement');
+        $settings = self::pluginSettings($options);
         if (isset($settings->enable_tags_helper) && $settings->enable_tags_helper != '1') {
             return;
         }
@@ -1563,7 +1618,7 @@ while ($tags->next()) {
     public static function output_str($widget, array $params)
     {
         $options = Typecho_Widget::widget('Widget_Options');
-        $settings = $options->plugin('Enhancement');
+        $settings = self::pluginSettings($options);
         if (!isset($options->plugins['activated']['Enhancement'])) {
             return _t('Enhancement 插件未激活');
         }
@@ -1643,7 +1698,7 @@ while ($tags->next()) {
 
     public static function videoParserEnabled(): bool
     {
-        $settings = Typecho_Widget::widget('Widget_Options')->plugin('Enhancement');
+        $settings = self::pluginSettings(Typecho_Widget::widget('Widget_Options'));
         if (!isset($settings->enable_video_parser)) {
             return false;
         }
@@ -1652,11 +1707,527 @@ while ($tags->next()) {
 
     public static function blankTargetEnabled(): bool
     {
-        $settings = Typecho_Widget::widget('Widget_Options')->plugin('Enhancement');
+        $settings = self::pluginSettings(Typecho_Widget::widget('Widget_Options'));
         if (!isset($settings->enable_blank_target)) {
             return false;
         }
         return $settings->enable_blank_target == '1';
+    }
+
+    public static function goRedirectEnabled(): bool
+    {
+        $settings = self::pluginSettings(Typecho_Widget::widget('Widget_Options'));
+        if (!isset($settings->enable_go_redirect)) {
+            return true;
+        }
+        return $settings->enable_go_redirect == '1';
+    }
+
+    private static function parseGoRedirectWhitelist(): array
+    {
+        $settings = self::pluginSettings(Typecho_Widget::widget('Widget_Options'));
+        $raw = isset($settings->go_redirect_whitelist) ? (string)$settings->go_redirect_whitelist : '';
+        if ($raw === '') {
+            return array();
+        }
+
+        $parts = preg_split('/[\r\n,，;；\s]+/u', $raw, -1, PREG_SPLIT_NO_EMPTY);
+        if (!is_array($parts) || empty($parts)) {
+            return array();
+        }
+
+        $domains = array();
+        foreach ($parts as $part) {
+            $domain = strtolower(trim((string)$part));
+            if ($domain === '') {
+                continue;
+            }
+
+            if (strpos($domain, '://') !== false) {
+                $parsedHost = parse_url($domain, PHP_URL_HOST);
+                if (is_string($parsedHost) && $parsedHost !== '') {
+                    $domain = strtolower(trim($parsedHost));
+                }
+            }
+
+            if (strpos($domain, 'www.') === 0) {
+                $domain = substr($domain, 4);
+            }
+            $domain = trim($domain, '.');
+            if ($domain === '') {
+                continue;
+            }
+
+            $domains[$domain] = true;
+        }
+
+        return array_keys($domains);
+    }
+
+    private static function isWhitelistedHost($host): bool
+    {
+        $host = self::normalizeHost($host);
+        if ($host === '') {
+            return false;
+        }
+
+        $whitelist = self::parseGoRedirectWhitelist();
+        if (empty($whitelist)) {
+            return false;
+        }
+
+        foreach ($whitelist as $domain) {
+            $domain = self::normalizeHost($domain);
+            if ($domain === '') {
+                continue;
+            }
+
+            if ($host === $domain) {
+                return true;
+            }
+
+            if (strlen($host) > strlen($domain) && substr($host, -strlen('.' . $domain)) === '.' . $domain) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static function normalizeHost($host)
+    {
+        $host = strtolower(trim((string)$host));
+        if ($host === '') {
+            return '';
+        }
+        if (substr($host, 0, 4) === 'www.') {
+            $host = substr($host, 4);
+        }
+        return $host;
+    }
+
+    private static function normalizeExternalUrl($url)
+    {
+        $url = trim(html_entity_decode((string)$url, ENT_QUOTES, 'UTF-8'));
+        if ($url === '') {
+            return '';
+        }
+
+        if (strpos($url, '//') === 0) {
+            $options = Typecho_Widget::widget('Widget_Options');
+            $siteUrl = isset($options->siteUrl) ? (string)$options->siteUrl : '';
+            $siteScheme = (string)parse_url($siteUrl, PHP_URL_SCHEME);
+            if ($siteScheme === '') {
+                $siteScheme = 'https';
+            }
+            $url = $siteScheme . ':' . $url;
+        } elseif (!preg_match('/^[a-z][a-z0-9+\-.]*:\/\//i', $url)) {
+            $lower = strtolower($url);
+            if (
+                strpos($lower, 'mailto:') !== 0 &&
+                strpos($lower, 'tel:') !== 0 &&
+                strpos($lower, 'javascript:') !== 0 &&
+                strpos($lower, 'data:') !== 0 &&
+                strpos($url, '#') !== 0 &&
+                strpos($url, '/') !== 0 &&
+                strpos($url, '?') !== 0 &&
+                preg_match('/^[^\s\/\?#]+\.[^\s\/\?#]+(?:[\/\?#].*)?$/', $url)
+            ) {
+                $url = 'http://' . $url;
+            }
+        }
+
+        return $url;
+    }
+
+    private static function shouldUseGoRedirect($url)
+    {
+        if (!self::goRedirectEnabled()) {
+            return false;
+        }
+
+        $decoded = self::normalizeExternalUrl($url);
+        if ($decoded === '') {
+            return false;
+        }
+
+        $lower = strtolower($decoded);
+        if (strpos($lower, '#') === 0 || strpos($lower, '/') === 0 || strpos($lower, '?') === 0) {
+            return false;
+        }
+        if (
+            strpos($lower, 'mailto:') === 0 ||
+            strpos($lower, 'tel:') === 0 ||
+            strpos($lower, 'javascript:') === 0 ||
+            strpos($lower, 'data:') === 0
+        ) {
+            return false;
+        }
+
+        $options = Typecho_Widget::widget('Widget_Options');
+        $siteUrl = isset($options->siteUrl) ? (string)$options->siteUrl : '';
+
+        $goPrefix = Typecho_Common::url('go/', $options->index);
+        if (strpos($decoded, $goPrefix) === 0) {
+            return false;
+        }
+
+        $parsed = @parse_url($decoded);
+        if (!is_array($parsed)) {
+            return false;
+        }
+
+        $scheme = isset($parsed['scheme']) ? strtolower((string)$parsed['scheme']) : '';
+        $host = isset($parsed['host']) ? self::normalizeHost($parsed['host']) : '';
+        if (!in_array($scheme, array('http', 'https'), true) || $host === '') {
+            return false;
+        }
+
+        if (self::isWhitelistedHost($host)) {
+            return false;
+        }
+
+        $siteHost = self::normalizeHost(parse_url($siteUrl, PHP_URL_HOST));
+        if ($siteHost !== '' && $host === $siteHost) {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static function isGoRedirectHref($href): bool
+    {
+        return self::decodeGoRedirectUrl($href) !== '';
+    }
+
+    private static function decodeGoRedirectUrl($href): string
+    {
+        $href = trim(html_entity_decode((string)$href, ENT_QUOTES, 'UTF-8'));
+        if ($href === '') {
+            return '';
+        }
+
+        $options = Typecho_Widget::widget('Widget_Options');
+        $goBase = Typecho_Common::url('go/', $options->index);
+        $token = '';
+
+        if (strpos($href, $goBase) === 0) {
+            $token = (string)substr($href, strlen($goBase));
+        } else {
+            $goPath = (string)parse_url($goBase, PHP_URL_PATH);
+            $hrefPath = parse_url($href, PHP_URL_PATH);
+            if (!is_string($hrefPath) || $hrefPath === '') {
+                return '';
+            }
+
+            $normalizedGoPath = '/' . ltrim($goPath, '/');
+            $normalizedHrefPath = '/' . ltrim($hrefPath, '/');
+            if ($normalizedGoPath === '/' || $normalizedGoPath === '') {
+                return '';
+            }
+            if (strpos($normalizedHrefPath, $normalizedGoPath) !== 0) {
+                return '';
+            }
+
+            $token = (string)substr($normalizedHrefPath, strlen($normalizedGoPath));
+        }
+
+        $token = ltrim($token, '/');
+        if ($token === '') {
+            return '';
+        }
+
+        $token = preg_replace('/[#\?].*$/', '', $token);
+        if (!is_string($token) || $token === '') {
+            return '';
+        }
+
+        $decoded = self::decodeGoTarget($token);
+        if ($decoded !== '') {
+            return $decoded;
+        }
+
+        if (preg_match('/^(.*?)(?:-?target=_blank.*)$/i', $token, $matches) && isset($matches[1])) {
+            $fallbackToken = rtrim((string)$matches[1], '-_');
+            if ($fallbackToken !== '') {
+                return self::decodeGoTarget($fallbackToken);
+            }
+        }
+
+        return '';
+    }
+
+    private static function normalizeAnchorTagSpacing($tag)
+    {
+        if (!is_string($tag) || $tag === '') {
+            return $tag;
+        }
+
+        $tag = preg_replace('/"(?=[A-Za-z_:][A-Za-z0-9:_.-]*\s*=)/', '" ', $tag);
+        $tag = preg_replace('/\'(?=[A-Za-z_:][A-Za-z0-9:_.-]*\s*=)/', '\' ', $tag);
+
+        return is_string($tag) ? $tag : '';
+    }
+
+    private static function convertExternalUrlToGo($url)
+    {
+        $url = trim((string)$url);
+        if ($url === '') {
+            return $url;
+        }
+
+        $decodedGoUrl = self::decodeGoRedirectUrl($url);
+
+        if (!self::goRedirectEnabled()) {
+            return $decodedGoUrl !== '' ? $decodedGoUrl : $url;
+        }
+
+        if ($decodedGoUrl !== '') {
+            if (!self::shouldUseGoRedirect($decodedGoUrl)) {
+                return $decodedGoUrl;
+            }
+
+            $rebuildGoUrl = self::buildGoRedirectUrl($decodedGoUrl);
+            return $rebuildGoUrl !== '' ? $rebuildGoUrl : $url;
+        }
+
+        if (!self::shouldUseGoRedirect($url)) {
+            return $url;
+        }
+
+        $goUrl = self::buildGoRedirectUrl($url);
+        return $goUrl !== '' ? $goUrl : $url;
+    }
+
+    private static function upgradeCommentUrlByCoid($coid, $url)
+    {
+        $coid = intval($coid);
+        $url = trim((string)$url);
+        if ($coid <= 0 || $url === '') {
+            return;
+        }
+
+        try {
+            $db = Typecho_Db::get();
+            $db->query(
+                $db->update('table.comments')
+                    ->rows(array('url' => $url))
+                    ->where('coid = ?', $coid)
+            );
+        } catch (Exception $e) {
+            // ignore url upgrade errors
+        }
+    }
+
+    private static function upgradeCommentWidgetUrl($widget)
+    {
+        if (!($widget instanceof Widget_Abstract_Comments)) {
+            return;
+        }
+
+        $currentUrl = isset($widget->url) ? trim((string)$widget->url) : '';
+        if ($currentUrl === '') {
+            return;
+        }
+
+        $goUrl = self::convertExternalUrlToGo($currentUrl);
+        if ($goUrl === $currentUrl) {
+            return;
+        }
+
+        $coid = isset($widget->coid) ? intval($widget->coid) : 0;
+        if ($coid > 0) {
+            self::upgradeCommentUrlByCoid($coid, $goUrl);
+        }
+
+        try {
+            $widget->url = $goUrl;
+        } catch (Exception $e) {
+            // ignore runtime property assignment errors
+        }
+    }
+
+    private static function upgradeLegacyCommentUrls($limit = 120)
+    {
+        static $executed = false;
+        if ($executed) {
+            return;
+        }
+        $executed = true;
+
+        $limit = intval($limit);
+        if ($limit <= 0) {
+            $limit = 120;
+        }
+        if ($limit > 500) {
+            $limit = 500;
+        }
+
+        try {
+            $db = Typecho_Db::get();
+            $rows = $db->fetchAll(
+                $db->select('coid', 'url')
+                    ->from('table.comments')
+                    ->where('url IS NOT NULL')
+                    ->where('url <> ?', '')
+                    ->order('coid', Typecho_Db::SORT_DESC)
+                    ->limit($limit)
+            );
+
+            if (!is_array($rows) || empty($rows)) {
+                return;
+            }
+
+            foreach ($rows as $row) {
+                $currentUrl = isset($row['url']) ? trim((string)$row['url']) : '';
+                if ($currentUrl === '') {
+                    continue;
+                }
+
+                $goUrl = self::convertExternalUrlToGo($currentUrl);
+                if ($goUrl === '' || $goUrl === $currentUrl) {
+                    continue;
+                }
+
+                $coid = isset($row['coid']) ? intval($row['coid']) : 0;
+                if ($coid <= 0) {
+                    continue;
+                }
+
+                $db->query(
+                    $db->update('table.comments')
+                        ->rows(array('url' => $goUrl))
+                        ->where('coid = ?', $coid)
+                );
+            }
+        } catch (Exception $e) {
+            // ignore batch upgrade errors
+        }
+    }
+
+    public static function encodeGoTarget($url)
+    {
+        $encoded = base64_encode((string)$url);
+        return rtrim(strtr($encoded, '+/', '-_'), '=');
+    }
+
+    public static function decodeGoTarget($token)
+    {
+        $token = trim((string)$token);
+        if ($token === '') {
+            return '';
+        }
+
+        $token = rawurldecode($token);
+        $normalized = strtr($token, '-_', '+/');
+        $padding = strlen($normalized) % 4;
+        if ($padding > 0) {
+            $normalized .= str_repeat('=', 4 - $padding);
+        }
+
+        $decoded = base64_decode($normalized, true);
+        if ($decoded === false) {
+            return '';
+        }
+
+        $decoded = trim((string)$decoded);
+        if (!self::validateHttpUrl($decoded)) {
+            return '';
+        }
+
+        return $decoded;
+    }
+
+    public static function buildGoRedirectUrl($url)
+    {
+        $normalized = self::normalizeExternalUrl($url);
+        if (!self::validateHttpUrl($normalized)) {
+            return '';
+        }
+
+        $options = Typecho_Widget::widget('Widget_Options');
+        return Typecho_Common::url('go/' . self::encodeGoTarget($normalized), $options->index);
+    }
+
+    private static function rewriteExternalLinksByRegex($content)
+    {
+        if (!is_string($content) || $content === '') {
+            return $content;
+        }
+
+        return preg_replace_callback(
+            '/<a\s+[^>]*>/i',
+            function ($matches) {
+                $tag = self::normalizeAnchorTagSpacing($matches[0]);
+                if (!preg_match('/\bhref\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s>"\']+))/i', $tag, $hrefMatch)) {
+                    return $tag;
+                }
+
+                $href = '';
+                for ($index = 1; $index <= 3; $index++) {
+                    if (isset($hrefMatch[$index]) && $hrefMatch[$index] !== '') {
+                        $href = $hrefMatch[$index];
+                        break;
+                    }
+                }
+
+                $targetUrl = self::convertExternalUrlToGo($href);
+                if ($targetUrl === '' || $targetUrl === $href) {
+                    return $tag;
+                }
+
+                $target = htmlspecialchars($targetUrl, ENT_QUOTES, 'UTF-8');
+                $tag = preg_replace('/\bhref\s*=\s*(?:"[^"]*"|\'[^\']*\'|[^\s>"\']+)/i', 'href="' . $target . '"', $tag, 1);
+                return self::normalizeAnchorTagSpacing($tag);
+            },
+            $content
+        );
+    }
+
+    private static function rewriteExternalLinks($content)
+    {
+        if (!is_string($content) || $content === '' || stripos($content, '<a') === false) {
+            return $content;
+        }
+
+        if (!class_exists('DOMDocument')) {
+            return self::rewriteExternalLinksByRegex($content);
+        }
+
+        $libxmlState = libxml_use_internal_errors(true);
+        $dom = new DOMDocument();
+        $loadFlags = 0;
+        if (defined('LIBXML_HTML_NOIMPLIED')) {
+            $loadFlags |= LIBXML_HTML_NOIMPLIED;
+        }
+        if (defined('LIBXML_HTML_NODEFDTD')) {
+            $loadFlags |= LIBXML_HTML_NODEFDTD;
+        }
+
+        $loaded = $dom->loadHTML('<?xml encoding="UTF-8">' . $content, $loadFlags);
+        libxml_clear_errors();
+        libxml_use_internal_errors($libxmlState);
+
+        if (!$loaded) {
+            return self::rewriteExternalLinksByRegex($content);
+        }
+
+        $links = $dom->getElementsByTagName('a');
+        foreach ($links as $link) {
+            $href = trim((string)$link->getAttribute('href'));
+            $targetUrl = self::convertExternalUrlToGo($href);
+            if ($targetUrl === '' || $targetUrl === $href) {
+                continue;
+            }
+            $link->setAttribute('href', $targetUrl);
+        }
+
+        $result = $dom->saveHTML();
+        if ($result === false) {
+            return self::rewriteExternalLinksByRegex($content);
+        }
+
+        return str_replace('<?xml encoding="UTF-8">', '', $result);
     }
 
     private static function appendBlankTargetByRegex($content)
@@ -1664,7 +2235,21 @@ while ($tags->next()) {
         return preg_replace_callback(
             '/<a\s+[^>]*>/i',
             function ($matches) {
-                $tag = $matches[0];
+                $tag = self::normalizeAnchorTagSpacing($matches[0]);
+                $href = '';
+                if (preg_match('/\bhref\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s>"\']+))/i', $tag, $hrefMatch)) {
+                    for ($index = 1; $index <= 3; $index++) {
+                        if (isset($hrefMatch[$index]) && $hrefMatch[$index] !== '') {
+                            $href = $hrefMatch[$index];
+                            break;
+                        }
+                    }
+                }
+
+                if (self::isGoRedirectHref($href)) {
+                    return self::normalizeAnchorTagSpacing($tag);
+                }
+
                 if (preg_match('/\btarget\s*=\s*["\"][^"\"]*["\"]/i', $tag)) {
                     $tag = preg_replace('/\btarget\s*=\s*["\"][^"\"]*["\"]/i', 'target="_blank"', $tag, 1);
                 } elseif (preg_match('/\btarget\s*=\s*\'[^\']*\'/i', $tag)) {
@@ -1692,7 +2277,7 @@ while ($tags->next()) {
                     $tag = preg_replace('/>$/', ' rel="noopener noreferrer">', $tag, 1);
                 }
 
-                return $tag;
+                return self::normalizeAnchorTagSpacing($tag);
             },
             $content
         );
@@ -1700,7 +2285,11 @@ while ($tags->next()) {
 
     private static function addBlankTarget($content)
     {
-        if (empty($content)) {
+        if (!is_string($content) || $content === '') {
+            return $content;
+        }
+
+        if (stripos($content, '<a') === false) {
             return $content;
         }
 
@@ -1728,6 +2317,12 @@ while ($tags->next()) {
 
         $links = $dom->getElementsByTagName('a');
         foreach ($links as $link) {
+            $href = trim((string)$link->getAttribute('href'));
+            if (self::isGoRedirectHref($href)) {
+                $link->removeAttribute('target');
+                continue;
+            }
+
             $link->setAttribute('target', '_blank');
             $existingRel = trim((string)$link->getAttribute('rel'));
             $rels = preg_split('/\s+/', strtolower($existingRel), -1, PREG_SPLIT_NO_EMPTY);
@@ -1874,12 +2469,23 @@ while ($tags->next()) {
     public static function parse($text, $widget, $lastResult)
     {
         $text = empty($lastResult) ? $text : $lastResult;
-        $isArchiveWidget = $widget instanceof Widget_Archive;
+        if (!is_string($text)) {
+            return $text;
+        }
 
-        if ($isArchiveWidget || $widget instanceof Widget_Abstract_Comments) {
+        $isContentWidget = $widget instanceof Widget_Abstract_Contents;
+        $isCommentWidget = $widget instanceof Widget_Abstract_Comments;
+
+        if ($isContentWidget || $isCommentWidget) {
+            if ($isCommentWidget) {
+                self::upgradeCommentWidgetUrl($widget);
+            }
+
             $text = preg_replace_callback("/<(?:links|enhancement)\\s*(\\d*)\\s*(\\w*)\\s*(\\d*)>\\s*(.*?)\\s*<\\/(?:links|enhancement)>/is", array('Enhancement_Plugin', 'parseCallback'), $text ? $text : '');
 
-            if ($isArchiveWidget) {
+            $text = self::rewriteExternalLinks($text);
+
+            if ($isContentWidget) {
                 if (self::blankTargetEnabled()) {
                     $text = self::addBlankTarget($text);
                 }

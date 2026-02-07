@@ -14,7 +14,11 @@ $request = $options->request;
 $response = $options->response;
 $current = $request->get('act', 'index');
 $theme = $request->get('file', 'owner.html');
-$plugin = Options::alloc()->plugin('Enhancement');
+try {
+    $plugin = Options::alloc()->plugin('Enhancement');
+} catch (Exception $e) {
+    $plugin = (object) array();
+}
 
 $name = '当前';
 $othertheme = Enhancement_Plugin::commentNotifierConfigStr('template', 'default');//编辑其他模板

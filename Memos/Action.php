@@ -122,7 +122,11 @@ class Enhancement_Memos_Action extends Typecho_Widget implements Widget_Interfac
 
     private function createMoment()
     {
-        $settings = $this->options->plugin('Enhancement');
+        try {
+            $settings = $this->options->plugin('Enhancement');
+        } catch (Exception $e) {
+            $settings = (object) array();
+        }
         $token = isset($settings->moments_token) ? trim((string)$settings->moments_token) : '';
 
         if ($token === '') {

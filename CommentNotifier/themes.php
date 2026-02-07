@@ -18,7 +18,12 @@
         use Widget\Plugins\Edit;
         use Widget\{Options, Notice};
 
-        $template = Options::alloc()->plugin('Enhancement')->template;
+        try {
+            $plugin = Options::alloc()->plugin('Enhancement');
+        } catch (Exception $e) {
+            $plugin = (object) array();
+        }
+        $template = isset($plugin->template) ? $plugin->template : 'default';
         /* @var $request */
         /* @var $response */
         /* @var $options */
