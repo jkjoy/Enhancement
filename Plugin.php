@@ -2,10 +2,10 @@
 
 /**
  * Enhancement 插件
- * 具体功能包含:友情链接,瞬间,网站地图,编辑器增强等
+ * 具体功能包含:友情链接,瞬间,网站地图,编辑器增强,常见视频链接 音乐链接 解析等
  * @package Enhancement
  * @author jkjoy
- * @version 1.0.5
+ * @version 1.0.6
  * @link HTTPS://IMSUN.ORG
  * @dependence 14.10.10-*
  */
@@ -310,6 +310,24 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             _t('访问 /sitemap.xml')
         );
         $form->addInput($enableSitemap);
+
+        $enableVideoParser = new Typecho_Widget_Helper_Form_Element_Radio(
+            'enable_video_parser',
+            array('1' => _t('启用'), '0' => _t('禁用')),
+            '0',
+            _t('视频链接解析'),
+            _t('将 YouTube、Bilibili、优酷链接自动替换为播放器')
+        );
+        $form->addInput($enableVideoParser);
+
+        $enableBlankTarget = new Typecho_Widget_Helper_Form_Element_Radio(
+            'enable_blank_target',
+            array('1' => _t('启用'), '0' => _t('禁用')),
+            '0',
+            _t('外链新窗口打开'),
+            _t('给文章内容中的 a 标签添加 target="_blank" 与 rel="noopener noreferrer"')
+        );
+        $form->addInput($enableBlankTarget);
 
         $enableCommentByQQ = new Typecho_Widget_Helper_Form_Element_Radio(
             'enable_comment_by_qq',
@@ -666,8 +684,10 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             $name->addRule('required', _t('必须填写友链名称'));
             $url->addRule('required', _t('必须填写友链地址'));
             $url->addRule('url', _t('不是一个合法的链接地址'));
+            $url->addRule(array('Enhancement_Plugin', 'validateHttpUrl'), _t('友链地址仅支持 http:// 或 https://'));
             $email->addRule('email', _t('不是一个合法的邮箱地址'));
             $image->addRule('url', _t('不是一个合法的图片地址'));
+            $image->addRule(array('Enhancement_Plugin', 'validateOptionalHttpUrl'), _t('友链图片仅支持 http:// 或 https://'));
             $name->addRule('maxLength', _t('友链名称最多包含50个字符'), 50);
             $url->addRule('maxLength', _t('友链地址最多包含200个字符'), 200);
             $sort->addRule('maxLength', _t('友链分类最多包含50个字符'), 50);
@@ -711,6 +731,13 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         $user = new Typecho_Widget_Helper_Form_Element_Text('user', null, null, _t('自定义数据'), _t('该项用于用户自定义数据扩展'));
         $form->addInput($user);
 
+        $honeypot = new Typecho_Widget_Helper_Form_Element_Text('homepage', null, '', _t('网站'), _t('请勿填写此字段'));
+        $honeypot->setAttribute('class', 'hidden');
+        $honeypot->input->setAttribute('style', 'display:none !important;');
+        $honeypot->input->setAttribute('tabindex', '-1');
+        $honeypot->input->setAttribute('autocomplete', 'off');
+        $form->addInput($honeypot);
+
         $do = new Typecho_Widget_Helper_Form_Element_Hidden('do');
         $do->value('submit');
         $form->addInput($do);
@@ -723,8 +750,10 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         $name->addRule('required', _t('必须填写友链名称'));
         $url->addRule('required', _t('必须填写友链地址'));
         $url->addRule('url', _t('不是一个合法的链接地址'));
+        $url->addRule(array('Enhancement_Plugin', 'validateHttpUrl'), _t('友链地址仅支持 http:// 或 https://'));
         $email->addRule('email', _t('不是一个合法的邮箱地址'));
         $image->addRule('url', _t('不是一个合法的图片地址'));
+        $image->addRule(array('Enhancement_Plugin', 'validateOptionalHttpUrl'), _t('友链图片仅支持 http:// 或 https://'));
         $name->addRule('maxLength', _t('友链名称最多包含50个字符'), 50);
         $url->addRule('maxLength', _t('友链地址最多包含200个字符'), 200);
         $sort->addRule('maxLength', _t('友链分类最多包含50个字符'), 50);
@@ -811,6 +840,30 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         $prefix = $db->getPrefix();
         $item = $db->fetchRow($db->select()->from($prefix . 'moments')->where('mid = ?', $mid)->limit(1));
         return $item ? true : false;
+    }
+
+    public static function validateHttpUrl($url)
+    {
+        $url = trim((string)$url);
+        if ($url === '') {
+            return false;
+        }
+
+        if (!filter_var($url, FILTER_VALIDATE_URL)) {
+            return false;
+        }
+
+        $scheme = strtolower((string)parse_url($url, PHP_URL_SCHEME));
+        return in_array($scheme, array('http', 'https'), true);
+    }
+
+    public static function validateOptionalHttpUrl($url)
+    {
+        $url = trim((string)$url);
+        if ($url === '') {
+            return true;
+        }
+        return self::validateHttpUrl($url);
     }
 
     public static function extractMediaFromContent($content, &$cleanedContent = null)
@@ -1549,9 +1602,15 @@ while ($tags->next()) {
                 }
             }
             if ($item['state'] == 1) {
+                $safeName = htmlspecialchars((string)$item['name'], ENT_QUOTES, 'UTF-8');
+                $safeUrl = htmlspecialchars((string)$item['url'], ENT_QUOTES, 'UTF-8');
+                $safeSort = htmlspecialchars((string)$item['sort'], ENT_QUOTES, 'UTF-8');
+                $safeDescription = htmlspecialchars((string)$item['description'], ENT_QUOTES, 'UTF-8');
+                $safeImage = htmlspecialchars((string)$item['image'], ENT_QUOTES, 'UTF-8');
+                $safeUser = htmlspecialchars((string)$item['user'], ENT_QUOTES, 'UTF-8');
                 $str .= str_replace(
                     array('{lid}', '{name}', '{url}', '{sort}', '{title}', '{description}', '{image}', '{user}', '{size}'),
-                    array($item['lid'], $item['name'], $item['url'], $item['sort'], $item['description'], $item['description'], $item['image'], $item['user'], $size),
+                    array((int)$item['lid'], $safeName, $safeUrl, $safeSort, $safeDescription, $safeDescription, $safeImage, $safeUser, (int)$size),
                     $pattern
                 );
             }
@@ -1582,12 +1641,255 @@ while ($tags->next()) {
         return Enhancement_Plugin::output_str('', array($matches[4], $matches[1], $matches[2], $matches[3], 'HTML'));
     }
 
+    public static function videoParserEnabled(): bool
+    {
+        $settings = Typecho_Widget::widget('Widget_Options')->plugin('Enhancement');
+        if (!isset($settings->enable_video_parser)) {
+            return false;
+        }
+        return $settings->enable_video_parser == '1';
+    }
+
+    public static function blankTargetEnabled(): bool
+    {
+        $settings = Typecho_Widget::widget('Widget_Options')->plugin('Enhancement');
+        if (!isset($settings->enable_blank_target)) {
+            return false;
+        }
+        return $settings->enable_blank_target == '1';
+    }
+
+    private static function appendBlankTargetByRegex($content)
+    {
+        return preg_replace_callback(
+            '/<a\s+[^>]*>/i',
+            function ($matches) {
+                $tag = $matches[0];
+                if (preg_match('/\btarget\s*=\s*["\"][^"\"]*["\"]/i', $tag)) {
+                    $tag = preg_replace('/\btarget\s*=\s*["\"][^"\"]*["\"]/i', 'target="_blank"', $tag, 1);
+                } elseif (preg_match('/\btarget\s*=\s*\'[^\']*\'/i', $tag)) {
+                    $tag = preg_replace('/\btarget\s*=\s*\'[^\']*\'/i', 'target="_blank"', $tag, 1);
+                } else {
+                    $tag = preg_replace('/>$/', ' target="_blank">', $tag, 1);
+                }
+
+                if (preg_match('/\brel\s*=\s*["\"]([^"\"]*)["\"]/i', $tag, $relMatch) || preg_match('/\brel\s*=\s*\'([^\']*)\'/i', $tag, $relMatch)) {
+                    $rels = preg_split('/\s+/', strtolower(trim(isset($relMatch[1]) ? $relMatch[1] : '')), -1, PREG_SPLIT_NO_EMPTY);
+                    $rels = is_array($rels) ? $rels : array();
+                    if (!in_array('noopener', $rels, true)) {
+                        $rels[] = 'noopener';
+                    }
+                    if (!in_array('noreferrer', $rels, true)) {
+                        $rels[] = 'noreferrer';
+                    }
+                    $relValue = 'rel="' . implode(' ', $rels) . '"';
+                    $tagBeforeRelReplace = $tag;
+                    $tag = preg_replace('/\brel\s*=\s*["\"]([^"\"]*)["\"]/i', $relValue, $tag, 1);
+                    if ($tag === $tagBeforeRelReplace) {
+                        $tag = preg_replace('/\brel\s*=\s*\'([^\']*)\'/i', 'rel="' . implode(' ', $rels) . '"', $tag, 1);
+                    }
+                } else {
+                    $tag = preg_replace('/>$/', ' rel="noopener noreferrer">', $tag, 1);
+                }
+
+                return $tag;
+            },
+            $content
+        );
+    }
+
+    private static function addBlankTarget($content)
+    {
+        if (empty($content)) {
+            return $content;
+        }
+
+        if (!class_exists('DOMDocument')) {
+            return self::appendBlankTargetByRegex($content);
+        }
+
+        $libxmlState = libxml_use_internal_errors(true);
+        $dom = new DOMDocument();
+        $loadFlags = 0;
+        if (defined('LIBXML_HTML_NOIMPLIED')) {
+            $loadFlags |= LIBXML_HTML_NOIMPLIED;
+        }
+        if (defined('LIBXML_HTML_NODEFDTD')) {
+            $loadFlags |= LIBXML_HTML_NODEFDTD;
+        }
+
+        $loaded = $dom->loadHTML('<?xml encoding="UTF-8">' . $content, $loadFlags);
+        libxml_clear_errors();
+        libxml_use_internal_errors($libxmlState);
+
+        if (!$loaded) {
+            return self::appendBlankTargetByRegex($content);
+        }
+
+        $links = $dom->getElementsByTagName('a');
+        foreach ($links as $link) {
+            $link->setAttribute('target', '_blank');
+            $existingRel = trim((string)$link->getAttribute('rel'));
+            $rels = preg_split('/\s+/', strtolower($existingRel), -1, PREG_SPLIT_NO_EMPTY);
+            $rels = is_array($rels) ? $rels : array();
+            if (!in_array('noopener', $rels, true)) {
+                $rels[] = 'noopener';
+            }
+            if (!in_array('noreferrer', $rels, true)) {
+                $rels[] = 'noreferrer';
+            }
+            $link->setAttribute('rel', implode(' ', $rels));
+        }
+
+        $result = $dom->saveHTML();
+        if ($result === false) {
+            return self::appendBlankTargetByRegex($content);
+        }
+
+        return str_replace('<?xml encoding="UTF-8">', '', $result);
+    }
+
+    private static function replaceVideoLinks($content)
+    {
+        if (empty($content)) {
+            return $content;
+        }
+
+        $content = preg_replace_callback(
+            '/<a\s+[^>]*href=["\']([^"\']*)["\'][^>]*>.*?<\/a>/is',
+            function ($matches) {
+                $url = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
+                $videoInfo = self::extractVideoInfo($url);
+
+                if ($videoInfo) {
+                    return self::generateVideoPlayer($videoInfo);
+                }
+
+                return $matches[0];
+            },
+            $content
+        );
+
+        $content = preg_replace_callback(
+            '/https?:\/\/(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/|bilibili\.com\/video\/|v\.youku\.com\/v_show\/id_)[^\s<]+/i',
+            function ($matches) {
+                $url = html_entity_decode($matches[0], ENT_QUOTES, 'UTF-8');
+                $videoInfo = self::extractVideoInfo($url);
+
+                if ($videoInfo) {
+                    return self::generateVideoPlayer($videoInfo);
+                }
+
+                return $matches[0];
+            },
+            $content
+        );
+
+        return $content;
+    }
+
+    private static function extractVideoInfo($url)
+    {
+        if (preg_match('/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#\/]+)/i', $url, $matches)) {
+            return array(
+                'platform' => 'youtube',
+                'videoId' => $matches[1]
+            );
+        }
+
+        if (preg_match('/bilibili\.com\/video\/(BV[0-9A-Za-z]+)/i', $url, $matches)) {
+            return array(
+                'platform' => 'bilibili',
+                'videoId' => $matches[1],
+                'idType' => 'bvid'
+            );
+        }
+
+        if (preg_match('/bilibili\.com\/video\/av(\d+)/i', $url, $matches)) {
+            return array(
+                'platform' => 'bilibili',
+                'videoId' => $matches[1],
+                'idType' => 'aid'
+            );
+        }
+
+        if (preg_match('/v\.youku\.com\/v_show\/id_([A-Za-z0-9=]+)\.html/i', $url, $matches)) {
+            return array(
+                'platform' => 'youku',
+                'videoId' => $matches[1]
+            );
+        }
+
+        return null;
+    }
+
+    private static function generateVideoPlayer($videoInfo)
+    {
+        $embedUrl = self::getVideoEmbedUrl($videoInfo);
+        if ($embedUrl === '') {
+            return '';
+        }
+
+        $platform = isset($videoInfo['platform']) ? strtolower((string)$videoInfo['platform']) : '';
+        $platformLabel = strtoupper($platform);
+        $html = '<div class="enhancement-video-player-wrapper">';
+        $html .= '<div class="enhancement-platform-label enhancement-label-' . $platform . '">' . $platformLabel . '</div>';
+        $html .= '<div class="enhancement-player-container enhancement-' . $platform . '">';
+        $html .= '<iframe src="' . htmlspecialchars($embedUrl, ENT_QUOTES, 'UTF-8') . '" ';
+        $html .= 'allowfullscreen ';
+        $html .= 'allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" ';
+        $html .= 'style="width: 100%; height: 500px; border: none;">';
+        $html .= '</iframe>';
+        $html .= '</div>';
+        $html .= '</div>';
+
+        return $html;
+    }
+
+    private static function getVideoEmbedUrl($videoInfo)
+    {
+        $platform = isset($videoInfo['platform']) ? strtolower((string)$videoInfo['platform']) : '';
+        $videoId = isset($videoInfo['videoId']) ? (string)$videoInfo['videoId'] : '';
+
+        if ($videoId === '') {
+            return '';
+        }
+
+        switch ($platform) {
+            case 'youtube':
+                return 'https://www.youtube.com/embed/' . rawurlencode($videoId);
+            case 'bilibili':
+                $idType = isset($videoInfo['idType']) ? strtolower((string)$videoInfo['idType']) : 'bvid';
+                if ($idType === 'aid') {
+                    return 'https://player.bilibili.com/player.html?aid=' . rawurlencode($videoId) . '&high_quality=1';
+                }
+                return 'https://player.bilibili.com/player.html?bvid=' . rawurlencode($videoId) . '&high_quality=1';
+            case 'youku':
+                return 'https://player.youku.com/embed/' . rawurlencode($videoId);
+            default:
+                return '';
+        }
+    }
+
     public static function parse($text, $widget, $lastResult)
     {
         $text = empty($lastResult) ? $text : $lastResult;
+        $isArchiveWidget = $widget instanceof Widget_Archive;
 
-        if ($widget instanceof Widget_Archive || $widget instanceof Widget_Abstract_Comments) {
-            return preg_replace_callback("/<(?:links|enhancement)\\s*(\\d*)\\s*(\\w*)\\s*(\\d*)>\\s*(.*?)\\s*<\\/(?:links|enhancement)>/is", array('Enhancement_Plugin', 'parseCallback'), $text ? $text : '');
+        if ($isArchiveWidget || $widget instanceof Widget_Abstract_Comments) {
+            $text = preg_replace_callback("/<(?:links|enhancement)\\s*(\\d*)\\s*(\\w*)\\s*(\\d*)>\\s*(.*?)\\s*<\\/(?:links|enhancement)>/is", array('Enhancement_Plugin', 'parseCallback'), $text ? $text : '');
+
+            if ($isArchiveWidget) {
+                if (self::blankTargetEnabled()) {
+                    $text = self::addBlankTarget($text);
+                }
+
+                if (self::videoParserEnabled()) {
+                    $text = self::replaceVideoLinks($text);
+                }
+            }
+
+            return $text;
         } else {
             return $text;
         }

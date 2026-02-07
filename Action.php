@@ -6,6 +6,173 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
     private $options;
     private $prefix;
 
+    private function normalizeUrl($url)
+    {
+        $url = trim((string)$url);
+        if ($url === '') {
+            return '';
+        }
+
+        $parts = @parse_url($url);
+        if ($parts === false || !is_array($parts) || empty($parts['host'])) {
+            return $url;
+        }
+
+        $scheme = isset($parts['scheme']) ? strtolower((string)$parts['scheme']) : 'http';
+        $host = strtolower((string)$parts['host']);
+        $port = isset($parts['port']) ? (int)$parts['port'] : null;
+        $path = isset($parts['path']) ? (string)$parts['path'] : '/';
+        $query = isset($parts['query']) ? (string)$parts['query'] : '';
+
+        if ($path === '') {
+            $path = '/';
+        }
+        if (strlen($path) > 1) {
+            $path = rtrim($path, '/');
+            if ($path === '') {
+                $path = '/';
+            }
+        }
+
+        $normalized = $scheme . '://' . $host;
+        if ($port && !(($scheme === 'http' && $port === 80) || ($scheme === 'https' && $port === 443))) {
+            $normalized .= ':' . $port;
+        }
+        $normalized .= $path;
+        if ($query !== '') {
+            $normalized .= '?' . $query;
+        }
+
+        return $normalized;
+    }
+
+    private function getClientIpAddress()
+    {
+        $ip = trim((string)$this->request->getIp());
+        if ($ip === '') {
+            return '0.0.0.0';
+        }
+        return $ip;
+    }
+
+    private function getRateLimitWindowSeconds()
+    {
+        return 300;
+    }
+
+    private function getRateLimitMaxAttempts()
+    {
+        return 5;
+    }
+
+    private function getRateLimitStorePath()
+    {
+        return __DIR__ . '/runtime/rate-limit-links.json';
+    }
+
+    private function checkSubmitRateLimit(&$retryAfter = 0)
+    {
+        $file = $this->getRateLimitStorePath();
+        $dir = dirname($file);
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0755, true);
+        }
+
+        $window = $this->getRateLimitWindowSeconds();
+        $maxAttempts = $this->getRateLimitMaxAttempts();
+        $now = time();
+        $ip = $this->getClientIpAddress();
+
+        $records = array();
+        if (is_file($file)) {
+            $raw = @file_get_contents($file);
+            $decoded = json_decode((string)$raw, true);
+            if (is_array($decoded)) {
+                $records = $decoded;
+            }
+        }
+
+        foreach ($records as $recordIp => $timestamps) {
+            if (!is_array($timestamps)) {
+                unset($records[$recordIp]);
+                continue;
+            }
+            $records[$recordIp] = array_values(array_filter($timestamps, function ($timestamp) use ($now, $window) {
+                $timestamp = (int)$timestamp;
+                return $timestamp > 0 && ($now - $timestamp) < $window;
+            }));
+            if (empty($records[$recordIp])) {
+                unset($records[$recordIp]);
+            }
+        }
+
+        $attempts = isset($records[$ip]) && is_array($records[$ip]) ? count($records[$ip]) : 0;
+        if ($attempts >= $maxAttempts) {
+            $oldest = isset($records[$ip][0]) ? (int)$records[$ip][0] : $now;
+            $retryAfter = max(1, $window - ($now - $oldest));
+            @file_put_contents($file, json_encode($records, JSON_UNESCAPED_UNICODE));
+            return false;
+        }
+
+        if (!isset($records[$ip]) || !is_array($records[$ip])) {
+            $records[$ip] = array();
+        }
+        $records[$ip][] = $now;
+        @file_put_contents($file, json_encode($records, JSON_UNESCAPED_UNICODE));
+        return true;
+    }
+
+    private function denySubmission($message, $statusCode = 400, $retryAfter = 0)
+    {
+        $message = (string)$message;
+        $statusCode = (int)$statusCode;
+        if ($statusCode > 0) {
+            $this->response->setStatus($statusCode);
+        }
+        if ($retryAfter > 0) {
+            $this->response->setHeader('Retry-After', (string)(int)$retryAfter);
+        }
+
+        if ($this->request->isAjax()) {
+            $this->response->throwJson(array(
+                'success' => false,
+                'message' => $message
+            ));
+            return;
+        }
+
+        $this->widget('Widget_Notice')->set($message, null, 'error');
+        $this->response->goBack();
+    }
+
+    private function sanitizePublicLinkItem(array $item)
+    {
+        $item['url'] = $this->normalizeUrl(isset($item['url']) ? $item['url'] : '');
+        $item['image'] = $this->normalizeUrl(isset($item['image']) ? $item['image'] : '');
+        $item['email'] = trim((string)(isset($item['email']) ? $item['email'] : ''));
+        $item['name'] = trim((string)(isset($item['name']) ? $item['name'] : ''));
+        $item['sort'] = trim((string)(isset($item['sort']) ? $item['sort'] : ''));
+        $item['description'] = trim((string)(isset($item['description']) ? $item['description'] : ''));
+        $item['user'] = trim((string)(isset($item['user']) ? $item['user'] : ''));
+
+        return $item;
+    }
+
+    private function findExistingLinkByUrl($url)
+    {
+        $url = trim((string)$url);
+        if ($url === '') {
+            return null;
+        }
+
+        return $this->db->fetchRow(
+            $this->db->select('lid', 'state')
+                ->from($this->prefix . 'links')
+                ->where('url = ?', $url)
+                ->limit(1)
+        );
+    }
+
     public function insertEnhancement()
     {
         if (Enhancement_Plugin::form('insert')->validate()) {
@@ -48,6 +215,18 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             $this->response->goBack();
         }
 
+        $honeypot = trim((string)$this->request->get('homepage'));
+        if ($honeypot !== '') {
+            $this->denySubmission(_t('提交失败，请重试'), 400);
+            return;
+        }
+
+        $retryAfter = 0;
+        if (!$this->checkSubmitRateLimit($retryAfter)) {
+            $this->denySubmission(_t('提交过于频繁，请稍后再试'), 429, $retryAfter);
+            return;
+        }
+
         /** 取出数据 */
         $item = $this->request->from('email', 'image', 'url');
 
@@ -56,6 +235,36 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $item['sort'] = $this->request->filter('xss')->sort;
         $item['description'] = $this->request->filter('xss')->description;
         $item['user'] = $this->request->filter('xss')->user;
+        $item = $this->sanitizePublicLinkItem($item);
+
+        if (!Enhancement_Plugin::validateHttpUrl($item['url'])) {
+            $this->denySubmission(_t('友链地址仅支持 http:// 或 https://'));
+            return;
+        }
+        if (!Enhancement_Plugin::validateOptionalHttpUrl($item['image'])) {
+            $this->denySubmission(_t('友链图片仅支持 http:// 或 https://'));
+            return;
+        }
+
+        $exists = $this->findExistingLinkByUrl($item['url']);
+        if ($exists) {
+            $message = ((string)$exists['state'] === '1')
+                ? _t('该友链已存在，无需重复提交')
+                : _t('该友链已提交，正在审核中');
+
+            if ($this->request->isAjax()) {
+                $this->response->throwJson(array(
+                    'success' => true,
+                    'message' => $message,
+                    'duplicate' => true,
+                    'lid' => (int)$exists['lid']
+                ));
+            } else {
+                $this->widget('Widget_Notice')->set($message, null, 'notice');
+                $this->response->goBack('?enhancement_submitted=1');
+            }
+            return;
+        }
 
         $maxOrder = $this->db->fetchObject(
             $this->db->select(array('MAX(order)' => 'maxOrder'))->from($this->prefix . 'links')

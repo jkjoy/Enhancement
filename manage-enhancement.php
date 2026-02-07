@@ -74,14 +74,16 @@ include 'menu.php';
                             <tbody>
                                 <?php if (!empty($items)): $alt = 0;?>
                                 <?php foreach ($items as $item): ?>
-                                <tr id="enhancement-<?php echo $item['lid']; ?>">
-                                    <td><input type="checkbox" value="<?php echo $item['lid']; ?>" name="lid[]"/></td>
-                                    <td><a href="<?php echo $request->makeUriByRequest('lid=' . $item['lid']); ?>" title="<?php _e('点击编辑'); ?>"><?php echo $item['name']; ?></a>
-                                    <td><?php echo $item['url']; ?></td>
-                                    <td><?php echo $item['sort']; ?></td>
+                                <tr id="enhancement-<?php echo (int)$item['lid']; ?>">
+                                    <td><input type="checkbox" value="<?php echo (int)$item['lid']; ?>" name="lid[]"/></td>
+                                    <td><a href="<?php echo htmlspecialchars($request->makeUriByRequest('lid=' . (int)$item['lid']), ENT_QUOTES, 'UTF-8'); ?>" title="<?php _e('点击编辑'); ?>"><?php echo htmlspecialchars((string)$item['name'], ENT_QUOTES, 'UTF-8'); ?></a>
+                                    <td><?php echo htmlspecialchars((string)$item['url'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                    <td><?php echo htmlspecialchars((string)$item['sort'], ENT_QUOTES, 'UTF-8'); ?></td>
                                     <td><?php
                                         if ($item['image']) {
-                                            echo '<a href="'.$item['image'].'" title="'._t('点击放大').'" target="_blank"><img class="avatar" src="'.$item['image'].'" alt="'.$item['name'].'" width="32" height="32"/></a>';
+                                            $safeImage = htmlspecialchars((string)$item['image'], ENT_QUOTES, 'UTF-8');
+                                            $safeName = htmlspecialchars((string)$item['name'], ENT_QUOTES, 'UTF-8');
+                                            echo '<a href="' . $safeImage . '" title="' . _t('点击放大') . '" target="_blank"><img class="avatar" src="' . $safeImage . '" alt="' . $safeName . '" width="32" height="32"/></a>';
                                         } else {
                                             $options = Typecho_Widget::widget('Widget_Options');
                                             $nopic_url = Typecho_Common::url('usr/plugins/Enhancement/nopic.png', $options->siteUrl);
