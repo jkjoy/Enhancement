@@ -40,13 +40,34 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $settings = array();
 
         try {
-            $options = Typecho_Widget::widget('Widget_Options');
-            $plugin = $options->plugin('Enhancement');
-            if (is_object($plugin)) {
-                $settings = get_object_vars($plugin);
+            $row = $this->db->fetchRow(
+                $this->db->select('value')
+                    ->from('table.options')
+                    ->where('name = ?', 'plugin:Enhancement')
+                    ->where('user = ?', 0)
+                    ->limit(1)
+            );
+
+            if (is_array($row) && isset($row['value'])) {
+                $decoded = json_decode((string)$row['value'], true);
+                if (is_array($decoded)) {
+                    $settings = $decoded;
+                }
             }
         } catch (Exception $e) {
-            $settings = array();
+            // ignore db fallback errors
+        }
+
+        if (empty($settings)) {
+            try {
+                $options = Typecho_Widget::widget('Widget_Options');
+                $plugin = $options->plugin('Enhancement');
+                if (is_object($plugin) && method_exists($plugin, 'toArray')) {
+                    $settings = $plugin->toArray();
+                }
+            } catch (Exception $e) {
+                // ignore options fallback errors
+            }
         }
 
         if (!is_array($settings)) {
