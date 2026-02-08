@@ -684,43 +684,15 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         $form->addInput($deleteMomentsTable);
 
         $backupUrl = Helper::security()->getIndex('/action/enhancement-edit?do=backup-settings');
-        $restoreUrl = Helper::security()->getIndex('/action/enhancement-edit?do=restore-settings');
         echo '<div class="typecho-option">'
             . '<h3 class="enhancement-title">设置备份</h3>'
             . '<div class="enhancement-backup-box">'
-            . '<p style="margin:0;">备份将直接保存到数据库，恢复时默认使用最近一次备份。</p>'
+            . '<p style="margin:0;">备份将直接保存到数据库。恢复请在下方列表中指定具体备份。</p>'
             . '<div class="enhancement-backup-actions">'
-            . '<button type="submit" class="btn" formaction="' . htmlspecialchars($backupUrl, ENT_QUOTES, 'UTF-8') . '">' . _t('一键备份到数据库') . '</button>'
-            . '<button type="submit" class="btn primary" formaction="' . htmlspecialchars($restoreUrl, ENT_QUOTES, 'UTF-8') . '" id="enhancement-restore-settings-btn">' . _t('一键从数据库恢复') . '</button>'
+            . '<a class="btn" href="' . htmlspecialchars($backupUrl, ENT_QUOTES, 'UTF-8') . '">' . _t('一键备份到数据库') . '</a>'
             . '</div>'
-            . '<p style="margin:8px 0 0;color:#666;">恢复会覆盖当前插件设置，请确认后操作。</p>'
             . '</div>'
             . '</div>';
-        echo '<script>(function(){'
-            . 'var btn=document.getElementById("enhancement-restore-settings-btn");'
-            . 'if(!btn){return;}'
-            . 'btn.addEventListener("click",function(e){'
-            . 'if(!window.confirm("确定要从数据库最近一次备份恢复吗？当前设置将被覆盖。")){e.preventDefault();}'
-            . '});'
-            . '})();</script>';
-
-        echo '<script>(function(){'
-            . 'var buttons=document.querySelectorAll(".enhancement-backup-box button[formaction], .enhancement-backup-list button[formaction]");'
-            . 'if(!buttons||!buttons.length){return;}'
-            . 'for(var i=0;i<buttons.length;i++){' 
-            . 'var button=buttons[i];'
-            . 'var target=button.getAttribute("formaction");'
-            . 'if(!target){continue;}'
-            . 'var anchor=document.createElement("a");'
-            . 'anchor.href=target;'
-            . 'anchor.className=button.className;'
-            . 'anchor.id=button.id||"";'
-            . 'anchor.innerHTML=button.innerHTML;'
-            . 'if(button.getAttribute("title")){anchor.setAttribute("title",button.getAttribute("title"));}'
-            . 'if(button.getAttribute("onclick")){anchor.setAttribute("onclick",button.getAttribute("onclick"));}'
-            . 'button.parentNode.replaceChild(anchor, button);'
-            . '}'
-            . '})();</script>';
 
         $backupRows = self::listSettingsBackups(5);
         if (!empty($backupRows)) {
@@ -740,14 +712,14 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
                     $timeText = $matches[1] . '-' . $matches[2] . '-' . $matches[3] . ' ' . $matches[4] . ':' . $matches[5] . ':' . $matches[6];
                 }
 
-                $restoreByNameUrl = Helper::security()->getIndex('/action/enhancement-edit?do=restore-settings&backup_name=' . rawurlencode($backupName));
-                $deleteByNameUrl = Helper::security()->getIndex('/action/enhancement-edit?do=delete-backup&backup_name=' . rawurlencode($backupName));
+                $restoreByNameUrl = Helper::security()->getIndex('/action/enhancement-edit?do=restore-settings&backup_name=' . $backupName);
+                $deleteByNameUrl = Helper::security()->getIndex('/action/enhancement-edit?do=delete-backup&backup_name=' . $backupName);
 
                 echo '<li>'
                     . '<code>' . htmlspecialchars($timeText, ENT_QUOTES, 'UTF-8') . '</code>'
                     . '<span class="enhancement-backup-item-actions">'
-                    . '<button type="submit" class="enhancement-backup-inline-btn" formaction="' . htmlspecialchars($restoreByNameUrl, ENT_QUOTES, 'UTF-8') . '" onclick="return window.confirm(\'确定要恢复这份备份吗？当前设置将被覆盖。\');">' . _t('恢复此份') . '</button>'
-                    . '<button type="submit" class="enhancement-backup-inline-btn danger" formaction="' . htmlspecialchars($deleteByNameUrl, ENT_QUOTES, 'UTF-8') . '" onclick="return window.confirm(\'确定要删除这份备份吗？\');">' . _t('删除') . '</button>'
+                    . '<a class="enhancement-backup-inline-btn" href="' . htmlspecialchars($restoreByNameUrl, ENT_QUOTES, 'UTF-8') . '" onclick="return window.confirm(\'确定要恢复这份备份吗？当前设置将被覆盖。\');">' . _t('恢复此份') . '</a>'
+                    . '<a class="enhancement-backup-inline-btn danger" href="' . htmlspecialchars($deleteByNameUrl, ENT_QUOTES, 'UTF-8') . '" onclick="return window.confirm(\'确定要删除这份备份吗？\');">' . _t('删除') . '</a>'
                     . '</span>'
                     . '</li>';
             }
