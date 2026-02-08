@@ -1882,6 +1882,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
 
     public static function applyAvatarPrefix($archive = null, $select = null)
     {
+        self::registerRuntimeCommentFilter();
         self::upgradeLegacyCommentUrls();
 
         if (!self::avatarMirrorEnabled()) {
@@ -1890,6 +1891,32 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         if (!defined('__TYPECHO_GRAVATAR_PREFIX__')) {
             define('__TYPECHO_GRAVATAR_PREFIX__', self::avatarBaseUrl());
         }
+    }
+
+    private static function registerRuntimeCommentFilter()
+    {
+        static $registered = false;
+        if ($registered) {
+            return;
+        }
+
+        $registered = true;
+        Typecho_Plugin::factory('Widget_Abstract_Comments')->filter = array(__CLASS__, 'filterCommentRowUrl');
+    }
+
+    public static function filterCommentRowUrl($row, $widget = null, $lastRow = null)
+    {
+        if (!is_array($row)) {
+            return $row;
+        }
+
+        $currentUrl = isset($row['url']) ? trim((string)$row['url']) : '';
+        if ($currentUrl === '') {
+            return $row;
+        }
+
+        $row['url'] = self::convertExternalUrlToGo($currentUrl);
+        return $row;
     }
 
     public static function buildAvatarUrl($email, $size = null, $default = null, array $extra = array()): string
@@ -2592,10 +2619,6 @@ while ($tags->next()) {
                     }
                 }
 
-                if (self::isGoRedirectHref($href)) {
-                    return self::normalizeAnchorTagSpacing($tag);
-                }
-
                 if (preg_match('/\btarget\s*=\s*["\"][^"\"]*["\"]/i', $tag)) {
                     $tag = preg_replace('/\btarget\s*=\s*["\"][^"\"]*["\"]/i', 'target="_blank"', $tag, 1);
                 } elseif (preg_match('/\btarget\s*=\s*\'[^\']*\'/i', $tag)) {
@@ -2663,12 +2686,6 @@ while ($tags->next()) {
 
         $links = $dom->getElementsByTagName('a');
         foreach ($links as $link) {
-            $href = trim((string)$link->getAttribute('href'));
-            if (self::isGoRedirectHref($href)) {
-                $link->removeAttribute('target');
-                continue;
-            }
-
             $link->setAttribute('target', '_blank');
             $existingRel = trim((string)$link->getAttribute('rel'));
             $rels = preg_split('/\s+/', strtolower($existingRel), -1, PREG_SPLIT_NO_EMPTY);
@@ -2831,14 +2848,12 @@ while ($tags->next()) {
 
             $text = self::rewriteExternalLinks($text);
 
-            if ($isContentWidget) {
-                if (self::blankTargetEnabled()) {
-                    $text = self::addBlankTarget($text);
-                }
+            if (self::blankTargetEnabled()) {
+                $text = self::addBlankTarget($text);
+            }
 
-                if (self::videoParserEnabled()) {
-                    $text = self::replaceVideoLinks($text);
-                }
+            if ($isContentWidget && self::videoParserEnabled()) {
+                $text = self::replaceVideoLinks($text);
             }
 
             return $text;
