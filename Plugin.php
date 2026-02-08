@@ -5,7 +5,7 @@
  * 具体功能包含:友情链接,瞬间,网站地图,编辑器增强,常见视频链接 音乐链接 解析等
  * @package Enhancement
  * @author jkjoy
- * @version 1.0.7
+ * @version 1.0.8
  * @link HTTPS://IMSUN.ORG
  * @dependence 14.10.10-*
  */
@@ -52,6 +52,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         Helper::addAction('enhancement-edit', 'Enhancement_Action');
         Helper::addAction('enhancement-submit', 'Enhancement_Action');
         Helper::addAction('enhancement-moments-edit', 'Enhancement_Action');
+        Typecho_Plugin::factory('Widget_Feedback')->comment_1 = [__CLASS__, 'turnstileFilterComment'];
         Typecho_Plugin::factory('Widget_Feedback')->finishComment = [__CLASS__, 'finishComment'];
         Typecho_Plugin::factory('Widget_Comments_Edit')->finishComment = [__CLASS__, 'finishComment'];
         Typecho_Plugin::factory('Widget_Comments_Edit')->mark = [__CLASS__, 'commentNotifierMark'];
@@ -62,6 +63,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         Typecho_Plugin::factory('Widget_Abstract_Contents')->excerptEx = array('Enhancement_Plugin', 'parse');
         Typecho_Plugin::factory('Widget_Abstract_Comments')->contentEx = array('Enhancement_Plugin', 'parse');
         Typecho_Plugin::factory('Widget_Archive')->handleInit = array('Enhancement_Plugin', 'applyAvatarPrefix');
+        Typecho_Plugin::factory('Widget_Archive')->footer = array('Enhancement_Plugin', 'turnstileFooter');
         Typecho_Plugin::factory('Widget_Archive')->callEnhancement = array('Enhancement_Plugin', 'output_str');
         return _t($info);
     }
@@ -174,6 +176,23 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         content: "# ";
         font-size:1em;
         color: #c82609;
+    }
+    .enhancement-backup-box{
+        margin-top: 12px;
+        padding: 12px;
+        border: 1px solid #e3e3e3;
+        border-radius: 6px;
+        background: #fafbff;
+    }
+    .enhancement-backup-actions{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        margin-top: 8px;
+    }
+    .enhancement-backup-actions input[type="file"]{
+        max-width: 320px;
     }
 </style>';
         echo '<div class="typecho-option" style="margin-top:12px;">
@@ -367,6 +386,43 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             _t('白名单域名不使用 go 跳转；支持一行一个或逗号分隔，如 example.com, github.com')
         );
         $form->addInput($goRedirectWhitelist->addRule('maxLength', _t('白名单最多2000个字符'), 2000));
+
+        $enableTurnstile = new Typecho_Widget_Helper_Form_Element_Radio(
+            'enable_turnstile',
+            array('1' => _t('启用'), '0' => _t('禁用')),
+            '0',
+            _t('<h3 class="enhancement-title">安全设置</h3>Turnstile 人机验证'),
+            _t('统一保护评论提交与友情链接提交')
+        );
+        $form->addInput($enableTurnstile);
+
+        $turnstileCommentGuestOnly = new Typecho_Widget_Helper_Form_Element_Radio(
+            'turnstile_comment_guest_only',
+            array('1' => _t('是'), '0' => _t('否（所有评论都验证）')),
+            '1',
+            _t('仅游客评论启用 Turnstile'),
+            _t('开启后登录用户评论无需验证，游客评论仍需通过验证')
+        );
+        $form->addInput($turnstileCommentGuestOnly);
+
+        $turnstileSiteKey = new Typecho_Widget_Helper_Form_Element_Text(
+            'turnstile_site_key',
+            null,
+            '',
+            _t('Turnstile Site Key'),
+            _t('Cloudflare 控制台中的可公开站点密钥')
+        );
+        $form->addInput($turnstileSiteKey->addRule('maxLength', _t('Site Key 最多200个字符'), 200));
+
+        $turnstileSecretKey = new Typecho_Widget_Helper_Form_Element_Text(
+            'turnstile_secret_key',
+            null,
+            '',
+            _t('Turnstile Secret Key'),
+            _t('Cloudflare 控制台中的私钥（仅服务端校验使用）')
+        );
+        $turnstileSecretKey->input->setAttribute('autocomplete', 'off');
+        $form->addInput($turnstileSecretKey->addRule('maxLength', _t('Secret Key 最多200个字符'), 200));
 
         $enableCommentByQQ = new Typecho_Widget_Helper_Form_Element_Radio(
             'enable_comment_by_qq',
@@ -562,6 +618,30 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         );
         $form->addInput($deleteMomentsTable);
 
+        $backupUrl = Helper::security()->getIndex('/action/enhancement-edit?do=backup-settings');
+        $restoreUrl = Helper::security()->getIndex('/action/enhancement-edit?do=restore-settings');
+        echo '<div class="typecho-option">'
+            . '<h3 class="enhancement-title">设置备份</h3>'
+            . '<div class="enhancement-backup-box">'
+            . '<p style="margin:0;">支持一键下载当前插件配置，也可上传 JSON 备份一键恢复。</p>'
+            . '<div class="enhancement-backup-actions">'
+            . '<button type="submit" class="btn" formaction="' . htmlspecialchars($backupUrl, ENT_QUOTES, 'UTF-8') . '">' . _t('一键备份（下载）') . '</button>'
+            . '<input type="file" name="settings_backup_file" id="settings_backup_file" accept=".json,application/json">'
+            . '<button type="submit" class="btn primary" formaction="' . htmlspecialchars($restoreUrl, ENT_QUOTES, 'UTF-8') . '" formenctype="multipart/form-data" id="enhancement-restore-settings-btn">' . _t('一键恢复') . '</button>'
+            . '</div>'
+            . '<p style="margin:8px 0 0;color:#666;">恢复会覆盖当前插件设置，请先备份再操作。</p>'
+            . '</div>'
+            . '</div>';
+        echo '<script>(function(){'
+            . 'var btn=document.getElementById("enhancement-restore-settings-btn");'
+            . 'var file=document.getElementById("settings_backup_file");'
+            . 'if(!btn||!file){return;}'
+            . 'btn.addEventListener("click",function(e){'
+            . 'if(!file.value){e.preventDefault();alert("请先选择备份 JSON 文件");return;}'
+            . 'if(!window.confirm("确定要恢复插件设置吗？当前设置将被覆盖。")){e.preventDefault();}'
+            . '});'
+            . '})();</script>';
+
         $template = new Typecho_Widget_Helper_Form_Element_Text(
             'template',
             null,
@@ -748,6 +828,8 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             Helper::security()->getIndex('/action/enhancement-submit'),
             Typecho_Widget_Helper_Form::POST_METHOD
         );
+        $form->setAttribute('class', 'enhancement-public-form');
+        $form->setAttribute('data-enhancement-form', 'link-submit');
 
         $name = new Typecho_Widget_Helper_Form_Element_Text('name', null, null, _t('友链名称*'));
         $form->addInput($name);
@@ -1014,16 +1096,205 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         }
     }
 
+    public static function turnstileEnabled(): bool
+    {
+        $settings = self::pluginSettings(Typecho_Widget::widget('Widget_Options'));
+        return isset($settings->enable_turnstile) && $settings->enable_turnstile == '1';
+    }
+
+    public static function turnstileSiteKey(): string
+    {
+        $settings = self::pluginSettings(Typecho_Widget::widget('Widget_Options'));
+        return isset($settings->turnstile_site_key) ? trim((string)$settings->turnstile_site_key) : '';
+    }
+
+    public static function turnstileSecretKey(): string
+    {
+        $settings = self::pluginSettings(Typecho_Widget::widget('Widget_Options'));
+        return isset($settings->turnstile_secret_key) ? trim((string)$settings->turnstile_secret_key) : '';
+    }
+
+    public static function turnstileReady(): bool
+    {
+        return self::turnstileEnabled() && self::turnstileSiteKey() !== '' && self::turnstileSecretKey() !== '';
+    }
+
+    public static function turnstileCommentGuestOnly(): bool
+    {
+        $settings = self::pluginSettings(Typecho_Widget::widget('Widget_Options'));
+        if (!isset($settings->turnstile_comment_guest_only)) {
+            return true;
+        }
+        return $settings->turnstile_comment_guest_only == '1';
+    }
+
+    public static function turnstileVerify($token, $remoteIp = ''): array
+    {
+        if (!self::turnstileEnabled()) {
+            return array('success' => true, 'message' => 'disabled');
+        }
+
+        $siteKey = self::turnstileSiteKey();
+        $secret = self::turnstileSecretKey();
+        if ($siteKey === '' || $secret === '') {
+            return array('success' => false, 'message' => _t('Turnstile 未配置完整（缺少 Site Key 或 Secret Key）'));
+        }
+
+        $token = trim((string)$token);
+        if ($token === '') {
+            return array('success' => false, 'message' => _t('请完成人机验证后再提交'));
+        }
+
+        $postFields = array(
+            'secret' => $secret,
+            'response' => $token
+        );
+        $remoteIp = trim((string)$remoteIp);
+        if ($remoteIp !== '') {
+            $postFields['remoteip'] = $remoteIp;
+        }
+
+        $ch = function_exists('curl_init') ? curl_init() : null;
+        if (!$ch) {
+            return array('success' => false, 'message' => _t('当前环境不支持 Turnstile 校验（缺少 cURL）'));
+        }
+
+        curl_setopt_array($ch, array(
+            CURLOPT_URL => 'https://challenges.cloudflare.com/turnstile/v0/siteverify',
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => http_build_query($postFields),
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 10,
+            CURLOPT_HTTPHEADER => array(
+                'Content-Type: application/x-www-form-urlencoded'
+            )
+        ));
+
+        $response = curl_exec($ch);
+        if (curl_errno($ch)) {
+            $error = curl_error($ch);
+            curl_close($ch);
+            return array('success' => false, 'message' => _t('人机验证请求失败：%s', $error));
+        }
+        curl_close($ch);
+
+        $decoded = json_decode((string)$response, true);
+        if (!is_array($decoded)) {
+            return array('success' => false, 'message' => _t('人机验证返回数据异常'));
+        }
+
+        if (!empty($decoded['success'])) {
+            return array('success' => true, 'message' => 'ok');
+        }
+
+        $codes = array();
+        if (isset($decoded['error-codes']) && is_array($decoded['error-codes'])) {
+            $codes = $decoded['error-codes'];
+        }
+        $codeText = !empty($codes) ? implode(', ', $codes) : 'unknown_error';
+        return array('success' => false, 'message' => _t('人机验证失败：%s', $codeText));
+    }
+
+    public static function turnstileRenderBlock($formId = ''): string
+    {
+        if (!self::turnstileReady()) {
+            return '';
+        }
+
+        $formId = trim((string)$formId);
+        $formIdAttr = $formId !== '' ? ' data-form-id="' . htmlspecialchars($formId, ENT_QUOTES, 'UTF-8') . '"' : '';
+        $siteKey = htmlspecialchars(self::turnstileSiteKey(), ENT_QUOTES, 'UTF-8');
+
+        return '<div class="typecho-option enhancement-turnstile"' . $formIdAttr . '>'
+            . '<div class="cf-turnstile" data-sitekey="' . $siteKey . '"></div>'
+            . '</div>';
+    }
+
+    public static function turnstileFooter($archive = null)
+    {
+        if (!($archive instanceof Widget_Archive) || !$archive->is('single')) {
+            return;
+        }
+        if (!self::turnstileReady()) {
+            return;
+        }
+
+        $siteKey = htmlspecialchars(self::turnstileSiteKey(), ENT_QUOTES, 'UTF-8');
+        $commentNeedCaptcha = true;
+        if (self::turnstileCommentGuestOnly()) {
+            $user = Typecho_Widget::widget('Widget_User');
+            $commentNeedCaptcha = !$user->hasLogin();
+        }
+        $selectorParts = array('form.enhancement-public-form');
+        if ($commentNeedCaptcha) {
+            $selectorParts[] = 'form[action*="/comment"]';
+        }
+        $selector = implode(', ', $selectorParts);
+
+        echo '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>';
+        echo '<script>(function(){'
+            . 'var siteKey=' . json_encode($siteKey) . ';'
+            . 'var selector=' . json_encode($selector) . ';'
+            . 'var forms=document.querySelectorAll(selector);'
+            . 'for(var i=0;i<forms.length;i++){' 
+            . 'var form=forms[i];'
+            . 'if(form.querySelector(".cf-turnstile")){continue;}'
+            . 'var holder=document.createElement("div");'
+            . 'holder.className="typecho-option enhancement-turnstile";'
+            . 'var widget=document.createElement("div");'
+            . 'widget.className="cf-turnstile";'
+            . 'widget.setAttribute("data-sitekey", siteKey);'
+            . 'holder.appendChild(widget);'
+            . 'var submit=form.querySelector("button[type=submit], input[type=submit]");'
+            . 'if(submit){'
+            . 'var wrap=submit.closest?submit.closest("p,div"):null;'
+            . 'if(wrap && wrap.parentNode===form){form.insertBefore(holder, wrap);}'
+            . 'else if(submit.parentNode){submit.parentNode.insertBefore(holder, submit);}'
+            . 'else{form.appendChild(holder);}'
+            . '}else{form.appendChild(holder);}'
+            . '}'
+            . 'if(window.turnstile && window.turnstile.render){'
+            . 'var els=document.querySelectorAll(".cf-turnstile");'
+            . 'for(var j=0;j<els.length;j++){' 
+            . 'if(!els[j].hasAttribute("data-widget-id")){' 
+            . 'var id=window.turnstile.render(els[j]);'
+            . 'if(id){els[j].setAttribute("data-widget-id", id);}'
+            . '}'
+            . '}'
+            . '}'
+            . '})();</script>';
+    }
+
+    public static function turnstileFilterComment($comment, $post, $last)
+    {
+        $current = empty($last) ? $comment : $last;
+        if (!self::turnstileEnabled()) {
+            return $current;
+        }
+
+        if (self::turnstileCommentGuestOnly()) {
+            $user = Typecho_Widget::widget('Widget_User');
+            if ($user->hasLogin()) {
+                return $current;
+            }
+        }
+
+        $token = Typecho_Request::getInstance()->get('cf-turnstile-response');
+        $verify = self::turnstileVerify($token, Typecho_Request::getInstance()->getIp());
+        if (empty($verify['success'])) {
+            Typecho_Cookie::set('__typecho_remember_text', isset($current['text']) ? (string)$current['text'] : '');
+            throw new Typecho_Widget_Exception(isset($verify['message']) ? $verify['message'] : _t('人机验证失败'));
+        }
+
+        return $current;
+    }
+
     public static function finishComment($comment)
     {
         $options = Typecho_Widget::widget('Widget_Options');
         $settings = self::pluginSettings($options);
         $user = Typecho_Widget::widget('Widget_User');
         $commentUrl = isset($comment->url) ? trim((string)$comment->url) : '';
-        $commentUrl = self::convertExternalUrlToGo($commentUrl);
-        if ($commentUrl !== '') {
-            $comment->url = $commentUrl;
-        }
 
         if (!isset($settings->enable_comment_sync) || $settings->enable_comment_sync == '1') {
             $db = Typecho_Db::get();
@@ -1037,16 +1308,10 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
                 }
             } else {
                 $userUrl = isset($user->url) ? trim((string)$user->url) : '';
-                $userUrl = self::convertExternalUrlToGo($userUrl);
                 $update = $db->update('table.comments')
                     ->rows(array('url' => $userUrl, 'mail' => $user->mail, 'author' => $user->screenName))
                     ->where('authorId =?', $user->uid);
                 $db->query($update);
-            }
-        } else {
-            $coid = isset($comment->coid) ? intval($comment->coid) : 0;
-            if ($coid > 0 && $commentUrl !== '') {
-                self::upgradeCommentUrlByCoid($coid, $commentUrl);
             }
         }
 
@@ -2035,11 +2300,6 @@ while ($tags->next()) {
             return;
         }
 
-        $coid = isset($widget->coid) ? intval($widget->coid) : 0;
-        if ($coid > 0) {
-            self::upgradeCommentUrlByCoid($coid, $goUrl);
-        }
-
         try {
             $widget->url = $goUrl;
         } catch (Exception $e) {
@@ -2068,7 +2328,6 @@ while ($tags->next()) {
             $rows = $db->fetchAll(
                 $db->select('coid', 'url')
                     ->from('table.comments')
-                    ->where('url IS NOT NULL')
                     ->where('url <> ?', '')
                     ->order('coid', Typecho_Db::SORT_DESC)
                     ->limit($limit)
@@ -2084,8 +2343,8 @@ while ($tags->next()) {
                     continue;
                 }
 
-                $goUrl = self::convertExternalUrlToGo($currentUrl);
-                if ($goUrl === '' || $goUrl === $currentUrl) {
+                $originUrl = self::decodeGoRedirectUrl($currentUrl);
+                if ($originUrl === '' || $originUrl === $currentUrl) {
                     continue;
                 }
 
@@ -2096,12 +2355,12 @@ while ($tags->next()) {
 
                 $db->query(
                     $db->update('table.comments')
-                        ->rows(array('url' => $goUrl))
+                        ->rows(array('url' => $originUrl))
                         ->where('coid = ?', $coid)
                 );
             }
         } catch (Exception $e) {
-            // ignore batch upgrade errors
+            // ignore batch repair errors
         }
     }
 

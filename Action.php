@@ -6,6 +6,238 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
     private $options;
     private $prefix;
 
+    private function normalizePluginSettings(array $settings)
+    {
+        $normalized = array();
+
+        foreach ($settings as $key => $value) {
+            $key = trim((string)$key);
+            if ($key === '' || !preg_match('/^[a-zA-Z0-9_]+$/', $key)) {
+                continue;
+            }
+
+            if (is_bool($value)) {
+                $value = $value ? '1' : '0';
+            } elseif (is_null($value)) {
+                $value = '';
+            } elseif (is_scalar($value)) {
+                $value = (string)$value;
+            } elseif (is_array($value)) {
+                $encoded = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                $value = ($encoded === false) ? '' : $encoded;
+            } else {
+                continue;
+            }
+
+            $normalized[$key] = $value;
+        }
+
+        return $normalized;
+    }
+
+    private function collectPluginSettings()
+    {
+        $settings = array();
+
+        try {
+            $options = Typecho_Widget::widget('Widget_Options');
+            $plugin = $options->plugin('Enhancement');
+            if (is_object($plugin)) {
+                $settings = get_object_vars($plugin);
+            }
+        } catch (Exception $e) {
+            $settings = array();
+        }
+
+        if (!is_array($settings)) {
+            $settings = array();
+        }
+
+        return $this->normalizePluginSettings($settings);
+    }
+
+    private function parseBackupSettingsPayload($rawPayload, &$errorMessage = '')
+    {
+        $errorMessage = '';
+        $rawPayload = trim((string)$rawPayload);
+        if ($rawPayload === '') {
+            $errorMessage = _t('备份内容为空');
+            return null;
+        }
+
+        $decoded = json_decode($rawPayload, true);
+        if (!is_array($decoded)) {
+            $errorMessage = _t('备份文件不是有效的 JSON');
+            return null;
+        }
+
+        if (isset($decoded['plugin'])) {
+            $pluginName = trim((string)$decoded['plugin']);
+            if ($pluginName !== '' && strcasecmp($pluginName, 'Enhancement') !== 0) {
+                $errorMessage = _t('该备份文件不是 Enhancement 插件配置');
+                return null;
+            }
+        }
+
+        $settings = $decoded;
+        if (isset($decoded['settings'])) {
+            if (!is_array($decoded['settings'])) {
+                $errorMessage = _t('备份文件 settings 字段格式错误');
+                return null;
+            }
+            $settings = $decoded['settings'];
+        }
+
+        $settings = $this->normalizePluginSettings($settings);
+        if (empty($settings)) {
+            $errorMessage = _t('备份文件中没有可恢复的配置项');
+            return null;
+        }
+
+        return $settings;
+    }
+
+    private function savePluginSettings(array $settings)
+    {
+        $settings = $this->normalizePluginSettings($settings);
+        if (empty($settings)) {
+            throw new Typecho_Widget_Exception(_t('没有可保存的配置项'));
+        }
+
+        $json = json_encode($settings, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($json === false) {
+            throw new Typecho_Widget_Exception(_t('配置序列化失败'));
+        }
+
+        $row = $this->db->fetchRow(
+            $this->db->select('name')
+                ->from('table.options')
+                ->where('name = ?', 'plugin:Enhancement')
+                ->where('user = ?', 0)
+                ->limit(1)
+        );
+
+        if (is_array($row) && !empty($row)) {
+            $this->db->query(
+                $this->db->update('table.options')
+                    ->rows(array('value' => $json))
+                    ->where('name = ?', 'plugin:Enhancement')
+                    ->where('user = ?', 0)
+            );
+        } else {
+            $this->db->query(
+                $this->db->insert('table.options')->rows(array(
+                    'name' => 'plugin:Enhancement',
+                    'value' => $json,
+                    'user' => 0
+                ))
+            );
+        }
+    }
+
+    private function backupResponse($success, $message, $statusCode = 200)
+    {
+        $statusCode = intval($statusCode);
+        if ($statusCode > 0) {
+            $this->response->setStatus($statusCode);
+        }
+
+        if ($this->request->isAjax()) {
+            $this->response->throwJson(array(
+                'success' => (bool)$success,
+                'message' => (string)$message
+            ));
+            return;
+        }
+
+        $this->widget('Widget_Notice')->set(
+            (string)$message,
+            null,
+            $success ? 'success' : 'error'
+        );
+        $this->response->goBack();
+    }
+
+    public function backupPluginSettings()
+    {
+        $settings = $this->collectPluginSettings();
+        $payload = array(
+            'plugin' => 'Enhancement',
+            'exported_at' => date('c'),
+            'settings' => $settings
+        );
+
+        $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+        if ($json === false) {
+            $this->backupResponse(false, _t('插件设置备份失败：JSON 编码异常'), 500);
+            return;
+        }
+
+        $fileName = 'enhancement-settings-' . date('Ymd-His') . '.json';
+        $this->response->setStatus(200);
+        $this->response->setHeader('Content-Type', 'application/json; charset=UTF-8');
+        $this->response->setHeader('Content-Disposition', 'attachment; filename="' . $fileName . '"');
+        $this->response->setHeader('Pragma', 'no-cache');
+        $this->response->setHeader('Expires', '0');
+        echo $json;
+    }
+
+    public function restorePluginSettings()
+    {
+        $rawPayload = '';
+
+        if (isset($_FILES['settings_backup_file']) && is_array($_FILES['settings_backup_file'])) {
+            $upload = $_FILES['settings_backup_file'];
+            $uploadError = isset($upload['error']) ? intval($upload['error']) : UPLOAD_ERR_NO_FILE;
+
+            if ($uploadError !== UPLOAD_ERR_NO_FILE) {
+                if ($uploadError !== UPLOAD_ERR_OK) {
+                    $this->backupResponse(false, _t('上传备份文件失败（错误码：%d）', $uploadError), 400);
+                    return;
+                }
+
+                $size = isset($upload['size']) ? intval($upload['size']) : 0;
+                if ($size <= 0 || $size > 1024 * 1024) {
+                    $this->backupResponse(false, _t('备份文件大小必须在 1MB 以内'), 400);
+                    return;
+                }
+
+                $tmpName = isset($upload['tmp_name']) ? (string)$upload['tmp_name'] : '';
+                if ($tmpName === '' || !is_readable($tmpName)) {
+                    $this->backupResponse(false, _t('无法读取上传的备份文件'), 400);
+                    return;
+                }
+
+                $rawPayload = (string)@file_get_contents($tmpName);
+            }
+        }
+
+        if (trim($rawPayload) === '') {
+            $rawPayload = (string)$this->request->get('settings_backup_json');
+        }
+
+        if (trim($rawPayload) === '') {
+            $this->backupResponse(false, _t('请先选择备份文件再恢复'), 400);
+            return;
+        }
+
+        $errorMessage = '';
+        $settings = $this->parseBackupSettingsPayload($rawPayload, $errorMessage);
+        if (!is_array($settings)) {
+            $this->backupResponse(false, $errorMessage !== '' ? $errorMessage : _t('备份内容解析失败'), 400);
+            return;
+        }
+
+        try {
+            $this->savePluginSettings($settings);
+        } catch (Exception $e) {
+            $this->backupResponse(false, _t('恢复失败：%s', $e->getMessage()), 500);
+            return;
+        }
+
+        $this->backupResponse(true, _t('插件设置恢复成功，共恢复 %d 项配置', count($settings)), 200);
+    }
+
     private function normalizeUrl($url)
     {
         $url = trim((string)$url);
@@ -213,6 +445,16 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
     {
         if (Enhancement_Plugin::publicForm()->validate()) {
             $this->response->goBack();
+        }
+
+        if (Enhancement_Plugin::turnstileEnabled()) {
+            $turnstileToken = $this->request->get('cf-turnstile-response');
+            $verify = Enhancement_Plugin::turnstileVerify($turnstileToken, $this->request->getIp());
+            if (empty($verify['success'])) {
+                $message = isset($verify['message']) ? (string)$verify['message'] : _t('人机验证失败');
+                $this->denySubmission($message, 403);
+                return;
+            }
         }
 
         $honeypot = trim((string)$this->request->get('homepage'));
@@ -613,6 +855,22 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         if ($action === 'enhancement-submit' || $this->request->is('do=submit')) {
             Helper::security()->protect();
             $this->submitEnhancement();
+            return;
+        }
+
+        if ($this->request->is('do=backup-settings')) {
+            Helper::security()->protect();
+            $user = Typecho_Widget::widget('Widget_User');
+            $user->pass('administrator');
+            $this->backupPluginSettings();
+            return;
+        }
+
+        if ($this->request->is('do=restore-settings')) {
+            Helper::security()->protect();
+            $user = Typecho_Widget::widget('Widget_User');
+            $user->pass('administrator');
+            $this->restorePluginSettings();
             return;
         }
 
