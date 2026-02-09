@@ -2,10 +2,10 @@
 
 /**
  * Enhancement 插件
- * 具体功能包含:友情链接,瞬间,网站地图,编辑器增强,站外链接跳转,评论邮件通知,QQ通知,常见视频链接 音乐链接 解析等
+ * 具体功能包含:插件/主题zip上传,友情链接,瞬间,网站地图,编辑器增强,站外链接跳转,评论邮件通知,QQ通知,常见视频链接 音乐链接 解析等
  * @package Enhancement
  * @author jkjoy
- * @version 1.1.3
+ * @version 1.1.4
  * @link HTTPS://IMSUN.ORG
  * @dependence 14.10.10-*
  */
@@ -75,9 +75,10 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
     public static function activate()
     {
         $info = Enhancement_Plugin::enhancementInstall();
-        Helper::addPanel(3, 'Enhancement/manage-enhancement.php', _t('链接管理'), _t('审核管理'), 'administrator');
+        Helper::addPanel(3, 'Enhancement/manage-enhancement.php', _t('链接'), _t('链接审核与管理'), 'administrator');
         Helper::addPanel(3, 'Enhancement/manage-moments.php', _t('瞬间'), _t('瞬间管理'), 'administrator');
-        Helper::addPanel(1, self::$commentNotifierPanel, _t('评论邮件提醒外观'), _t('评论邮件提醒主题列表'), 'administrator');
+        Helper::addPanel(1, 'Enhancement/manage-upload.php', _t('上传'), _t('上传管理'), 'administrator');
+        Helper::addPanel(1, self::$commentNotifierPanel, _t('邮件提醒外观'), _t('评论邮件提醒主题列表'), 'administrator');
         Helper::addRoute('sitemap', '/sitemap.xml', 'Enhancement_Sitemap_Action', 'action');
         Helper::addRoute('memos_api', '/api/v1/memos', 'Enhancement_Memos_Action', 'action');
         Helper::addRoute('zemail', '/zemail', 'Enhancement_CommentNotifier_Action', 'action');
@@ -142,6 +143,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         Helper::removeAction('enhancement-moments-edit');
         Helper::removePanel(3, 'Enhancement/manage-enhancement.php');
         Helper::removePanel(3, 'Enhancement/manage-moments.php');
+        Helper::removePanel(3, 'Enhancement/manage-upload.php');
         Helper::removePanel(1, self::$commentNotifierPanel);
 
         if ($deleteLinksTable || $deleteMomentsTable || $deleteQqQueueTable) {

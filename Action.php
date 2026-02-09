@@ -363,6 +363,302 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $this->response->goBack();
     }
 
+    private function uploadResponse($success, $message, $statusCode = 200)
+    {
+        $statusCode = intval($statusCode);
+        if ($statusCode > 0) {
+            $this->response->setStatus($statusCode);
+        }
+
+        if ($this->request->isAjax()) {
+            $this->response->throwJson(array(
+                'success' => (bool)$success,
+                'message' => (string)$message
+            ));
+            return;
+        }
+
+        $this->widget('Widget_Notice')->set(
+            (string)$message,
+            null,
+            $success ? 'success' : 'error'
+        );
+        $this->response->goBack();
+    }
+
+    private function removeDirectoryRecursively($path)
+    {
+        if (!is_dir($path)) {
+            return false;
+        }
+
+        $items = @scandir($path);
+        if (!is_array($items)) {
+            return false;
+        }
+
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+            $current = $path . DIRECTORY_SEPARATOR . $item;
+            if (is_dir($current)) {
+                if (!$this->removeDirectoryRecursively($current)) {
+                    return false;
+                }
+            } else {
+                if (!@unlink($current)) {
+                    return false;
+                }
+            }
+        }
+
+        return @rmdir($path);
+    }
+
+    private function isZipFile($file)
+    {
+        $fp = @fopen($file, 'rb');
+        if (!$fp) {
+            return false;
+        }
+
+        $bin = fread($fp, 4);
+        fclose($fp);
+
+        return strtolower(bin2hex($bin)) === '504b0304';
+    }
+
+    private function parseUploadPluginInfo($content)
+    {
+        $info = array('name' => '', 'title' => '', 'version' => '', 'author' => '');
+
+        $tokens = token_get_all($content);
+        $isDoc = false;
+        $isClass = false;
+
+        foreach ($tokens as $token) {
+            if (!$isDoc && is_array($token) && $token[0] == T_DOC_COMMENT) {
+                $lines = preg_split('/\r\n|\r|\n/', $token[1]);
+                foreach ($lines as $line) {
+                    $line = trim($line, " \t/*");
+                    if (preg_match('/@package\s+(.+)/', $line, $matches)) {
+                        $info['title'] = trim($matches[1]);
+                    } else if (preg_match('/@version\s+(.+)/', $line, $matches)) {
+                        $info['version'] = trim($matches[1]);
+                    } else if (preg_match('/@author\s+(.+)/', $line, $matches)) {
+                        $info['author'] = trim($matches[1]);
+                    }
+                }
+                $isDoc = true;
+            }
+
+            if (!$isClass && is_array($token) && $token[0] == T_CLASS) {
+                $isClass = true;
+            }
+
+            if ($isClass && is_array($token) && $token[0] == T_STRING) {
+                $parts = explode('_', $token[1]);
+                $info['name'] = $parts[0];
+                break;
+            }
+        }
+
+        return $info;
+    }
+
+    private function isThemeIndexFile($content)
+    {
+        $tokens = token_get_all($content);
+        foreach ($tokens as $token) {
+            if (is_array($token) && $token[0] == T_DOC_COMMENT) {
+                return (strpos($token[1], '@package') !== false);
+            }
+        }
+        return false;
+    }
+
+    public function uploadPackage()
+    {
+        $this->widget('Widget_User')->pass('administrator');
+
+        if (!class_exists('ZipArchive')) {
+            $this->uploadResponse(false, _t('当前环境不支持 ZipArchive，无法上传安装'), 500);
+            return;
+        }
+
+        if (!isset($_FILES['pluginzip']) || intval($_FILES['pluginzip']['error']) !== 0) {
+            $this->uploadResponse(false, _t('文件上传失败'), 400);
+            return;
+        }
+
+        $file = $_FILES['pluginzip'];
+        $tmp = isset($file['tmp_name']) ? (string)$file['tmp_name'] : '';
+        if ($tmp === '' || !is_uploaded_file($tmp)) {
+            $this->uploadResponse(false, _t('无效的上传文件'), 400);
+            return;
+        }
+
+        if (!$this->isZipFile($tmp)) {
+            $this->uploadResponse(false, _t('上传文件不是有效ZIP压缩包'), 400);
+            return;
+        }
+
+        $zip = new ZipArchive();
+        if ($zip->open($tmp) !== true) {
+            $this->uploadResponse(false, _t('无法打开ZIP文件，可能已损坏'), 400);
+            return;
+        }
+
+        $pluginDir = defined('__TYPECHO_PLUGIN_DIR__') ? __TYPECHO_PLUGIN_DIR__ : '/usr/plugins';
+        $themeDir = defined('__TYPECHO_THEME_DIR__') ? __TYPECHO_THEME_DIR__ : '/usr/themes';
+        $rootDir = defined('__TYPECHO_ROOT_DIR__') ? __TYPECHO_ROOT_DIR__ : dirname(dirname(dirname(__FILE__)));
+
+        $targetBase = '';
+        $typeLabel = '';
+
+        $pluginIndex = $zip->locateName('Plugin.php', ZipArchive::FL_NOCASE | ZipArchive::FL_NODIR);
+        if ($pluginIndex !== false) {
+            $typeLabel = _t('插件');
+            $fileName = $zip->getNameIndex($pluginIndex);
+            $pathParts = explode('/', str_replace('\\', '/', (string)$fileName));
+
+            if (count($pathParts) > 2) {
+                $zip->close();
+                $this->uploadResponse(false, _t('压缩包目录层级过深，无法安装'), 400);
+                return;
+            }
+
+            if (count($pathParts) == 2) {
+                $targetBase = rtrim($rootDir . $pluginDir, '/\\') . DIRECTORY_SEPARATOR;
+            } else {
+                $contents = $zip->getFromIndex($pluginIndex);
+                $pluginInfo = $this->parseUploadPluginInfo((string)$contents);
+                if (empty($pluginInfo['name'])) {
+                    $zip->close();
+                    $this->uploadResponse(false, _t('无法识别插件信息'), 400);
+                    return;
+                }
+                $targetBase = rtrim($rootDir . $pluginDir, '/\\') . DIRECTORY_SEPARATOR . $pluginInfo['name'] . DIRECTORY_SEPARATOR;
+            }
+        } else {
+            $themeIndex = $zip->locateName('index.php', ZipArchive::FL_NOCASE | ZipArchive::FL_NODIR);
+            if ($themeIndex === false) {
+                $zip->close();
+                $this->uploadResponse(false, _t('上传文件不是有效Typecho插件或主题'), 400);
+                return;
+            }
+
+            $typeLabel = _t('主题');
+            $fileName = $zip->getNameIndex($themeIndex);
+            $pathParts = explode('/', str_replace('\\', '/', (string)$fileName));
+            if (count($pathParts) > 2) {
+                $zip->close();
+                $this->uploadResponse(false, _t('压缩包目录层级过深，无法安装'), 400);
+                return;
+            }
+
+            $contents = $zip->getFromIndex($themeIndex);
+            if (!$this->isThemeIndexFile((string)$contents)) {
+                $zip->close();
+                $this->uploadResponse(false, _t('无法识别主题信息'), 400);
+                return;
+            }
+
+            if (count($pathParts) == 2) {
+                $targetBase = rtrim($rootDir . $themeDir, '/\\') . DIRECTORY_SEPARATOR;
+            } else {
+                $themeName = pathinfo(isset($file['name']) ? (string)$file['name'] : 'theme', PATHINFO_FILENAME);
+                $themeName = preg_replace('/[^a-zA-Z0-9_-]/', '', $themeName);
+                if ($themeName === '') {
+                    $themeName = 'theme';
+                }
+                $targetBase = rtrim($rootDir . $themeDir, '/\\') . DIRECTORY_SEPARATOR . $themeName . DIRECTORY_SEPARATOR;
+            }
+        }
+
+        if ($targetBase === '') {
+            $zip->close();
+            $this->uploadResponse(false, _t('未找到可安装目标目录'), 400);
+            return;
+        }
+
+        if (!is_dir($targetBase)) {
+            @mkdir($targetBase, 0755, true);
+        }
+        if (!is_dir($targetBase) || !is_writable($targetBase)) {
+            $zip->close();
+            $this->uploadResponse(false, _t('目标目录不可写，请检查权限：%s', $targetBase), 500);
+            return;
+        }
+
+        if (!$zip->extractTo($targetBase)) {
+            $zip->close();
+            $this->uploadResponse(false, _t('解压失败，请检查目录写入权限'), 500);
+            return;
+        }
+
+        $zip->close();
+        $this->uploadResponse(true, _t('%s安装成功，请到控制台启用', $typeLabel), 200);
+    }
+
+    public function deletePluginPackage()
+    {
+        $this->widget('Widget_User')->pass('administrator');
+        $name = trim((string)$this->request->get('name'));
+        if ($name === '' || !preg_match('/^[a-zA-Z0-9_-]+$/', $name)) {
+            $this->uploadResponse(false, _t('插件名称不合法'), 400);
+            return;
+        }
+
+        $pluginDir = defined('__TYPECHO_PLUGIN_DIR__') ? __TYPECHO_PLUGIN_DIR__ : '/usr/plugins';
+        $rootDir = defined('__TYPECHO_ROOT_DIR__') ? __TYPECHO_ROOT_DIR__ : dirname(dirname(dirname(__FILE__)));
+        $path = rtrim($rootDir . $pluginDir, '/\\') . DIRECTORY_SEPARATOR . $name;
+
+        if (!is_dir($path)) {
+            $file = $path . '.php';
+            if (is_file($file) && @unlink($file)) {
+                $this->uploadResponse(true, _t('插件已删除：%s', $name), 200);
+                return;
+            }
+            $this->uploadResponse(false, _t('插件不存在：%s', $name), 404);
+            return;
+        }
+
+        if ($this->removeDirectoryRecursively($path)) {
+            $this->uploadResponse(true, _t('插件已删除：%s', $name), 200);
+            return;
+        }
+
+        $this->uploadResponse(false, _t('插件删除失败：%s', $name), 500);
+    }
+
+    public function deleteThemePackage()
+    {
+        $this->widget('Widget_User')->pass('administrator');
+        $name = trim((string)$this->request->get('name'));
+        if ($name === '' || !preg_match('/^[a-zA-Z0-9_-]+$/', $name)) {
+            $this->uploadResponse(false, _t('主题名称不合法'), 400);
+            return;
+        }
+
+        $themeDir = defined('__TYPECHO_THEME_DIR__') ? __TYPECHO_THEME_DIR__ : '/usr/themes';
+        $rootDir = defined('__TYPECHO_ROOT_DIR__') ? __TYPECHO_ROOT_DIR__ : dirname(dirname(dirname(__FILE__)));
+        $path = rtrim($rootDir . $themeDir, '/\\') . DIRECTORY_SEPARATOR . $name;
+
+        if (!is_dir($path)) {
+            $this->uploadResponse(false, _t('主题不存在：%s', $name), 404);
+            return;
+        }
+
+        if ($this->removeDirectoryRecursively($path)) {
+            $this->uploadResponse(true, _t('主题已删除：%s', $name), 200);
+            return;
+        }
+
+        $this->uploadResponse(false, _t('主题删除失败：%s', $name), 500);
+    }
+
     public function retryQqNotifyQueue()
     {
         try {
@@ -1248,6 +1544,30 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             $user = Typecho_Widget::widget('Widget_User');
             $user->pass('administrator');
             $this->clearQqNotifyQueue();
+            return;
+        }
+
+        if ($this->request->is('do=upload-package')) {
+            Helper::security()->protect();
+            $user = Typecho_Widget::widget('Widget_User');
+            $user->pass('administrator');
+            $this->uploadPackage();
+            return;
+        }
+
+        if ($this->request->is('do=delete-plugin-package')) {
+            Helper::security()->protect();
+            $user = Typecho_Widget::widget('Widget_User');
+            $user->pass('administrator');
+            $this->deletePluginPackage();
+            return;
+        }
+
+        if ($this->request->is('do=delete-theme-package')) {
+            Helper::security()->protect();
+            $user = Typecho_Widget::widget('Widget_User');
+            $user->pass('administrator');
+            $this->deleteThemePackage();
             return;
         }
 
