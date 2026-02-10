@@ -6,6 +6,9 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
     private $options;
     private $prefix;
     private static $metingCache = array();
+    private $metingOutputBaseLevel = 0;
+    private $metingDisplayErrorsBackup = null;
+    private $metingErrorReportingBackup = null;
 
     private function normalizePluginSettings(array $settings)
     {
@@ -258,6 +261,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 
     private function metingApiResponseJson($data)
     {
+        $this->metingApiDiscardBufferedOutput();
         $this->response->setStatus(200);
         $this->response->setContentType('application/json; charset=UTF-8');
         echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -265,9 +269,45 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 
     private function metingApiResponseError($message, $status = 400)
     {
+        $this->metingApiDiscardBufferedOutput();
         $this->response->setStatus(intval($status));
         $this->response->setContentType('application/json; charset=UTF-8');
         echo json_encode(array('error' => trim((string)$message)), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+
+    private function metingApiBeginOutputGuard()
+    {
+        $this->metingOutputBaseLevel = ob_get_level();
+        @ob_start();
+        $this->metingDisplayErrorsBackup = ini_get('display_errors');
+        $this->metingErrorReportingBackup = error_reporting();
+        @ini_set('display_errors', '0');
+        @error_reporting(E_ALL & ~E_WARNING & ~E_NOTICE & ~E_DEPRECATED & ~E_STRICT);
+    }
+
+    private function metingApiDiscardBufferedOutput()
+    {
+        $base = intval($this->metingOutputBaseLevel);
+        if ($base < 0) {
+            $base = 0;
+        }
+
+        while (ob_get_level() > $base) {
+            @ob_end_clean();
+        }
+    }
+
+    private function metingApiEndOutputGuard()
+    {
+        $this->metingApiDiscardBufferedOutput();
+
+        if ($this->metingDisplayErrorsBackup !== null) {
+            @ini_set('display_errors', (string)$this->metingDisplayErrorsBackup);
+        }
+
+        if ($this->metingErrorReportingBackup !== null) {
+            @error_reporting(intval($this->metingErrorReportingBackup));
+        }
     }
 
     private function metingApiNormalizeServer($server)
@@ -353,6 +393,8 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 
     public function metingApi()
     {
+        $this->metingApiBeginOutputGuard();
+
         if (!function_exists('curl_init')) {
             $this->metingApiResponseError('缺少 cURL 扩展', 500);
             return;
@@ -411,6 +453,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
                     $url = 'https://music.163.com/song/media/outer/url?id=' . rawurlencode($id) . '.mp3';
                 }
 
+                $this->metingApiDiscardBufferedOutput();
                 $this->response->setStatus(302);
                 $this->response->redirect($url);
                 return;
@@ -432,6 +475,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 
                 $parsed = json_decode((string)$data, true);
                 $url = is_array($parsed) && isset($parsed['url']) ? trim((string)$parsed['url']) : '';
+                $this->metingApiDiscardBufferedOutput();
                 $this->response->setStatus(302);
                 $this->response->redirect($url);
                 return;
@@ -453,6 +497,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 
                 $parsed = json_decode((string)$data, true);
                 $lyric = is_array($parsed) && isset($parsed['lyric']) ? (string)$parsed['lyric'] : '';
+                $this->metingApiDiscardBufferedOutput();
                 $this->response->setStatus(200);
                 $this->response->setContentType('text/plain; charset=UTF-8');
                 echo $lyric;
@@ -496,8 +541,12 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             $songs = json_decode((string)$data, true);
             $rows = $this->metingApiBuildAudioList($songs);
             $this->metingApiResponseJson($rows);
+        } catch (Error $e) {
+            $this->metingApiResponseError('本地 Meting 解析失败：' . $e->getMessage(), 500);
         } catch (Exception $e) {
             $this->metingApiResponseError('本地 Meting 解析失败：' . $e->getMessage(), 500);
+        } finally {
+            $this->metingApiEndOutputGuard();
         }
     }
 
@@ -746,6 +795,25 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $this->response->goBack();
     }
 
+    private function shouldUseJsonUploadResponse()
+    {
+        if ($this->request->isAjax()) {
+            return true;
+        }
+
+        $accept = strtolower((string)$this->request->getHeader('Accept', ''));
+        if (strpos($accept, 'application/json') !== false) {
+            return true;
+        }
+
+        $contentType = strtolower((string)$this->request->getHeader('Content-Type', ''));
+        if (strpos($contentType, 'application/json') !== false) {
+            return true;
+        }
+
+        return $this->request->is('do=upload-package') && isset($_FILES['pluginzip']);
+    }
+
     private function uploadResponse($success, $message, $statusCode = 200)
     {
         $statusCode = intval($statusCode);
@@ -753,7 +821,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             $this->response->setStatus($statusCode);
         }
 
-        if ($this->request->isAjax()) {
+        if ($this->shouldUseJsonUploadResponse()) {
             $this->response->throwJson(array(
                 'success' => (bool)$success,
                 'message' => (string)$message
@@ -896,24 +964,52 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $pluginDir = defined('__TYPECHO_PLUGIN_DIR__') ? __TYPECHO_PLUGIN_DIR__ : '/usr/plugins';
         $themeDir = defined('__TYPECHO_THEME_DIR__') ? __TYPECHO_THEME_DIR__ : '/usr/themes';
         $rootDir = defined('__TYPECHO_ROOT_DIR__') ? __TYPECHO_ROOT_DIR__ : dirname(dirname(dirname(__FILE__)));
+        $pluginRoot = rtrim($rootDir . $pluginDir, '/\\');
+        $themeRoot = rtrim($rootDir . $themeDir, '/\\');
 
         $targetBase = '';
+        $targetPackageDir = '';
+        $mainFileInZip = '';
+        $isThemePackage = false;
         $typeLabel = '';
+
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $entry = str_replace('\\', '/', (string)$zip->getNameIndex($i));
+            $entry = ltrim($entry, '/');
+            if ($entry === '') {
+                continue;
+            }
+
+            if (strpos($entry, '../') !== false || preg_match('/^[a-zA-Z]:/', $entry) || strpos($entry, "\0") !== false) {
+                $zip->close();
+                $this->uploadResponse(false, _t('压缩包包含非法路径，已拒绝安装'), 400);
+                return;
+            }
+        }
 
         $pluginIndex = $zip->locateName('Plugin.php', ZipArchive::FL_NOCASE | ZipArchive::FL_NODIR);
         if ($pluginIndex !== false) {
             $typeLabel = _t('插件');
-            $fileName = $zip->getNameIndex($pluginIndex);
-            $pathParts = explode('/', str_replace('\\', '/', (string)$fileName));
+            $fileName = ltrim(str_replace('\\', '/', (string)$zip->getNameIndex($pluginIndex)), '/');
+            $pathParts = array_values(array_filter(explode('/', $fileName), 'strlen'));
+            $mainFileInZip = $fileName;
 
-            if (count($pathParts) > 2) {
+            if (count($pathParts) < 1 || count($pathParts) > 2) {
                 $zip->close();
                 $this->uploadResponse(false, _t('压缩包目录层级过深，无法安装'), 400);
                 return;
             }
 
             if (count($pathParts) == 2) {
-                $targetBase = rtrim($rootDir . $pluginDir, '/\\') . DIRECTORY_SEPARATOR;
+                $packageName = trim((string)$pathParts[0]);
+                if ($packageName === '' || $packageName === '.' || $packageName === '..') {
+                    $zip->close();
+                    $this->uploadResponse(false, _t('无法识别插件目录名'), 400);
+                    return;
+                }
+
+                $targetBase = $pluginRoot . DIRECTORY_SEPARATOR;
+                $targetPackageDir = $pluginRoot . DIRECTORY_SEPARATOR . $packageName;
             } else {
                 $contents = $zip->getFromIndex($pluginIndex);
                 $pluginInfo = $this->parseUploadPluginInfo((string)$contents);
@@ -922,7 +1018,11 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
                     $this->uploadResponse(false, _t('无法识别插件信息'), 400);
                     return;
                 }
-                $targetBase = rtrim($rootDir . $pluginDir, '/\\') . DIRECTORY_SEPARATOR . $pluginInfo['name'] . DIRECTORY_SEPARATOR;
+
+                $packageName = trim((string)$pluginInfo['name']);
+                $mainFileInZip = 'Plugin.php';
+                $targetBase = $pluginRoot . DIRECTORY_SEPARATOR . $packageName . DIRECTORY_SEPARATOR;
+                $targetPackageDir = rtrim($targetBase, '/\\');
             }
         } else {
             $themeIndex = $zip->locateName('index.php', ZipArchive::FL_NOCASE | ZipArchive::FL_NODIR);
@@ -933,9 +1033,12 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             }
 
             $typeLabel = _t('主题');
-            $fileName = $zip->getNameIndex($themeIndex);
-            $pathParts = explode('/', str_replace('\\', '/', (string)$fileName));
-            if (count($pathParts) > 2) {
+            $isThemePackage = true;
+            $fileName = ltrim(str_replace('\\', '/', (string)$zip->getNameIndex($themeIndex)), '/');
+            $pathParts = array_values(array_filter(explode('/', $fileName), 'strlen'));
+            $mainFileInZip = $fileName;
+
+            if (count($pathParts) < 1 || count($pathParts) > 2) {
                 $zip->close();
                 $this->uploadResponse(false, _t('压缩包目录层级过深，无法安装'), 400);
                 return;
@@ -949,22 +1052,35 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             }
 
             if (count($pathParts) == 2) {
-                $targetBase = rtrim($rootDir . $themeDir, '/\\') . DIRECTORY_SEPARATOR;
+                $packageName = trim((string)$pathParts[0]);
+                if ($packageName === '' || $packageName === '.' || $packageName === '..') {
+                    $zip->close();
+                    $this->uploadResponse(false, _t('无法识别主题目录名'), 400);
+                    return;
+                }
+
+                $targetBase = $themeRoot . DIRECTORY_SEPARATOR;
+                $targetPackageDir = $themeRoot . DIRECTORY_SEPARATOR . $packageName;
             } else {
                 $themeName = pathinfo(isset($file['name']) ? (string)$file['name'] : 'theme', PATHINFO_FILENAME);
                 $themeName = preg_replace('/[^a-zA-Z0-9_-]/', '', $themeName);
                 if ($themeName === '') {
                     $themeName = 'theme';
                 }
-                $targetBase = rtrim($rootDir . $themeDir, '/\\') . DIRECTORY_SEPARATOR . $themeName . DIRECTORY_SEPARATOR;
+
+                $mainFileInZip = 'index.php';
+                $targetBase = $themeRoot . DIRECTORY_SEPARATOR . $themeName . DIRECTORY_SEPARATOR;
+                $targetPackageDir = rtrim($targetBase, '/\\');
             }
         }
 
-        if ($targetBase === '') {
+        if ($targetBase === '' || $targetPackageDir === '' || $mainFileInZip === '') {
             $zip->close();
             $this->uploadResponse(false, _t('未找到可安装目标目录'), 400);
             return;
         }
+
+        $packageDirExisted = is_dir($targetPackageDir);
 
         if (!is_dir($targetBase)) {
             @mkdir($targetBase, 0755, true);
@@ -979,6 +1095,35 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             $zip->close();
             $this->uploadResponse(false, _t('解压失败，请检查目录写入权限'), 500);
             return;
+        }
+
+        $installedMainFile = rtrim($targetBase, '/\\')
+            . DIRECTORY_SEPARATOR
+            . str_replace('/', DIRECTORY_SEPARATOR, ltrim($mainFileInZip, '/'));
+
+        if (!is_file($installedMainFile)) {
+            $zip->close();
+
+            if (!$packageDirExisted && is_dir($targetPackageDir)) {
+                $this->removeDirectoryRecursively($targetPackageDir);
+            }
+
+            $this->uploadResponse(false, _t('安装不完整，缺少入口文件：%s', $mainFileInZip), 500);
+            return;
+        }
+
+        if ($isThemePackage) {
+            $installedThemeIndex = @file_get_contents($installedMainFile);
+            if ($installedThemeIndex === false || !$this->isThemeIndexFile((string)$installedThemeIndex)) {
+                $zip->close();
+
+                if (!$packageDirExisted && is_dir($targetPackageDir)) {
+                    $this->removeDirectoryRecursively($targetPackageDir);
+                }
+
+                $this->uploadResponse(false, _t('主题入口文件校验失败，请检查 ZIP 结构是否正确'), 400);
+                return;
+            }
         }
 
         $zip->close();

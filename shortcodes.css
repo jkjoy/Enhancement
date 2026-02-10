@@ -1,0 +1,24 @@
+.enhancement-shortcode{display:block;margin:12px 0;border-radius:8px;}
+.enhancement-callout{padding:10px 12px;border:1px solid transparent;line-height:1.6;}
+.enhancement-callout-primary,.enhancement-callout-important{background:#eef2ff;border-color:#c7d2fe;color:#1e3a8a;}
+.enhancement-callout-success{background:#ecfdf5;border-color:#a7f3d0;color:#065f46;}
+.enhancement-callout-info{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8;}
+.enhancement-callout-danger{background:#fef2f2;border-color:#fecaca;color:#b91c1c;}
+.enhancement-reply{padding:10px 12px;background:#f8fafc;border:1px dashed #cbd5e1;color:#0f172a;}
+.enhancement-reply-locked{background:#fff7ed;border-color:#fed7aa;color:#9a3412;}
+.enhancement-reply-lock-text{font-size:13px;}
+.enhancement-article-ref,.enhancement-github-ref{display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;color:#111827;text-decoration:none;}
+.enhancement-article-ref:hover,.enhancement-github-ref:hover{border-color:#cbd5e1;background:#f8fafc;text-decoration:none;}
+.enhancement-github-card-link{display:block;max-width:560px;padding:0;border:0;background:transparent;text-decoration:none;}
+.enhancement-github-card{display:block;max-width:100%;height:auto;border-radius:10px;border:1px solid #e5e7eb;background:#fff;}
+@media (prefers-color-scheme: dark){
+.enhancement-callout-primary,.enhancement-callout-important{background:#1e293b;border-color:#334155;color:#c7d2fe;}
+.enhancement-callout-success{background:#052e21;border-color:#064e3b;color:#6ee7b7;}
+.enhancement-callout-info{background:#0c4a6e;border-color:#075985;color:#bae6fd;}
+.enhancement-callout-danger{background:#450a0a;border-color:#7f1d1d;color:#fca5a5;}
+.enhancement-reply{background:#0f172a;border-color:#334155;color:#e2e8f0;}
+.enhancement-reply-locked{background:#3f1d0f;border-color:#7c2d12;color:#fdba74;}
+.enhancement-article-ref,.enhancement-github-ref{background:#111827;border-color:#374151;color:#e5e7eb;}
+.enhancement-article-ref:hover,.enhancement-github-ref:hover{background:#1f2937;border-color:#4b5563;}
+.enhancement-github-card{border-color:#374151;background:#111827;}
+}

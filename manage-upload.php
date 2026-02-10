@@ -265,9 +265,11 @@ include 'common-js.php';
 
             var xhr = new XMLHttpRequest();
             xhr.open('POST', '<?php $security->index('/action/enhancement-edit?do=upload-package'); ?>', true);
+            xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+            xhr.setRequestHeader('Accept', 'application/json');
 
             xhr.onload = function() {
-                if (xhr.status === 200) {
+                if (xhr.status >= 200 && xhr.status < 300) {
                     try {
                         var response = JSON.parse(xhr.responseText);
                         if (response.success) {
@@ -280,7 +282,11 @@ include 'common-js.php';
                             btn.disabled = false;
                         }
                     } catch (e) {
-                        setStatus('上传失败：服务端响应异常', 'error');
+                        var rawText = (xhr.responseText || '').replace(/\s+/g, ' ').trim();
+                        if (rawText.length > 120) {
+                            rawText = rawText.substring(0, 120) + '...';
+                        }
+                        setStatus('上传失败：服务端响应异常' + (rawText ? ('（' + rawText + '）') : ''), 'error');
                         btn.disabled = false;
                     }
                 } else {

@@ -5,7 +5,7 @@
  * 具体功能包含:插件/主题zip上传,友情链接,瞬间,网站地图,编辑器增强,站外链接跳转,评论邮件通知,QQ通知,常见视频链接 音乐链接 解析等
  * @package Enhancement
  * @author jkjoy
- * @version 1.1.5
+ * @version 1.1.6
  * @link HTTPS://IMSUN.ORG
  * @dependence 14.10.10-*
  */
@@ -498,6 +498,15 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             _t('将网易云音乐、QQ音乐、酷狗音乐链接自动替换为 APlayer 播放器')
         );
         $form->addInput($enableMusicParser);
+
+        $enableAttachmentPreview = new Typecho_Widget_Helper_Form_Element_Radio(
+            'enable_attachment_preview',
+            array('1' => _t('启用'), '0' => _t('禁用')),
+            '0',
+            _t('附件预览增强'),
+            _t('后台写文章/页面时，启用附件预览与批量插入增强（默认关闭）')
+        );
+        $form->addInput($enableAttachmentPreview);
 
         $defaultMetingApi = self::defaultLocalMetingApiTemplate(Typecho_Widget::widget('Widget_Options'));
 
@@ -2669,14 +2678,18 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
 
     public static function writePostBottom()
     {
-        AttachmentHelper::addEnhancedFeatures();
+        if (self::attachmentPreviewEnabled()) {
+            Enhancement_AttachmentHelper::addEnhancedFeatures();
+        }
         self::shortcodesHelper();
         self::tagsList();
     }
 
     public static function writePageBottom()
     {
-        AttachmentHelper::addEnhancedFeatures();
+        if (self::attachmentPreviewEnabled()) {
+            Enhancement_AttachmentHelper::addEnhancedFeatures();
+        }
         self::shortcodesHelper();
     }
 
@@ -3068,6 +3081,15 @@ while ($tags->next()) {
         return $settings->enable_music_parser == '1';
     }
 
+    public static function attachmentPreviewEnabled(): bool
+    {
+        $settings = self::pluginSettings(Typecho_Widget::widget('Widget_Options'));
+        if (!isset($settings->enable_attachment_preview)) {
+            return false;
+        }
+        return $settings->enable_attachment_preview == '1';
+    }
+
     private static function musicMetingApiTemplate(): string
     {
         $options = Typecho_Widget::widget('Widget_Options');
@@ -3094,6 +3116,8 @@ while ($tags->next()) {
 
     public static function archiveHeader($archive = null)
     {
+        self::renderEnhancementShortcodeStyles();
+
         if (!self::musicParserEnabled()) {
             return;
         }
@@ -4180,32 +4204,14 @@ while ($tags->next()) {
         }
         $printed = true;
 
-        echo '<style>'
-            . '.enhancement-shortcode{display:block;margin:12px 0;border-radius:8px;}'
-            . '.enhancement-callout{padding:10px 12px;border:1px solid transparent;line-height:1.6;}'
-            . '.enhancement-callout-primary,.enhancement-callout-important{background:#eef2ff;border-color:#c7d2fe;color:#1e3a8a;}'
-            . '.enhancement-callout-success{background:#ecfdf5;border-color:#a7f3d0;color:#065f46;}'
-            . '.enhancement-callout-info{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8;}'
-            . '.enhancement-callout-danger{background:#fef2f2;border-color:#fecaca;color:#b91c1c;}'
-            . '.enhancement-reply{padding:10px 12px;background:#f8fafc;border:1px dashed #cbd5e1;color:#0f172a;}'
-            . '.enhancement-reply-locked{background:#fff7ed;border-color:#fed7aa;color:#9a3412;}'
-            . '.enhancement-reply-lock-text{font-size:13px;}'
-            . '.enhancement-article-ref,.enhancement-github-ref{display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;color:#111827;text-decoration:none;}'
-            . '.enhancement-article-ref:hover,.enhancement-github-ref:hover{border-color:#cbd5e1;background:#f8fafc;text-decoration:none;}'
-            . '.enhancement-github-card-link{display:block;max-width:560px;padding:0;border:0;background:transparent;text-decoration:none;}'
-            . '.enhancement-github-card{display:block;max-width:100%;height:auto;border-radius:10px;border:1px solid #e5e7eb;background:#fff;}'
-            . '@media (prefers-color-scheme: dark){'
-            . '.enhancement-callout-primary,.enhancement-callout-important{background:#1e293b;border-color:#334155;color:#c7d2fe;}'
-            . '.enhancement-callout-success{background:#052e21;border-color:#064e3b;color:#6ee7b7;}'
-            . '.enhancement-callout-info{background:#0c4a6e;border-color:#075985;color:#bae6fd;}'
-            . '.enhancement-callout-danger{background:#450a0a;border-color:#7f1d1d;color:#fca5a5;}'
-            . '.enhancement-reply{background:#0f172a;border-color:#334155;color:#e2e8f0;}'
-            . '.enhancement-reply-locked{background:#3f1d0f;border-color:#7c2d12;color:#fdba74;}'
-            . '.enhancement-article-ref,.enhancement-github-ref{background:#111827;border-color:#374151;color:#e5e7eb;}'
-            . '.enhancement-article-ref:hover,.enhancement-github-ref:hover{background:#1f2937;border-color:#4b5563;}'
-            . '.enhancement-github-card{border-color:#374151;background:#111827;}'
-            . '}'
-            . '</style>';
+        $options = Typecho_Widget::widget('Widget_Options');
+        $pluginUrl = rtrim((string)$options->pluginUrl, '/');
+        if ($pluginUrl === '') {
+            return;
+        }
+
+        $cssUrl = htmlspecialchars($pluginUrl . '/Enhancement/shortcodes.css', ENT_QUOTES, 'UTF-8');
+        echo '<link rel="stylesheet" href="' . $cssUrl . '">' . "\n";
     }
 
     public static function parse($text, $widget, $lastResult)
@@ -4219,8 +4225,6 @@ while ($tags->next()) {
         $isCommentWidget = $widget instanceof Widget_Abstract_Comments;
 
         if ($isContentWidget || $isCommentWidget) {
-            self::renderEnhancementShortcodeStyles();
-
             if ($isCommentWidget) {
                 self::upgradeCommentWidgetUrl($widget);
             }
@@ -4257,7 +4261,7 @@ while ($tags->next()) {
  * @author jkjoy
  * @date 2025-04-25
  */
-class AttachmentHelper
+class Enhancement_AttachmentHelper
 {
     public static function addEnhancedFeatures()
     {
