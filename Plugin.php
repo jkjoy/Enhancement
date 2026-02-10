@@ -65,6 +65,67 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         return (object) array();
     }
 
+    private static function isPhpExtensionReady(string $extension): bool
+    {
+        $extension = strtolower(trim($extension));
+        switch ($extension) {
+            case 'curl':
+                return extension_loaded('curl') || function_exists('curl_init');
+            case 'gd':
+                return extension_loaded('gd') || function_exists('gd_info');
+            case 'zip':
+                return extension_loaded('zip') || class_exists('ZipArchive');
+            default:
+                return extension_loaded($extension);
+        }
+    }
+
+    public static function getMissingPhpExtensions(array $extensions = array('curl', 'gd', 'zip')): array
+    {
+        $missing = array();
+        foreach ($extensions as $extension) {
+            $extension = strtolower(trim((string)$extension));
+            if ($extension === '' || in_array($extension, $missing, true)) {
+                continue;
+            }
+
+            if (!self::isPhpExtensionReady($extension)) {
+                $missing[] = $extension;
+            }
+        }
+
+        return $missing;
+    }
+
+    public static function renderPhpExtensionNotice(array $extensions = array('curl', 'gd', 'zip'))
+    {
+        $missing = self::getMissingPhpExtensions($extensions);
+        if (empty($missing)) {
+            return;
+        }
+
+        static $stylePrinted = false;
+        if (!$stylePrinted) {
+            echo '<style>
+            .enh-php-ext-warning{margin:10px 0 14px;padding:10px 12px;border:1px solid #f5c2c7;border-radius:6px;background:#fff5f5;color:#842029;line-height:1.7;}
+            .enh-php-ext-warning strong{font-weight:600;}
+            </style>';
+            $stylePrinted = true;
+        }
+
+        $labels = array();
+        foreach ($missing as $extension) {
+            $labels[] = strtoupper((string)$extension);
+        }
+
+        echo '<div class="enh-php-ext-warning">'
+            . '<strong>环境提醒：</strong>'
+            . '当前缺少 PHP 扩展 '
+            . htmlspecialchars(implode(', ', $labels), ENT_QUOTES, 'UTF-8')
+            . '，请在服务器安装并启用后再使用相关功能（如网络请求、图片处理、ZIP 上传）。'
+            . '</div>';
+    }
+
     /**
      * 激活插件方法,如果激活失败,直接抛出异常
      * 
@@ -315,6 +376,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         display: none !important;
     }
 </style>';
+        self::renderPhpExtensionNotice();
         echo '<div class="typecho-option" style="margin-top:12px;">
             <button type="button" class="btn enhancement-action-btn" id="enhancement-links-help-toggle" style="display:none;">帮助</button>
             <div id="enhancement-links-help" style="display:none; margin-top:10px;">
@@ -2704,8 +2766,18 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
 #wmd-button-row .enh-wmd-shortcode-spacer{float:left;width:1px;height:18px;margin:1px 6px 0 4px;background:#d1d5db;}
 .enh-shortcodes-modal-mask{display:none;position:fixed;inset:0;z-index:999999;background:rgba(15,23,42,.42);}
 .enh-shortcodes-modal{position:absolute;top:14vh;left:50%;transform:translateX(-50%);width:min(640px,92vw);background:#fff;border-radius:8px;box-shadow:0 12px 30px rgba(15,23,42,.22);border:1px solid #e5e7eb;padding:14px;}
+.enh-shortcodes-modal-close{position:absolute;top:10px;right:10px;width:26px;height:26px;border:0;border-radius:6px;background:transparent;color:#6b7280;font-size:18px;line-height:26px;text-align:center;cursor:pointer;}
+.enh-shortcodes-modal-close:hover{background:#f3f4f6;color:#111827;}
 .enh-shortcodes-modal-title{font-size:14px;font-weight:600;color:#111827;margin:0 0 10px;}
 .enh-shortcodes-modal-input{width:100%;min-height:140px;resize:vertical;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;line-height:1.6;color:#111827;background:#fff;box-sizing:border-box;}
+.enh-shortcodes-modal-fields{display:none;}
+.enh-shortcodes-modal-field{margin-bottom:10px;}
+.enh-shortcodes-modal-field:last-child{margin-bottom:0;}
+.enh-shortcodes-modal-field label{display:block;margin:0 0 4px;font-size:12px;color:#4b5563;}
+.enh-shortcodes-modal-field input{width:100%;height:34px;border:1px solid #d1d5db;border-radius:6px;padding:0 10px;box-sizing:border-box;color:#111827;background:#fff;}
+.enh-shortcodes-modal-error{display:none;margin-top:8px;font-size:12px;color:#dc2626;line-height:1.4;}
+.enh-shortcodes-modal-error.is-visible{display:block;}
+.enh-shortcodes-modal-field input.is-error{border-color:#dc2626;box-shadow:0 0 0 2px rgba(220,38,38,.12);}
 .enh-shortcodes-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px;}
 .enh-shortcodes-modal-btn{border:1px solid #d1d5db;border-radius:4px;background:#fff;color:#374151;padding:5px 12px;cursor:pointer;}
 .enh-shortcodes-modal-btn.primary{background:#467B96;border-color:#467B96;color:#fff;}
@@ -2731,7 +2803,8 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             info: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" fill="#000000" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm16-40a8,8,0,0,1-8,8,16,16,0,0,1-16-16V128a8,8,0,0,1,0-16,16,16,0,0,1,16,16v40A8,8,0,0,1,144,176ZM112,84a12,12,0,1,1,12,12A12,12,0,0,1,112,84Z"></path></svg>',
             danger: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" fill="#000000" viewBox="0 0 256 256"><path d="M236.8,188.09,149.35,36.22h0a24.76,24.76,0,0,0-42.7,0L19.2,188.09a23.51,23.51,0,0,0,0,23.72A24.35,24.35,0,0,0,40.55,224h174.9a24.35,24.35,0,0,0,21.33-12.19A23.51,23.51,0,0,0,236.8,188.09ZM222.93,203.8a8.5,8.5,0,0,1-7.48,4.2H40.55a8.5,8.5,0,0,1-7.48-4.2,7.59,7.59,0,0,1,0-7.72L120.52,44.21a8.75,8.75,0,0,1,15,0l87.45,151.87A7.59,7.59,0,0,1,222.93,203.8ZM120,144V104a8,8,0,0,1,16,0v40a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,180Z"></path></svg>',
             article: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="18" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M80 32h72l56 56v136H80z"></path><polyline points="152 32 152 88 208 88"></polyline><line x1="104" y1="132" x2="184" y2="132"></line><line x1="104" y1="164" x2="184" y2="164"></line></svg>',
-            github: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52 0-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.01.08-2.1 0 0 .67-.21 2.2.82A7.6 7.6 0 0 1 8 4.8c.68 0 1.37.09 2.01.27 1.53-1.04 2.2-.82 2.2-.82.44 1.09.16 1.9.08 2.1.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8z"></path></svg>'
+            github: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52 0-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.01.08-2.1 0 0 .67-.21 2.2.82A7.6 7.6 0 0 1 8 4.8c.68 0 1.37.09 2.01.27 1.53-1.04 2.2-.82 2.2-.82.44 1.09.16 1.9.08 2.1.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8z"></path></svg>',
+            download: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" aria-hidden="true"><path fill="currentColor" d="M216,144v64a16,16,0,0,1-16,16H56a16,16,0,0,1-16-16V144a8,8,0,0,1,16,0v64H200V144a8,8,0,0,1,16,0ZM93.66,117.66,120,144V40a8,8,0,0,1,16,0V144l26.34-26.34a8,8,0,0,1,11.32,11.32l-40,40a8,8,0,0,1-11.32,0l-40-40a8,8,0,0,1,11.32-11.32Z"></path></svg>'
         };
 
         var items = [
@@ -2803,6 +2876,57 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
                     }
                     return '[github=' + repo + ']';
                 }
+            },
+            {
+                key: 'download',
+                title: 'download',
+                placeholder: '第一行文件名\n第二行文件大小\n第三行下载链接',
+                modalTitle: '输入下载卡片信息（文件名/大小/链接）',
+                defaultText: 'demo.zip\n1024kb\nhttps://file.imsun.org/demo.zip',
+                useSelection: false,
+                build: function (value) {
+                    var raw = String(value || '').replace(/\r/g, '');
+                    var file = '';
+                    var size = '';
+                    var url = '';
+
+                    if (raw.indexOf('\n') >= 0) {
+                        var lines = raw.split('\n');
+                        file = $.trim(lines[0] || '');
+                        size = $.trim(lines[1] || '');
+                        url = $.trim(lines.slice(2).join('\n') || '');
+                    } else if (raw.indexOf('|') >= 0) {
+                        var parts = raw.split('|');
+                        file = $.trim(parts[0] || '');
+                        size = $.trim(parts[1] || '');
+                        url = $.trim(parts.slice(2).join('|') || '');
+                    } else {
+                        url = $.trim(raw);
+                    }
+
+                    if (!url) {
+                        url = 'https://file.imsun.org/demo.zip';
+                    }
+
+                    function escapeAttr(input) {
+                        return String(input || '')
+                            .replace(/'/g, '&#39;')
+                            .replace(/\]/g, '');
+                    }
+
+                    file = escapeAttr(file);
+                    size = escapeAttr(size);
+
+                    var attrs = '';
+                    if (file) {
+                        attrs += " file='" + file + "'";
+                    }
+                    if (size) {
+                        attrs += " size='" + size + "'";
+                    }
+
+                    return '[download' + attrs + ']' + url + '[/download]';
+                }
             }
         ];
 
@@ -2854,6 +2978,65 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             lastSelection = {start: cursor, end: cursor};
         }
 
+        function parseDownloadModalText(raw) {
+            var text = String(raw || '').replace(/\r/g, '');
+            var file = '';
+            var size = '';
+            var url = '';
+
+            if (text.indexOf('\n') >= 0) {
+                var lines = text.split('\n');
+                file = $.trim(lines[0] || '');
+                size = $.trim(lines[1] || '');
+                url = $.trim(lines.slice(2).join('\n') || '');
+            } else if (text.indexOf('|') >= 0) {
+                var parts = text.split('|');
+                file = $.trim(parts[0] || '');
+                size = $.trim(parts[1] || '');
+                url = $.trim(parts.slice(2).join('|') || '');
+            } else {
+                url = $.trim(text);
+            }
+
+            return {
+                file: file,
+                size: size,
+                url: url
+            };
+        }
+
+        function readDownloadModalValue() {
+            var file = $.trim($('#enh-shortcode-download-file').val() || '');
+            var size = $.trim($('#enh-shortcode-download-size').val() || '');
+            var url = $.trim($('#enh-shortcode-download-url').val() || '');
+            if (!file && !size && !url) {
+                return '';
+            }
+            return [file, size, url].join('\n');
+        }
+
+        function readDownloadModalData() {
+            return {
+                file: $.trim($('#enh-shortcode-download-file').val() || ''),
+                size: $.trim($('#enh-shortcode-download-size').val() || ''),
+                url: $.trim($('#enh-shortcode-download-url').val() || '')
+            };
+        }
+
+        function clearModalError() {
+            $('#enh-shortcode-modal-error').removeClass('is-visible').text('');
+            $('#enh-shortcode-download-url').removeClass('is-error');
+        }
+
+        function showModalError(message) {
+            var $error = $('#enh-shortcode-modal-error');
+            if (!$error.length) {
+                return;
+            }
+
+            $error.text($.trim(String(message || '')) || '输入有误，请检查后重试').addClass('is-visible');
+        }
+
         function ensureModal() {
             if ($('#enh-shortcode-modal-mask').length) {
                 return;
@@ -2862,8 +3045,24 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             var modalHtml = ''
                 + '<div id="enh-shortcode-modal-mask" class="enh-shortcodes-modal-mask">'
                 + '  <div class="enh-shortcodes-modal">'
+                + '    <button type="button" id="enh-shortcode-modal-close" class="enh-shortcodes-modal-close" aria-label="关闭">×</button>'
                 + '    <h4 id="enh-shortcode-modal-title" class="enh-shortcodes-modal-title">插入短代码</h4>'
                 + '    <textarea id="enh-shortcode-modal-input" class="enh-shortcodes-modal-input" placeholder="输入内容"></textarea>'
+                + '    <div id="enh-shortcode-download-fields" class="enh-shortcodes-modal-fields">'
+                + '      <div class="enh-shortcodes-modal-field">'
+                + '        <label for="enh-shortcode-download-file">文件名</label>'
+                + '        <input type="text" id="enh-shortcode-download-file" placeholder="例如：demo.zip">'
+                + '      </div>'
+                + '      <div class="enh-shortcodes-modal-field">'
+                + '        <label for="enh-shortcode-download-size">文件大小</label>'
+                + '        <input type="text" id="enh-shortcode-download-size" placeholder="例如：1024kb">'
+                + '      </div>'
+                + '      <div class="enh-shortcodes-modal-field">'
+                + '        <label for="enh-shortcode-download-url">下载链接</label>'
+                + '        <input type="text" id="enh-shortcode-download-url" placeholder="https://...">'
+                + '      </div>'
+                + '    </div>'
+                + '    <div id="enh-shortcode-modal-error" class="enh-shortcodes-modal-error" role="alert" aria-live="polite"></div>'
                 + '    <div class="enh-shortcodes-modal-actions">'
                 + '      <button type="button" id="enh-shortcode-modal-cancel" class="enh-shortcodes-modal-btn">取消</button>'
                 + '      <button type="button" id="enh-shortcode-modal-confirm" class="enh-shortcodes-modal-btn primary">确定插入</button>'
@@ -2873,24 +3072,59 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
 
             $('body').append(modalHtml);
 
-            $('#enh-shortcode-modal-mask').on('click', function (e) {
-                if (e.target && e.target.id === 'enh-shortcode-modal-mask') {
-                    $(this).hide();
-                }
-            });
+            var closeModal = function () {
+                clearModalError();
+                $('#enh-shortcode-modal-mask').hide();
+            };
 
             $('#enh-shortcode-modal-cancel').on('click', function () {
-                $('#enh-shortcode-modal-mask').hide();
+                closeModal();
+            });
+
+            $('#enh-shortcode-modal-close').on('click', function () {
+                closeModal();
+            });
+
+            $(document).on('keydown.enh-shortcode-modal', function (e) {
+                var key = e && (e.key || e.keyCode);
+                var isEscape = key === 'Escape' || key === 'Esc' || key === 27;
+                if (!isEscape) {
+                    return;
+                }
+
+                if (!$('#enh-shortcode-modal-mask').is(':visible')) {
+                    return;
+                }
+
+                e.preventDefault();
+                closeModal();
+            });
+
+            $('#enh-shortcode-download-file,#enh-shortcode-download-size,#enh-shortcode-download-url').on('input', function () {
+                clearModalError();
             });
 
             $('#enh-shortcode-modal-confirm').on('click', function () {
                 if (!currentItem || typeof currentItem.build !== 'function') {
-                    $('#enh-shortcode-modal-mask').hide();
+                    closeModal();
                     return;
                 }
 
-                var raw = $('#enh-shortcode-modal-input').val();
-                var value = $.trim(raw || '');
+                clearModalError();
+
+                var value = '';
+                if (currentItem.key === 'download') {
+                    var downloadData = readDownloadModalData();
+                    if (!downloadData.url) {
+                        $('#enh-shortcode-download-url').addClass('is-error').focus();
+                        showModalError('请填写下载链接');
+                        return;
+                    }
+                    value = [downloadData.file, downloadData.size, downloadData.url].join('\n');
+                } else {
+                    var raw = $('#enh-shortcode-modal-input').val();
+                    value = $.trim(raw || '');
+                }
                 if (!value) {
                     value = currentItem.defaultText || '内容';
                 }
@@ -2902,7 +3136,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
 
                 var range = $('#enh-shortcode-modal-mask').data('selection') || lastSelection;
                 insertSnippet(snippet, range);
-                $('#enh-shortcode-modal-mask').hide();
+                closeModal();
             });
         }
 
@@ -2919,13 +3153,32 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             var selected = value.substring(selection.start, selection.end);
 
             ensureModal();
+            clearModalError();
 
             var useSelection = item.useSelection !== false;
             var defaultValue = (useSelection && selected !== '') ? selected : (item.defaultText || '');
+            var $modalInput = $('#enh-shortcode-modal-input');
+            var $downloadFields = $('#enh-shortcode-download-fields');
             $('#enh-shortcode-modal-title').text(item.modalTitle || ('插入 ' + item.title + ' 短代码'));
-            $('#enh-shortcode-modal-input').attr('placeholder', item.placeholder || '输入内容').val(defaultValue);
+
+            if (item.key === 'download') {
+                var downloadValues = parseDownloadModalText(defaultValue);
+                $modalInput.hide();
+                $downloadFields.show();
+                $('#enh-shortcode-download-file').val(downloadValues.file || '');
+                $('#enh-shortcode-download-size').val(downloadValues.size || '');
+                $('#enh-shortcode-download-url').val(downloadValues.url || '');
+            } else {
+                $downloadFields.hide();
+                $modalInput.show().attr('placeholder', item.placeholder || '输入内容').val(defaultValue);
+            }
+
             $('#enh-shortcode-modal-mask').data('selection', selection).show();
-            $('#enh-shortcode-modal-input').focus();
+            if (item.key === 'download') {
+                $('#enh-shortcode-download-file').focus();
+            } else {
+                $modalInput.focus();
+            }
         }
 
         for (var i = 0; i < items.length; i++) {
@@ -3587,6 +3840,21 @@ while ($tags->next()) {
             '/<a\s+[^>]*>/i',
             function ($matches) {
                 $tag = self::normalizeAnchorTagSpacing($matches[0]);
+
+                if (preg_match('/\bclass\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s>"\']+))/i', $tag, $classMatch)) {
+                    $classValue = '';
+                    for ($index = 1; $index <= 3; $index++) {
+                        if (isset($classMatch[$index]) && $classMatch[$index] !== '') {
+                            $classValue = strtolower((string)$classMatch[$index]);
+                            break;
+                        }
+                    }
+
+                    if ($classValue !== '' && strpos($classValue, 'enhancement-') !== false) {
+                        return $tag;
+                    }
+                }
+
                 if (!preg_match('/\bhref\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s>"\']+))/i', $tag, $hrefMatch)) {
                     return $tag;
                 }
@@ -3642,6 +3910,11 @@ while ($tags->next()) {
 
         $links = $dom->getElementsByTagName('a');
         foreach ($links as $link) {
+            $className = strtolower(trim((string)$link->getAttribute('class')));
+            if ($className !== '' && strpos($className, 'enhancement-') !== false) {
+                continue;
+            }
+
             $href = trim((string)$link->getAttribute('href'));
             $targetUrl = self::convertExternalUrlToGo($href);
             if ($targetUrl === '' || $targetUrl === $href) {
@@ -4063,23 +4336,18 @@ while ($tags->next()) {
             return $content;
         }
 
-        $isLogin = false;
-        try {
-            $user = Typecho_Widget::widget('Widget_User');
-            $isLogin = $user->hasLogin();
-        } catch (Exception $e) {
-            $isLogin = false;
-        }
+        $canViewReply = self::canViewerAccessReplyShortcode($widget);
 
         $content = preg_replace_callback(
             '/\[reply\]([\s\S]*?)\[\/reply\]/i',
-            function ($matches) use ($isLogin) {
+            function ($matches) use ($canViewReply) {
                 $innerRaw = isset($matches[1]) ? (string)$matches[1] : '';
-                if ($isLogin) {
+                if ($canViewReply) {
                     return '<div class="enhancement-shortcode enhancement-reply">' . $innerRaw . '</div>';
                 }
                 return '<div class="enhancement-shortcode enhancement-reply enhancement-reply-locked">'
-                    . '<span class="enhancement-reply-lock-text">该内容仅回复后可见</span>'
+                    . '<span class="enhancement-reply-lock-text">该内容仅评论审核通过后可见</span>'
+                    . '<a class="enhancement-reply-action" href="#comments">评论后刷新查看隐藏内容</a>'
                     . '</div>';
             },
             $content
@@ -4174,7 +4442,300 @@ while ($tags->next()) {
             $content
         );
 
+        $content = preg_replace_callback(
+            "/\\[download([^\\]]*)\\]([\\s\\S]*?)\\[\\/download\\]/i",
+            function ($matches) {
+                $rawAttributes = isset($matches[1]) ? (string)$matches[1] : '';
+                $rawBody = isset($matches[2]) ? (string)$matches[2] : '';
+                $rawUrl = self::extractDownloadShortcodeUrl($rawBody);
+                if ($rawUrl === '') {
+                    return '';
+                }
+
+                $attributes = self::parseShortcodeAttributes($rawAttributes);
+                $fileName = isset($attributes['file']) ? (string)$attributes['file'] : '';
+                $size = isset($attributes['size']) ? (string)$attributes['size'] : '';
+
+                $card = self::renderDownloadShortcodeCard($rawUrl, $fileName, $size);
+                if ($card === '') {
+                    return isset($matches[0]) ? (string)$matches[0] : '';
+                }
+
+                return $card;
+            },
+            $content
+        );
+
         return $content;
+    }
+
+    private static function canViewerAccessReplyShortcode($widget): bool
+    {
+        $cid = self::resolveReplyTargetCid($widget);
+        if ($cid <= 0) {
+            return false;
+        }
+
+        $identity = self::resolveReplyViewerIdentity();
+        if (!is_array($identity) || (empty($identity['uid']) && empty($identity['mail']) && empty($identity['author']))) {
+            return false;
+        }
+
+        static $cache = array();
+        $cacheKey = $cid
+            . '|u:' . (isset($identity['uid']) ? intval($identity['uid']) : 0)
+            . '|m:' . (isset($identity['mail']) ? (string)$identity['mail'] : '')
+            . '|a:' . (isset($identity['author']) ? (string)$identity['author'] : '');
+
+        if (array_key_exists($cacheKey, $cache)) {
+            return (bool)$cache[$cacheKey];
+        }
+
+        $uid = isset($identity['uid']) ? intval($identity['uid']) : 0;
+        $mail = isset($identity['mail']) ? trim((string)$identity['mail']) : '';
+        $author = isset($identity['author']) ? trim((string)$identity['author']) : '';
+
+        try {
+            $db = Typecho_Db::get();
+
+            if ($uid > 0) {
+                $row = $db->fetchRow(
+                    $db->select('coid')
+                        ->from('table.comments')
+                        ->where('cid = ?', $cid)
+                        ->where('type = ?', 'comment')
+                        ->where('status = ?', 'approved')
+                        ->where('authorId = ?', $uid)
+                        ->limit(1)
+                );
+                if (is_array($row) && !empty($row)) {
+                    $cache[$cacheKey] = true;
+                    return true;
+                }
+            }
+
+            if ($mail !== '') {
+                $row = $db->fetchRow(
+                    $db->select('coid')
+                        ->from('table.comments')
+                        ->where('cid = ?', $cid)
+                        ->where('type = ?', 'comment')
+                        ->where('status = ?', 'approved')
+                        ->where('LOWER(mail) = ?', strtolower($mail))
+                        ->limit(1)
+                );
+                if (is_array($row) && !empty($row)) {
+                    $cache[$cacheKey] = true;
+                    return true;
+                }
+            }
+
+            if ($author !== '') {
+                $row = $db->fetchRow(
+                    $db->select('coid')
+                        ->from('table.comments')
+                        ->where('cid = ?', $cid)
+                        ->where('type = ?', 'comment')
+                        ->where('status = ?', 'approved')
+                        ->where('author = ?', $author)
+                        ->limit(1)
+                );
+                if (is_array($row) && !empty($row)) {
+                    $cache[$cacheKey] = true;
+                    return true;
+                }
+            }
+        } catch (Exception $e) {
+            $cache[$cacheKey] = false;
+            return false;
+        }
+
+        $cache[$cacheKey] = false;
+        return false;
+    }
+
+    private static function resolveReplyTargetCid($widget): int
+    {
+        if (is_object($widget)) {
+            $cid = isset($widget->cid) ? intval($widget->cid) : 0;
+            if ($cid > 0) {
+                return $cid;
+            }
+        }
+
+        try {
+            $archive = Typecho_Widget::widget('Widget_Archive');
+            $cid = isset($archive->cid) ? intval($archive->cid) : 0;
+            if ($cid > 0) {
+                return $cid;
+            }
+        } catch (Exception $e) {
+        }
+
+        return 0;
+    }
+
+    private static function resolveReplyViewerIdentity(): array
+    {
+        $identity = array(
+            'uid' => 0,
+            'mail' => '',
+            'author' => ''
+        );
+
+        try {
+            $user = Typecho_Widget::widget('Widget_User');
+            if ($user->hasLogin()) {
+                $identity['uid'] = isset($user->uid) ? intval($user->uid) : 0;
+                $identity['mail'] = isset($user->mail) ? trim((string)$user->mail) : '';
+                $identity['author'] = isset($user->screenName) ? trim((string)$user->screenName) : '';
+                return $identity;
+            }
+        } catch (Exception $e) {
+        }
+
+        $identity['mail'] = trim((string)Typecho_Cookie::get('__typecho_remember_mail'));
+        $identity['author'] = trim((string)Typecho_Cookie::get('__typecho_remember_author'));
+
+        return $identity;
+    }
+
+    private static function extractDownloadShortcodeUrl($rawBody): string
+    {
+        $rawBody = trim((string)$rawBody);
+        if ($rawBody === '') {
+            return '';
+        }
+
+        $decoded = html_entity_decode($rawBody, ENT_QUOTES, 'UTF-8');
+
+        if (preg_match('/<a\s+[^>]*href\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s>"\']+))/i', $decoded, $hrefMatch)) {
+            for ($index = 1; $index <= 3; $index++) {
+                if (!isset($hrefMatch[$index]) || $hrefMatch[$index] === '') {
+                    continue;
+                }
+
+                $href = trim(html_entity_decode((string)$hrefMatch[$index], ENT_QUOTES, 'UTF-8'));
+                if ($href !== '') {
+                    return $href;
+                }
+            }
+        }
+
+        $plain = trim(strip_tags($decoded));
+        if ($plain === '') {
+            return '';
+        }
+
+        if (preg_match('#(https?:\/\/[^\s<>"\']+|\/\/[^\s<>"\']+)#i', $plain, $urlMatch) && isset($urlMatch[1])) {
+            return trim((string)$urlMatch[1]);
+        }
+
+        return $plain;
+    }
+
+    private static function parseShortcodeAttributes($rawAttributes): array
+    {
+        $rawAttributes = trim((string)$rawAttributes);
+        if ($rawAttributes === '') {
+            return array();
+        }
+
+        $attributes = array();
+        if (!preg_match_all(
+            "/([a-zA-Z0-9_-]+)\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s\"'`=<>]+))/u",
+            $rawAttributes,
+            $matches,
+            PREG_SET_ORDER
+        )) {
+            return $attributes;
+        }
+
+        foreach ($matches as $match) {
+            $key = isset($match[1]) ? strtolower(trim((string)$match[1])) : '';
+            if ($key === '') {
+                continue;
+            }
+
+            $value = '';
+            if (isset($match[2]) && $match[2] !== '') {
+                $value = (string)$match[2];
+            } else if (isset($match[3]) && $match[3] !== '') {
+                $value = (string)$match[3];
+            } else if (isset($match[4])) {
+                $value = (string)$match[4];
+            }
+
+            $attributes[$key] = trim(html_entity_decode($value, ENT_QUOTES, 'UTF-8'));
+        }
+
+        return $attributes;
+    }
+
+    private static function renderDownloadShortcodeCard($url, $fileName = '', $size = ''): string
+    {
+        $url = self::extractDownloadShortcodeUrl($url);
+        $url = trim(html_entity_decode((string)$url, ENT_QUOTES, 'UTF-8'));
+        if ($url === '') {
+            return '';
+        }
+
+        $decodedGoUrl = self::decodeGoRedirectUrl($url);
+        if ($decodedGoUrl !== '') {
+            $url = $decodedGoUrl;
+        }
+
+        if (!preg_match('#^(https?:)?//#i', $url) && strpos($url, '/') !== 0) {
+            return '';
+        }
+
+        $displayFile = trim((string)$fileName);
+        if ($displayFile === '') {
+            $path = parse_url($url, PHP_URL_PATH);
+            if (is_string($path) && $path !== '') {
+                $basename = basename($path);
+                if ($basename !== '') {
+                    $displayFile = rawurldecode($basename);
+                }
+            }
+        }
+        if ($displayFile === '') {
+            $displayFile = '下载文件';
+        }
+
+        $size = trim((string)$size);
+
+        $host = parse_url($url, PHP_URL_HOST);
+        if (!is_string($host) || trim($host) === '') {
+            $host = '本站资源';
+        }
+
+        $extLabel = 'FILE';
+        if (preg_match('/\.([a-zA-Z0-9.]{1,12})$/', $displayFile, $extMatches)) {
+            $extLabel = strtoupper((string)$extMatches[1]);
+        }
+
+        $safeUrl = htmlspecialchars($url, ENT_QUOTES, 'UTF-8');
+        $safeFile = htmlspecialchars($displayFile, ENT_QUOTES, 'UTF-8');
+        $safeHost = htmlspecialchars($host, ENT_QUOTES, 'UTF-8');
+        $safeExt = htmlspecialchars($extLabel, ENT_QUOTES, 'UTF-8');
+
+        $metaParts = array('来源：' . $safeHost);
+        if ($size !== '') {
+            $metaParts[] = '大小：' . htmlspecialchars($size, ENT_QUOTES, 'UTF-8');
+        }
+        $metaText = implode(' · ', $metaParts);
+
+        return '<div class="enhancement-shortcode enhancement-download-card">'
+            . '<a class="enhancement-download-link" href="' . $safeUrl . '" target="_blank" rel="noopener noreferrer" download>'
+            . '<span class="enhancement-download-icon" aria-hidden="true">⬇</span>'
+            . '<span class="enhancement-download-main">'
+            . '<span class="enhancement-download-file">' . $safeFile . '</span>'
+            . '<span class="enhancement-download-meta">' . $metaText . '</span>'
+            . '</span>'
+            . '<span class="enhancement-download-badge">' . $safeExt . '</span>'
+            . '</a>'
+            . '</div>';
     }
 
     private static function replaceCalloutShortcode($content, $name, $theme)
@@ -4231,12 +4792,6 @@ while ($tags->next()) {
 
             $text = preg_replace_callback("/<(?:links|enhancement)\\s*(\\d*)\\s*(\\w*)\\s*(\\d*)>\\s*(.*?)\\s*<\\/(?:links|enhancement)>/is", array('Enhancement_Plugin', 'parseCallback'), $text ? $text : '');
 
-            $text = self::rewriteExternalLinks($text);
-
-            if (self::blankTargetEnabled()) {
-                $text = self::addBlankTarget($text);
-            }
-
             if ($isContentWidget && self::videoParserEnabled()) {
                 $text = self::replaceVideoLinks($text);
             }
@@ -4247,6 +4802,12 @@ while ($tags->next()) {
 
             if ($isContentWidget) {
                 $text = self::parseEnhancementShortcodes($text, $widget);
+            }
+
+            $text = self::rewriteExternalLinks($text);
+
+            if (self::blankTargetEnabled()) {
+                $text = self::addBlankTarget($text);
             }
 
             return $text;

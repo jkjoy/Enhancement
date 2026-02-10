@@ -136,6 +136,19 @@
 ### Sitemap
 访问：`/sitemap.xml`
 
+### 内容短代码
+- 下载卡片：
+
+```text
+[download file='AIHelper_NnneT.tar.gz' size='16.5kb']https://file.imsun.org/upload/2025-12/AIHelper_NnneT.tar.gz[/download]
+```
+
+- 参数说明：
+  - `file`：显示的文件名（可选，不填时自动从下载链接提取）
+  - `size`：显示的文件大小（可选）
+  - 标签体内容：下载地址（支持 `http://`、`https://`、`//`）
+- 前端渲染为下载卡片，包含文件名、来源域名、大小和扩展名标签。
+
 ## 鸣谢
 
 感谢 Typecho 官方及所有开源插件作者提供的宝贵资源。
