@@ -5227,7 +5227,7 @@ while ($tags->next()) {
                     continue;
                 }
 
-                $href = trim(html_entity_decode((string)$hrefMatch[$index], ENT_QUOTES, 'UTF-8'));
+                $href = self::normalizeDownloadShortcodeUrlCandidate($hrefMatch[$index]);
                 if ($href !== '') {
                     return $href;
                 }
@@ -5240,7 +5240,7 @@ while ($tags->next()) {
         }
 
         if (preg_match('#^(https?:)?//#i', $plain)) {
-            return $plain;
+            return self::normalizeDownloadShortcodeUrlCandidate($plain);
         }
 
         if (preg_match('#(?:https?:\/\/|//)#i', $plain, $protocolMatch, PREG_OFFSET_CAPTURE)) {
@@ -5248,12 +5248,25 @@ while ($tags->next()) {
             if ($offset >= 0) {
                 $tail = trim((string)substr($plain, $offset));
                 if ($tail !== '') {
-                    return $tail;
+                    return self::normalizeDownloadShortcodeUrlCandidate($tail);
                 }
             }
         }
 
-        return $plain;
+        return self::normalizeDownloadShortcodeUrlCandidate($plain);
+    }
+
+    private static function normalizeDownloadShortcodeUrlCandidate($value): string
+    {
+        $value = trim(html_entity_decode((string)$value, ENT_QUOTES, 'UTF-8'));
+        if ($value === '') {
+            return '';
+        }
+
+        $value = preg_replace('/[\x00-\x1F\x7F]/u', '', $value);
+        $value = preg_replace('/\s+/u', '%20', (string)$value);
+
+        return trim((string)$value);
     }
 
     private static function parseShortcodeAttributes($rawAttributes): array
