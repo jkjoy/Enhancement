@@ -2,11 +2,11 @@
 
 /**
  * Enhancement 插件
- * 具体功能包含:插件/主题zip上传,友情链接,瞬间,网站地图,编辑器增强,站外链接跳转,评论邮件通知,QQ通知,常见视频链接 音乐链接 解析等
+ * 具体功能包含:插件/主题zip上传,友情链接,瞬间,网站地图,编辑器增强,站外链接跳转,评论邮件通知,QQ通知,常见视频链接 音乐链接 解析,AI摘要生成等
  * @package Enhancement
- * @author jkjoy
- * @version 1.1.6
- * @link HTTPS://IMSUN.ORG
+ * @author 老孙博客
+ * @version 1.1.7
+ * @link HTTPS://www.IMSUN.ORG
  * @dependence 14.10.10-*
  */
 
@@ -193,6 +193,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         $info = Enhancement_Plugin::enhancementInstall();
         Helper::addPanel(3, 'Enhancement/manage-enhancement.php', _t('链接'), _t('链接审核与管理'), 'administrator');
         Helper::addPanel(3, 'Enhancement/manage-moments.php', _t('瞬间'), _t('瞬间管理'), 'administrator');
+        Helper::addPanel(3, 'Enhancement/manage-ai-summary.php', _t('摘要'), _t('AI 摘要批量生成'), 'administrator');
         Helper::addPanel(1, 'Enhancement/manage-upload.php', _t('上传'), _t('上传管理'), 'administrator');
         Helper::addPanel(1, self::$commentNotifierPanel, _t('邮件提醒外观'), _t('评论邮件提醒主题列表'), 'administrator');
         Helper::addRoute('sitemap', '/sitemap.xml', 'Enhancement_Sitemap_Action', 'action');
@@ -208,6 +209,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         Typecho_Plugin::factory('Widget_Comments_Edit')->mark = [__CLASS__, 'commentNotifierMark'];
         Typecho_Plugin::factory('Widget_Comments_Edit')->mark_2 = [__CLASS__, 'commentByQQMark'];
         Typecho_Plugin::factory('Widget_Service')->send = [__CLASS__, 'commentNotifierSend'];
+        Typecho_Plugin::factory('Widget_Contents_Post_Edit')->finishPublish = [__CLASS__, 'autoGeneratePostSummary'];
         Typecho_Plugin::factory('admin/write-post.php')->bottom = array(__CLASS__, 'writePostBottom');
         Typecho_Plugin::factory('admin/write-page.php')->bottom = array(__CLASS__, 'writePageBottom');
         Typecho_Plugin::factory('Widget_Abstract_Contents')->contentEx = array('Enhancement_Plugin', 'parse');
@@ -260,6 +262,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         Helper::removeAction('enhancement-moments-edit');
         Helper::removePanel(3, 'Enhancement/manage-enhancement.php');
         Helper::removePanel(3, 'Enhancement/manage-moments.php');
+        Helper::removePanel(3, 'Enhancement/manage-ai-summary.php');
         Helper::removePanel(1, 'Enhancement/manage-upload.php');
         Helper::removePanel(1, self::$commentNotifierPanel);
 
@@ -616,15 +619,6 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         );
         $form->addInput($enableMusicParser);
 
-        $enableAttachmentPreview = new Typecho_Widget_Helper_Form_Element_Radio(
-            'enable_attachment_preview',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '0',
-            _t('附件预览增强'),
-            _t('后台写文章/页面时，启用附件预览与批量插入增强（默认关闭）')
-        );
-        $form->addInput($enableAttachmentPreview);
-
         $defaultMetingApi = self::defaultLocalMetingApiTemplate(Typecho_Widget::widget('Widget_Options'));
 
         $musicMetingApi = new Typecho_Widget_Helper_Form_Element_Text(
@@ -635,6 +629,15 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             _t('用于 music 链接解析播放器的数据源，默认本地接口；保留 :server/:type/:id/:r 占位符')
         );
         $form->addInput($musicMetingApi->addRule('maxLength', _t('Meting API 地址最多500个字符'), 500));
+
+        $enableAttachmentPreview = new Typecho_Widget_Helper_Form_Element_Radio(
+            'enable_attachment_preview',
+            array('1' => _t('启用'), '0' => _t('禁用')),
+            '0',
+            _t('附件预览增强'),
+            _t('后台写文章/页面时，启用附件预览与批量插入增强（默认关闭）')
+        );
+        $form->addInput($enableAttachmentPreview);
 
         $enableBlankTarget = new Typecho_Widget_Helper_Form_Element_Radio(
             'enable_blank_target',
@@ -699,6 +702,90 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         );
         $turnstileSecretKey->input->setAttribute('autocomplete', 'off');
         $form->addInput($turnstileSecretKey->addRule('maxLength', _t('Secret Key 最多200个字符'), 200));
+
+        $enableAiSummary = new Typecho_Widget_Helper_Form_Element_Radio(
+            'enable_ai_summary',
+            array('1' => _t('启用'), '0' => _t('禁用')),
+            '0',
+            _t('<h3 class="enhancement-title">AI 摘要设置</h3>自动生成文章摘要'),
+            _t('发布文章时调用 AI 生成摘要，并写入自定义字段')
+        );
+        $form->addInput($enableAiSummary);
+
+        $aiSummaryApiUrl = new Typecho_Widget_Helper_Form_Element_Text(
+            'ai_summary_api_url',
+            null,
+            'https://api.openai.com/v1/chat/completions',
+            _t('AI API 地址'),
+            _t('支持 OpenAI 兼容接口；可填完整 chat/completions 地址或仅填基础地址')
+        );
+        $form->addInput($aiSummaryApiUrl->addRule('maxLength', _t('AI API 地址最多500个字符'), 500));
+
+        $aiSummaryApiToken = new Typecho_Widget_Helper_Form_Element_Text(
+            'ai_summary_api_token',
+            null,
+            '',
+            _t('AI API Token'),
+            _t('用于调用 AI 接口的 Bearer Token')
+        );
+        $aiSummaryApiToken->input->setAttribute('autocomplete', 'off');
+        $form->addInput($aiSummaryApiToken->addRule('maxLength', _t('Token 最多300个字符'), 300));
+
+        $aiSummaryModel = new Typecho_Widget_Helper_Form_Element_Text(
+            'ai_summary_model',
+            null,
+            'gpt-4o-mini',
+            _t('AI 模型'),
+            _t('例如：gpt-4o-mini、deepseek-chat、qwen-plus')
+        );
+        $form->addInput($aiSummaryModel->addRule('maxLength', _t('模型名称最多120个字符'), 120));
+
+        $aiSummaryPrompt = new Typecho_Widget_Helper_Form_Element_Textarea(
+            'ai_summary_prompt',
+            null,
+            '请基于用户给出的文章内容，生成简体中文摘要。要求：1）不超过 120 字；2）客观准确；3）只输出摘要正文，不要输出标题、标签或解释。',
+            _t('AI 摘要 Prompt'),
+            _t('系统提示词，可按站点风格自定义')
+        );
+        $form->addInput($aiSummaryPrompt->addRule('maxLength', _t('Prompt 最多5000个字符'), 5000));
+
+        $aiSummaryField = new Typecho_Widget_Helper_Form_Element_Text(
+            'ai_summary_field',
+            null,
+            'summary',
+            _t('摘要存储字段名'),
+            _t('自定义字段名，默认 summary；仅支持字母/数字/下划线，且不能以数字开头')
+        );
+        $form->addInput($aiSummaryField->addRule('maxLength', _t('字段名最多64个字符'), 64));
+
+        $aiSummaryUpdateMode = new Typecho_Widget_Helper_Form_Element_Radio(
+            'ai_summary_update_mode',
+            array('empty' => _t('仅字段为空时生成（推荐）'), 'always' => _t('每次发布都覆盖')),
+            'empty',
+            _t('摘要更新策略'),
+            _t('避免手动写入的摘要被自动覆盖，可选择“仅字段为空时生成”')
+        );
+        $form->addInput($aiSummaryUpdateMode);
+
+        $aiSummaryMaxLength = new Typecho_Widget_Helper_Form_Element_Text(
+            'ai_summary_max_length',
+            null,
+            '180',
+            _t('摘要最大长度'),
+            _t('保存前会进行截断，建议 120-300')
+        );
+        $aiSummaryMaxLength->input->setAttribute('class', 'w-10');
+        $form->addInput($aiSummaryMaxLength->addRule('isInteger', _t('请填写整数数字')));
+
+        $aiSummaryInputLimit = new Typecho_Widget_Helper_Form_Element_Text(
+            'ai_summary_input_limit',
+            null,
+            '6000',
+            _t('送审内容最大长度'),
+            _t('发送给 AI 的正文最大字符数，避免内容过长导致接口报错或费用增加')
+        );
+        $aiSummaryInputLimit->input->setAttribute('class', 'w-10');
+        $form->addInput($aiSummaryInputLimit->addRule('isInteger', _t('请填写整数数字')));
 
         $enableAvatarMirror = new Typecho_Widget_Helper_Form_Element_Radio(
             'enable_avatar_mirror',
@@ -3393,6 +3480,481 @@ while ($tags->next()) {
         return $settings->enable_attachment_preview == '1';
     }
 
+    public static function aiSummaryEnabled(): bool
+    {
+        $settings = self::pluginSettings(Typecho_Widget::widget('Widget_Options'));
+        if (!isset($settings->enable_ai_summary)) {
+            return false;
+        }
+        return $settings->enable_ai_summary == '1';
+    }
+
+    public static function autoGeneratePostSummary($contents, $edit, $force = false)
+    {
+        $result = array(
+            'status' => 'skipped',
+            'message' => ''
+        );
+
+        if (!self::aiSummaryEnabled()) {
+            $result['message'] = 'ai summary disabled';
+            return $result;
+        }
+
+        if (!is_object($edit) || !isset($edit->cid)) {
+            $result['status'] = 'error';
+            $result['message'] = 'invalid post object';
+            return $result;
+        }
+
+        $cid = intval($edit->cid);
+        if ($cid <= 0) {
+            $result['status'] = 'error';
+            $result['message'] = 'invalid cid';
+            return $result;
+        }
+
+        $force = ($force === true || $force === 1 || $force === '1');
+
+        $options = Typecho_Widget::widget('Widget_Options');
+        $settings = self::pluginSettings($options);
+        $fieldName = self::aiSummaryFieldName($settings);
+        if ($fieldName === '') {
+            $result['status'] = 'error';
+            $result['message'] = 'invalid field name';
+            return $result;
+        }
+
+        $updateMode = isset($settings->ai_summary_update_mode) ? trim((string)$settings->ai_summary_update_mode) : 'empty';
+        $existingSummary = self::aiSummaryReadFieldValue($cid, $fieldName);
+        if (!$force && $updateMode !== 'always' && $existingSummary !== '') {
+            $result['message'] = 'summary exists';
+            return $result;
+        }
+
+        $title = '';
+        if (is_array($contents) && isset($contents['title'])) {
+            $title = trim((string)$contents['title']);
+        }
+        if ($title === '' && isset($edit->title)) {
+            $title = trim((string)$edit->title);
+        }
+
+        $contentText = '';
+        if (is_array($contents) && isset($contents['text'])) {
+            $contentText = (string)$contents['text'];
+        }
+        if ($contentText === '' && isset($edit->text)) {
+            $contentText = (string)$edit->text;
+        }
+
+        $sourceText = self::aiSummaryBuildSourceText($title, $contentText, $settings);
+        if ($sourceText === '') {
+            $result['message'] = 'empty content';
+            return $result;
+        }
+
+        $apiResult = self::aiSummaryCallApi($sourceText, $settings);
+        if (empty($apiResult['success'])) {
+            $error = isset($apiResult['error']) ? trim((string)$apiResult['error']) : '';
+            if ($error !== '') {
+                error_log('[Enhancement][AISummary] ' . $error);
+            }
+            $result['status'] = 'error';
+            $result['message'] = ($error !== '' ? $error : 'ai api error');
+            return $result;
+        }
+
+        $summary = isset($apiResult['summary']) ? self::aiSummaryNormalizeResult((string)$apiResult['summary'], $settings) : '';
+        if ($summary === '') {
+            $result['status'] = 'error';
+            $result['message'] = 'empty summary';
+            return $result;
+        }
+
+        $saved = false;
+        if (method_exists($edit, 'setField')) {
+            try {
+                $setResult = $edit->setField($fieldName, 'str', $summary, $cid);
+                $saved = ($setResult !== false);
+            } catch (Exception $e) {
+                $saved = false;
+            }
+        }
+
+        if (!$saved) {
+            $saved = self::aiSummarySaveFieldValue($cid, $fieldName, $summary);
+        }
+
+        if (!$saved) {
+            $result['status'] = 'error';
+            $result['message'] = 'save summary failed';
+            return $result;
+        }
+
+        $result['status'] = 'generated';
+        $result['message'] = 'ok';
+        return $result;
+    }
+
+    private static function aiSummaryFieldName($settings): string
+    {
+        $name = isset($settings->ai_summary_field) ? trim((string)$settings->ai_summary_field) : 'summary';
+        if ($name === '') {
+            $name = 'summary';
+        }
+
+        if (!preg_match('/^[_a-z][_a-z0-9]*$/i', $name)) {
+            $name = 'summary';
+        }
+
+        return $name;
+    }
+
+    private static function aiSummaryReadFieldValue(int $cid, string $fieldName): string
+    {
+        if ($cid <= 0 || $fieldName === '') {
+            return '';
+        }
+
+        try {
+            $db = Typecho_Db::get();
+            $row = $db->fetchRow(
+                $db->select('type', 'str_value', 'int_value', 'float_value')
+                    ->from('table.fields')
+                    ->where('cid = ?', $cid)
+                    ->where('name = ?', $fieldName)
+                    ->limit(1)
+            );
+
+            if (!is_array($row) || empty($row)) {
+                return '';
+            }
+
+            $type = isset($row['type']) ? strtolower((string)$row['type']) : 'str';
+            if ($type === 'int') {
+                return (string)intval($row['int_value']);
+            }
+            if ($type === 'float') {
+                return trim((string)$row['float_value']);
+            }
+
+            return trim((string)$row['str_value']);
+        } catch (Exception $e) {
+            return '';
+        }
+    }
+
+    private static function aiSummarySaveFieldValue(int $cid, string $fieldName, string $summary): bool
+    {
+        if ($cid <= 0 || $fieldName === '') {
+            return false;
+        }
+
+        try {
+            $db = Typecho_Db::get();
+            $exists = $db->fetchRow(
+                $db->select('cid')
+                    ->from('table.fields')
+                    ->where('cid = ?', $cid)
+                    ->where('name = ?', $fieldName)
+                    ->limit(1)
+            );
+
+            $rows = array(
+                'type' => 'str',
+                'str_value' => (string)$summary,
+                'int_value' => 0,
+                'float_value' => 0,
+            );
+
+            if (is_array($exists) && !empty($exists)) {
+                $db->query(
+                    $db->update('table.fields')
+                        ->rows($rows)
+                        ->where('cid = ?', $cid)
+                        ->where('name = ?', $fieldName)
+                );
+            } else {
+                $rows['cid'] = $cid;
+                $rows['name'] = $fieldName;
+                $db->query($db->insert('table.fields')->rows($rows));
+            }
+
+            return true;
+        } catch (Exception $e) {
+            // ignore summary save errors
+            return false;
+        }
+    }
+
+    private static function aiSummaryBuildSourceText(string $title, string $text, $settings): string
+    {
+        $plain = self::aiSummaryToPlainText($text);
+        if ($plain === '') {
+            return '';
+        }
+
+        $limit = self::aiSummaryIntSetting($settings, 'ai_summary_input_limit', 6000, 500, 30000);
+        $plain = self::aiSummaryTruncate($plain, $limit);
+
+        $title = trim(strip_tags((string)$title));
+        $title = preg_replace('/\s+/', ' ', $title);
+        $title = trim((string)$title);
+
+        if ($title !== '') {
+            return "标题：{$title}\n\n正文：{$plain}";
+        }
+
+        return $plain;
+    }
+
+    private static function aiSummaryToPlainText(string $text): string
+    {
+        $text = str_replace('<!--markdown-->', '', (string)$text);
+        if ($text === '') {
+            return '';
+        }
+
+        $text = preg_replace('/<pre\b[^>]*>[\s\S]*?<\/pre>/i', ' ', $text);
+        $text = preg_replace('/<code\b[^>]*>[\s\S]*?<\/code>/i', ' ', $text);
+        $text = preg_replace('/```[\s\S]*?```/', ' ', $text);
+        $text = preg_replace('/`[^`\r\n]+`/', ' ', $text);
+        $text = preg_replace('/!\[[^\]]*]\([^)]+\)/', ' ', $text);
+        $text = preg_replace('/\[([^\]]+)\]\((?:[^)]+)\)/', '$1', $text);
+        $text = strip_tags($text);
+        $text = html_entity_decode((string)$text, ENT_QUOTES, 'UTF-8');
+        $text = preg_replace('/\s+/', ' ', (string)$text);
+
+        return trim((string)$text);
+    }
+
+    private static function aiSummaryIntSetting($settings, string $key, int $default, int $min, int $max): int
+    {
+        $value = isset($settings->{$key}) ? intval($settings->{$key}) : $default;
+        if ($value <= 0) {
+            $value = $default;
+        }
+        if ($value < $min) {
+            $value = $min;
+        }
+        if ($value > $max) {
+            $value = $max;
+        }
+        return $value;
+    }
+
+    private static function aiSummaryApiEndpoint(string $rawUrl): string
+    {
+        $url = trim($rawUrl);
+        if ($url === '') {
+            return '';
+        }
+
+        $url = rtrim($url, '/');
+        if (preg_match('#/chat/completions$#i', $url)) {
+            return $url;
+        }
+
+        if (preg_match('#/v1$#i', $url)) {
+            return $url . '/chat/completions';
+        }
+
+        return $url . '/v1/chat/completions';
+    }
+
+    private static function aiSummaryCallApi(string $sourceText, $settings): array
+    {
+        $result = array(
+            'success' => false,
+            'summary' => '',
+            'error' => ''
+        );
+
+        $endpoint = self::aiSummaryApiEndpoint(isset($settings->ai_summary_api_url) ? (string)$settings->ai_summary_api_url : '');
+        $token = isset($settings->ai_summary_api_token) ? trim((string)$settings->ai_summary_api_token) : '';
+        $model = isset($settings->ai_summary_model) ? trim((string)$settings->ai_summary_model) : '';
+        $prompt = isset($settings->ai_summary_prompt) ? trim((string)$settings->ai_summary_prompt) : '';
+
+        if ($endpoint === '' || $token === '' || $model === '') {
+            $result['error'] = 'AI 摘要配置不完整（API 地址 / Token / 模型）';
+            return $result;
+        }
+
+        if ($prompt === '') {
+            $prompt = '请基于用户提供的文章内容生成摘要，只输出摘要正文。';
+        }
+
+        if (!function_exists('curl_init')) {
+            $result['error'] = 'curl 扩展未启用';
+            return $result;
+        }
+
+        $payload = array(
+            'model' => $model,
+            'messages' => array(
+                array(
+                    'role' => 'system',
+                    'content' => $prompt,
+                ),
+                array(
+                    'role' => 'user',
+                    'content' => $sourceText,
+                ),
+            ),
+            'temperature' => 0.2,
+        );
+
+        $jsonPayload = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($jsonPayload === false) {
+            $result['error'] = 'AI 请求数据编码失败';
+            return $result;
+        }
+
+        $headers = array(
+            'Content-Type: application/json; charset=UTF-8',
+            'Accept: application/json',
+            'Authorization: Bearer ' . $token,
+        );
+
+        $ch = curl_init();
+        $curlOptions = array(
+            CURLOPT_URL => $endpoint,
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $jsonPayload,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT => 25,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_SSL_VERIFYPEER => false,
+        );
+
+        if (defined('CURLOPT_IPRESOLVE') && defined('CURL_IPRESOLVE_V4')) {
+            $curlOptions[CURLOPT_IPRESOLVE] = CURL_IPRESOLVE_V4;
+        }
+        if (defined('CURLOPT_NOSIGNAL')) {
+            $curlOptions[CURLOPT_NOSIGNAL] = true;
+        }
+
+        curl_setopt_array($ch, $curlOptions);
+
+        $response = curl_exec($ch);
+        $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $errno = curl_errno($ch);
+        $error = $errno ? curl_error($ch) : '';
+        curl_close($ch);
+
+        if ($errno !== 0) {
+            $result['error'] = 'AI 请求失败：' . $error;
+            return $result;
+        }
+
+        if ($httpCode < 200 || $httpCode >= 300) {
+            $bodyPreview = trim((string)$response);
+            if ($bodyPreview !== '') {
+                $bodyPreview = self::aiSummaryTruncate($bodyPreview, 180);
+            }
+            $result['error'] = $bodyPreview === ''
+                ? ('AI 接口响应异常（HTTP ' . $httpCode . '）')
+                : ('AI 接口响应异常（HTTP ' . $httpCode . '）：' . $bodyPreview);
+            return $result;
+        }
+
+        $decoded = json_decode((string)$response, true);
+        if (!is_array($decoded)) {
+            $result['error'] = 'AI 接口响应格式错误';
+            return $result;
+        }
+
+        $summary = self::aiSummaryExtractContent($decoded);
+        if ($summary === '') {
+            if (isset($decoded['error']['message']) && trim((string)$decoded['error']['message']) !== '') {
+                $result['error'] = 'AI 接口返回错误：' . trim((string)$decoded['error']['message']);
+            } else {
+                $result['error'] = 'AI 接口未返回摘要内容';
+            }
+            return $result;
+        }
+
+        $result['success'] = true;
+        $result['summary'] = $summary;
+        return $result;
+    }
+
+    private static function aiSummaryExtractContent(array $decoded): string
+    {
+        if (
+            isset($decoded['choices'][0]['message']) &&
+            is_array($decoded['choices'][0]['message']) &&
+            array_key_exists('content', $decoded['choices'][0]['message'])
+        ) {
+            $content = $decoded['choices'][0]['message']['content'];
+            if (is_string($content)) {
+                return trim($content);
+            }
+            if (is_array($content)) {
+                $parts = array();
+                foreach ($content as $chunk) {
+                    if (is_array($chunk)) {
+                        if (isset($chunk['text']) && is_string($chunk['text'])) {
+                            $parts[] = $chunk['text'];
+                        }
+                    } elseif (is_string($chunk)) {
+                        $parts[] = $chunk;
+                    }
+                }
+                return trim(implode('', $parts));
+            }
+        }
+
+        if (isset($decoded['choices'][0]['text']) && is_string($decoded['choices'][0]['text'])) {
+            return trim((string)$decoded['choices'][0]['text']);
+        }
+
+        return '';
+    }
+
+    private static function aiSummaryNormalizeResult(string $summary, $settings): string
+    {
+        $summary = trim($summary);
+        if ($summary === '') {
+            return '';
+        }
+
+        if (preg_match('/^```(?:[a-zA-Z0-9_-]+)?\s*([\s\S]*?)\s*```$/', $summary, $matches)) {
+            $summary = isset($matches[1]) ? trim((string)$matches[1]) : $summary;
+        }
+
+        $summary = strip_tags($summary);
+        $summary = html_entity_decode((string)$summary, ENT_QUOTES, 'UTF-8');
+        $summary = preg_replace('/\s+/', ' ', (string)$summary);
+        $summary = trim((string)$summary);
+
+        $maxLen = self::aiSummaryIntSetting($settings, 'ai_summary_max_length', 180, 20, 2000);
+        return self::aiSummaryTruncate($summary, $maxLen);
+    }
+
+    private static function aiSummaryTruncate(string $text, int $length): string
+    {
+        $text = trim($text);
+        if ($text === '' || $length <= 0) {
+            return '';
+        }
+
+        if (function_exists('mb_strlen') && function_exists('mb_substr')) {
+            if (mb_strlen($text, 'UTF-8') > $length) {
+                return trim((string)mb_substr($text, 0, $length, 'UTF-8'));
+            }
+            return $text;
+        }
+
+        if (Typecho_Common::strLen($text) > $length) {
+            return trim((string)Typecho_Common::subStr($text, 0, $length, ''));
+        }
+
+        return $text;
+    }
+
     private static function musicMetingApiTemplate(): string
     {
         $options = Typecho_Widget::widget('Widget_Options');
@@ -4677,8 +5239,18 @@ while ($tags->next()) {
             return '';
         }
 
-        if (preg_match('#(https?:\/\/[^\s<>"\']+|\/\/[^\s<>"\']+)#i', $plain, $urlMatch) && isset($urlMatch[1])) {
-            return trim((string)$urlMatch[1]);
+        if (preg_match('#^(https?:)?//#i', $plain)) {
+            return $plain;
+        }
+
+        if (preg_match('#(?:https?:\/\/|//)#i', $plain, $protocolMatch, PREG_OFFSET_CAPTURE)) {
+            $offset = isset($protocolMatch[0][1]) ? intval($protocolMatch[0][1]) : -1;
+            if ($offset >= 0) {
+                $tail = trim((string)substr($plain, $offset));
+                if ($tail !== '') {
+                    return $tail;
+                }
+            }
         }
 
         return $plain;

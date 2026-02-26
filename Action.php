@@ -1950,6 +1950,99 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $this->response->redirect(Typecho_Common::url('extending.php?panel=Enhancement%2Fmanage-moments.php', $this->options->adminUrl));
     }
 
+    public function batchGenerateAiSummary()
+    {
+        $redirectQuery = array(
+            'panel' => 'Enhancement/manage-ai-summary.php'
+        );
+        $status = trim((string)$this->request->get('status'));
+        if (in_array($status, array('publish', 'private', 'waiting', 'hidden'), true)) {
+            $redirectQuery['status'] = $status;
+        }
+        $redirectPage = intval($this->request->get('page'));
+        if ($redirectPage > 1) {
+            $redirectQuery['page'] = $redirectPage;
+        }
+        $redirect = Typecho_Common::url('extending.php?' . http_build_query($redirectQuery), $this->options->adminUrl);
+
+        if (!Enhancement_Plugin::aiSummaryEnabled()) {
+            $this->widget('Widget_Notice')->set(_t('AI 摘要功能未启用，请先在插件设置中开启'), null, 'notice');
+            $this->response->redirect($redirect);
+            return;
+        }
+
+        $cids = $this->request->filter('int')->getArray('cid');
+        $cleanCids = array();
+        if (is_array($cids)) {
+            foreach ($cids as $cid) {
+                $cid = intval($cid);
+                if ($cid > 0 && !in_array($cid, $cleanCids, true)) {
+                    $cleanCids[] = $cid;
+                }
+            }
+        }
+
+        if (empty($cleanCids)) {
+            $this->widget('Widget_Notice')->set(_t('请先选择需要生成摘要的文章'), null, 'notice');
+            $this->response->redirect($redirect);
+            return;
+        }
+
+        $force = $this->request->get('force') == '1';
+        $posts = $this->db->fetchAll(
+            $this->db->select('cid', 'title', 'text')
+                ->from('table.contents')
+                ->where('type = ?', 'post')
+                ->where('cid IN ?', $cleanCids)
+                ->order('created', Typecho_Db::SORT_DESC)
+        );
+
+        if (!is_array($posts) || empty($posts)) {
+            $this->widget('Widget_Notice')->set(_t('未找到可处理的文章'), null, 'notice');
+            $this->response->redirect($redirect);
+            return;
+        }
+
+        $generated = 0;
+        $skipped = 0;
+        $failed = 0;
+
+        foreach ($posts as $post) {
+            $cid = isset($post['cid']) ? intval($post['cid']) : 0;
+            if ($cid <= 0) {
+                $failed++;
+                continue;
+            }
+
+            $edit = (object) array(
+                'cid' => $cid,
+                'title' => isset($post['title']) ? (string)$post['title'] : '',
+                'text' => isset($post['text']) ? (string)$post['text'] : '',
+            );
+
+            $result = Enhancement_Plugin::autoGeneratePostSummary($post, $edit, $force);
+            $status = is_array($result) && isset($result['status']) ? (string)$result['status'] : 'skipped';
+            if ($status === 'generated') {
+                $generated++;
+            } elseif ($status === 'error') {
+                $failed++;
+            } else {
+                $skipped++;
+            }
+        }
+
+        $message = _t('AI摘要批量处理完成：生成 %d 篇，跳过 %d 篇，失败 %d 篇', $generated, $skipped, $failed);
+        $level = 'success';
+        if ($generated <= 0 && $failed > 0) {
+            $level = 'error';
+        } elseif ($failed > 0 || $generated <= 0) {
+            $level = 'notice';
+        }
+
+        $this->widget('Widget_Notice')->set($message, null, $level);
+        $this->response->redirect($redirect);
+    }
+
     public function goRedirect()
     {
         $target = $this->request->get('target');
@@ -2101,6 +2194,14 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 
         if ($this->request->is('do=meting-api')) {
             $this->metingApi();
+            return;
+        }
+
+        if ($this->request->is('do=ai-summary-batch')) {
+            Helper::security()->protect();
+            $user = Typecho_Widget::widget('Widget_User');
+            $user->pass('administrator');
+            $this->batchGenerateAiSummary();
             return;
         }
 
