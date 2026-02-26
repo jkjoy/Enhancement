@@ -65,6 +65,61 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         return (object) array();
     }
 
+    public static function getPluginVersion(): string
+    {
+        static $version = null;
+        if ($version !== null) {
+            return $version;
+        }
+
+        $version = '';
+
+        try {
+            $info = Typecho_Plugin::parseInfo(__FILE__);
+            if (is_array($info) && isset($info['version'])) {
+                $version = trim((string)$info['version']);
+            }
+        } catch (Exception $e) {
+            $version = '';
+        }
+
+        if ($version === '') {
+            $mtime = @filemtime(__FILE__);
+            if (is_numeric($mtime) && intval($mtime) > 0) {
+                $version = (string)intval($mtime);
+            }
+        }
+
+        return $version;
+    }
+
+    public static function appendVersionToAssetUrl($url): string
+    {
+        $url = trim((string)$url);
+        if ($url === '') {
+            return '';
+        }
+
+        $fragment = '';
+        $fragmentPos = strpos($url, '#');
+        if ($fragmentPos !== false) {
+            $fragment = substr($url, $fragmentPos);
+            $url = substr($url, 0, $fragmentPos);
+        }
+
+        if (preg_match('/(?:^|[?&])v=[^&]*/', $url)) {
+            return $url . $fragment;
+        }
+
+        $version = self::getPluginVersion();
+        if ($version === '') {
+            return $url . $fragment;
+        }
+
+        $separator = strpos($url, '?') === false ? '?' : '&';
+        return $url . $separator . 'v=' . rawurlencode($version) . $fragment;
+    }
+
     private static function isPhpExtensionReady(string $extension): bool
     {
         $extension = strtolower(trim($extension));
@@ -205,7 +260,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         Helper::removeAction('enhancement-moments-edit');
         Helper::removePanel(3, 'Enhancement/manage-enhancement.php');
         Helper::removePanel(3, 'Enhancement/manage-moments.php');
-        Helper::removePanel(3, 'Enhancement/manage-upload.php');
+        Helper::removePanel(1, 'Enhancement/manage-upload.php');
         Helper::removePanel(1, self::$commentNotifierPanel);
 
         if ($deleteLinksTable || $deleteMomentsTable || $deleteQqQueueTable) {
@@ -3252,7 +3307,7 @@ while ($tags->next()) {
         }
         $db = Typecho_Db::get();
         $prefix = $db->getPrefix();
-        $nopic_url = Typecho_Common::url('usr/plugins/Enhancement/nopic.png', $options->siteUrl);
+        $nopic_url = self::appendVersionToAssetUrl(Typecho_Common::url('usr/plugins/Enhancement/nopic.png', $options->siteUrl));
         $sql = $db->select()->from($prefix . 'links');
         if ($sort) {
             $sql = $sql->where('sort=?', $sort);
@@ -3376,9 +3431,9 @@ while ($tags->next()) {
             return;
         }
 
-        $cssUrl = htmlspecialchars($base . '/Enhancement/Meting/APlayer.min.css', ENT_QUOTES, 'UTF-8');
-        $aPlayerJsUrl = htmlspecialchars($base . '/Enhancement/Meting/APlayer.min.js', ENT_QUOTES, 'UTF-8');
-        $metingJsUrl = htmlspecialchars($base . '/Enhancement/Meting/Meting.min.js', ENT_QUOTES, 'UTF-8');
+        $cssUrl = htmlspecialchars(self::appendVersionToAssetUrl($base . '/Enhancement/Meting/APlayer.min.css'), ENT_QUOTES, 'UTF-8');
+        $aPlayerJsUrl = htmlspecialchars(self::appendVersionToAssetUrl($base . '/Enhancement/Meting/APlayer.min.js'), ENT_QUOTES, 'UTF-8');
+        $metingJsUrl = htmlspecialchars(self::appendVersionToAssetUrl($base . '/Enhancement/Meting/Meting.min.js'), ENT_QUOTES, 'UTF-8');
         $api = html_entity_decode(self::musicMetingApiTemplate(), ENT_QUOTES, 'UTF-8');
 
         echo '<link rel="stylesheet" href="' . $cssUrl . '">' . "\n";
@@ -4766,7 +4821,7 @@ while ($tags->next()) {
             return;
         }
 
-        $cssUrl = htmlspecialchars($pluginUrl . '/Enhancement/shortcodes.css', ENT_QUOTES, 'UTF-8');
+        $cssUrl = htmlspecialchars(self::appendVersionToAssetUrl($pluginUrl . '/Enhancement/shortcodes.css'), ENT_QUOTES, 'UTF-8');
         echo '<link rel="stylesheet" href="' . $cssUrl . '">' . "\n";
     }
 

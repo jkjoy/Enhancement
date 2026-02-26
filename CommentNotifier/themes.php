@@ -53,7 +53,9 @@
                 });
 
                 if ($screen) {
-                    $img = $options->pluginUrl . '/Enhancement/CommentNotifier/template/' . $name . '/' . basename(current($screen));
+                    $img = Enhancement_Plugin::appendVersionToAssetUrl(
+                        $options->pluginUrl . '/Enhancement/CommentNotifier/template/' . $name . '/' . basename(current($screen))
+                    );
                 } else {
                     $img = Common::url('noscreen.png', $options->adminStaticUrl('img'));
                 }

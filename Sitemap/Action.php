@@ -40,7 +40,8 @@ class Enhancement_Sitemap_Action extends Typecho_Widget implements Widget_Interf
 
         header("Content-Type: application/xml");
         echo "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n";
-        echo "<?xml-stylesheet type='text/xsl' href='" . $options->pluginUrl . "/Enhancement/sitemap.xsl'?>\n";
+        $xslUrl = Enhancement_Plugin::appendVersionToAssetUrl($options->pluginUrl . "/Enhancement/sitemap.xsl");
+        echo "<?xml-stylesheet type='text/xsl' href='" . $xslUrl . "'?>\n";
         echo "<urlset xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n";
         echo "xsi:schemaLocation=\"http://www.sitemaps.org/schemas/sitemap/0.9 http://www.sitemaps.org/schemas/sitemap/0.9/sitemap.xsd\"\n";
         echo "xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">";

@@ -86,7 +86,9 @@ include 'menu.php';
                                             echo '<a href="' . $safeImage . '" title="' . _t('点击放大') . '" target="_blank"><img class="avatar" src="' . $safeImage . '" alt="' . $safeName . '" width="32" height="32"/></a>';
                                         } else {
                                             $options = Typecho_Widget::widget('Widget_Options');
-                                            $nopic_url = Typecho_Common::url('usr/plugins/Enhancement/nopic.png', $options->siteUrl);
+                                            $nopic_url = Enhancement_Plugin::appendVersionToAssetUrl(
+                                                Typecho_Common::url('usr/plugins/Enhancement/nopic.png', $options->siteUrl)
+                                            );
                                             echo '<img class="avatar" src="'.$nopic_url.'" alt="NOPIC" width="32" height="32"/>';
                                         }
                                     ?></td>
