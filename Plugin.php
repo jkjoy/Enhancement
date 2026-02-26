@@ -5220,6 +5220,7 @@ while ($tags->next()) {
         }
 
         $decoded = html_entity_decode($rawBody, ENT_QUOTES, 'UTF-8');
+        $hrefCandidate = '';
 
         if (preg_match('/<a\s+[^>]*href\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s>"\']+))/i', $decoded, $hrefMatch)) {
             for ($index = 1; $index <= 3; $index++) {
@@ -5229,31 +5230,48 @@ while ($tags->next()) {
 
                 $href = self::normalizeDownloadShortcodeUrlCandidate($hrefMatch[$index]);
                 if ($href !== '') {
-                    return $href;
+                    $hrefCandidate = $href;
+                    break;
                 }
             }
         }
 
         $plain = trim(strip_tags($decoded));
         if ($plain === '') {
-            return '';
+            return $hrefCandidate;
         }
 
+        $plainCandidate = '';
         if (preg_match('#^(https?:)?//#i', $plain)) {
-            return self::normalizeDownloadShortcodeUrlCandidate($plain);
-        }
-
-        if (preg_match('#(?:https?:\/\/|//)#i', $plain, $protocolMatch, PREG_OFFSET_CAPTURE)) {
+            $plainCandidate = self::normalizeDownloadShortcodeUrlCandidate($plain);
+        } else if (preg_match('#(?:https?:\/\/|//)#i', $plain, $protocolMatch, PREG_OFFSET_CAPTURE)) {
             $offset = isset($protocolMatch[0][1]) ? intval($protocolMatch[0][1]) : -1;
             if ($offset >= 0) {
                 $tail = trim((string)substr($plain, $offset));
                 if ($tail !== '') {
-                    return self::normalizeDownloadShortcodeUrlCandidate($tail);
+                    $plainCandidate = self::normalizeDownloadShortcodeUrlCandidate($tail);
                 }
             }
+        } else {
+            $plainCandidate = self::normalizeDownloadShortcodeUrlCandidate($plain);
         }
 
-        return self::normalizeDownloadShortcodeUrlCandidate($plain);
+        if ($hrefCandidate !== '' && $plainCandidate !== '') {
+            if (
+                preg_match('#^(https?:)?//#i', $plainCandidate) &&
+                strlen($plainCandidate) > strlen($hrefCandidate) &&
+                strpos($plainCandidate, $hrefCandidate) === 0
+            ) {
+                return $plainCandidate;
+            }
+            return $hrefCandidate;
+        }
+
+        if ($hrefCandidate !== '') {
+            return $hrefCandidate;
+        }
+
+        return $plainCandidate;
     }
 
     private static function normalizeDownloadShortcodeUrlCandidate($value): string
