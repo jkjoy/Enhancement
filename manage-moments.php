@@ -200,7 +200,7 @@ include 'common-js.php';
                 method: 'GET',
                 dataType: 'jsonp',
                 jsonp: 'callback',
-                timeout: 12000,
+                timeout: 10000,
                 cache: false,
                 data: {
                     location: latitude + ',' + longitude,
@@ -244,15 +244,69 @@ include 'common-js.php';
             });
         }
 
-        if (locateBtn.length) {
-            locateBtn.on('click', function () {
-                if (!navigator.geolocation) {
-                    setLocateStatus('当前浏览器不支持定位 API', true);
+        function locateByIp() {
+            if (!locateBtn.length) {
+                return;
+            }
+
+            var mapKey = (locateBtn.data('map-key') || '').toString().trim();
+            if (mapKey === '') {
+                locateBtn.prop('disabled', false);
+                setLocateStatus('定位失败：未配置腾讯地图 API Key，无法使用 IP 定位兜底', true);
+                return;
+            }
+
+            setLocateStatus('浏览器定位较慢，正在尝试 IP 快速定位...', false);
+            $.ajax({
+                url: 'https://apis.map.qq.com/ws/location/v1/ip',
+                method: 'GET',
+                dataType: 'jsonp',
+                jsonp: 'callback',
+                timeout: 8000,
+                cache: false,
+                data: {
+                    key: mapKey,
+                    output: 'jsonp'
+                }
+            }).done(function (response) {
+                if (response && Number(response.status) === 0 && response.result && response.result.location) {
+                    var ipLat = Number(response.result.location.lat || 0).toFixed(7);
+                    var ipLng = Number(response.result.location.lng || 0).toFixed(7);
+
+                    if (latitudeInput.length) {
+                        latitudeInput.val(ipLat);
+                    }
+                    if (longitudeInput.length) {
+                        longitudeInput.val(ipLng);
+                    }
+
+                    locateBtn.prop('disabled', false);
+                    reverseGeocode(ipLat, ipLng);
                     return;
                 }
 
-                locateBtn.prop('disabled', true);
-                setLocateStatus('正在获取当前位置...', false);
+                locateBtn.prop('disabled', false);
+                var statusCode = response && typeof response.status !== 'undefined' ? String(response.status) : '';
+                var errorMessage = (response && response.message) ? String(response.message) : 'IP 定位失败';
+                if (statusCode !== '') {
+                    errorMessage = '腾讯地图 IP 定位失败（status ' + statusCode + '）：' + errorMessage;
+                }
+                setLocateStatus(errorMessage, true);
+            }).fail(function () {
+                locateBtn.prop('disabled', false);
+                setLocateStatus('IP 定位请求失败，请检查网络后重试', true);
+            });
+        }
+
+        if (locateBtn.length) {
+                locateBtn.on('click', function () {
+                    if (!navigator.geolocation) {
+                        locateByIp();
+                        return;
+                    }
+
+                    locateBtn.prop('disabled', true);
+                    setLocateStatus('正在快速获取当前位置...', false);
 
                 function handlePositionSuccess(position) {
                     var latitude = Number(position.coords.latitude || 0).toFixed(7);
@@ -269,40 +323,36 @@ include 'common-js.php';
                     reverseGeocode(latitude, longitude);
                 }
 
-                function handlePositionError(error, triedFallback) {
-                    if (!triedFallback && error && error.code === 3) {
-                        setLocateStatus('高精度定位超时，正在尝试低精度定位...', false);
+                function handlePositionError(error, retried) {
+                    if (!retried && error && error.code === 3) {
+                        setLocateStatus('浏览器定位超时，正在重试一次精准定位...', false);
                         requestPosition(true);
                         return;
                     }
 
-                    locateBtn.prop('disabled', false);
-                    var message = '定位失败';
                     if (error && error.code === 1) {
-                        message = '定位失败：用户拒绝了定位权限';
+                        setLocateStatus('浏览器定位被拒绝，正在尝试 IP 快速定位...', false);
                     } else if (error && error.code === 2) {
-                        message = '定位失败：无法获取位置信息';
-                    } else if (error && error.code === 3) {
-                        message = triedFallback
-                            ? '定位失败：低精度定位仍超时，请检查网络后重试'
-                            : '定位失败：请求超时';
+                        setLocateStatus('浏览器定位不可用，正在尝试 IP 快速定位...', false);
+                    } else {
+                        setLocateStatus('浏览器定位仍超时，正在尝试 IP 快速定位...', false);
                     }
-                    setLocateStatus(message, true);
+                    locateByIp();
                 }
 
-                function requestPosition(useLowAccuracy) {
+                function requestPosition(retried) {
                     navigator.geolocation.getCurrentPosition(function (position) {
                         handlePositionSuccess(position);
                     }, function (error) {
-                        handlePositionError(error, useLowAccuracy);
-                    }, useLowAccuracy ? {
-                        enableHighAccuracy: false,
-                        timeout: 20000,
-                        maximumAge: 600000
-                    } : {
+                        handlePositionError(error, retried);
+                    }, retried ? {
                         enableHighAccuracy: true,
-                        timeout: 15000,
+                        timeout: 6000,
                         maximumAge: 0
+                    } : {
+                        enableHighAccuracy: false,
+                        timeout: 6000,
+                        maximumAge: 180000
                     });
                 }
 
