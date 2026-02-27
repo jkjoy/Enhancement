@@ -1856,121 +1856,6 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         }
     }
 
-    public function reverseGeocodeMoment()
-    {
-        $latitude = Enhancement_Plugin::normalizeMomentLatitude($this->request->get('latitude'));
-        $longitude = Enhancement_Plugin::normalizeMomentLongitude($this->request->get('longitude'));
-
-        if ($latitude === null || $longitude === null) {
-            $this->response->setStatus(400)->throwJson(array(
-                'success' => false,
-                'message' => _t('经纬度参数无效')
-            ));
-            return;
-        }
-
-        $settings = $this->collectPluginSettings();
-        $apiKey = isset($settings['tencent_map_key']) ? trim((string)$settings['tencent_map_key']) : '';
-        if ($apiKey === '') {
-            $this->response->setStatus(400)->throwJson(array(
-                'success' => false,
-                'message' => _t('未配置腾讯地图 API Key')
-            ));
-            return;
-        }
-
-        $query = http_build_query(array(
-            'location' => $latitude . ',' . $longitude,
-            'key' => $apiKey,
-            'get_poi' => 1
-        ));
-        $url = 'https://apis.map.qq.com/ws/geocoder/v1/?' . $query;
-
-        $raw = '';
-        if (function_exists('curl_init')) {
-            $ch = curl_init();
-            curl_setopt_array($ch, array(
-                CURLOPT_URL => $url,
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_CONNECTTIMEOUT => 5,
-                CURLOPT_TIMEOUT => 8,
-                CURLOPT_SSL_VERIFYPEER => true
-            ));
-            $raw = curl_exec($ch);
-            if (curl_errno($ch)) {
-                $error = curl_error($ch);
-                curl_close($ch);
-                $this->response->setStatus(500)->throwJson(array(
-                    'success' => false,
-                    'message' => _t('腾讯地图请求失败：%s', $error)
-                ));
-                return;
-            }
-            curl_close($ch);
-        } else {
-            $raw = @file_get_contents($url);
-        }
-
-        if (!is_string($raw) || trim($raw) === '') {
-            $this->response->setStatus(500)->throwJson(array(
-                'success' => false,
-                'message' => _t('腾讯地图返回为空')
-            ));
-            return;
-        }
-
-        $decoded = json_decode($raw, true);
-        if (!is_array($decoded)) {
-            $this->response->setStatus(500)->throwJson(array(
-                'success' => false,
-                'message' => _t('腾讯地图返回格式异常')
-            ));
-            return;
-        }
-
-        $status = isset($decoded['status']) ? intval($decoded['status']) : -1;
-        if ($status !== 0) {
-            $errorMessage = isset($decoded['message']) ? trim((string)$decoded['message']) : _t('未知错误');
-            $this->response->setStatus(500)->throwJson(array(
-                'success' => false,
-                'message' => _t('腾讯地图解析失败：%s', $errorMessage)
-            ));
-            return;
-        }
-
-        $result = isset($decoded['result']) && is_array($decoded['result']) ? $decoded['result'] : array();
-        $address = '';
-        if (isset($result['formatted_addresses']) && is_array($result['formatted_addresses'])) {
-            $recommend = isset($result['formatted_addresses']['recommend']) ? trim((string)$result['formatted_addresses']['recommend']) : '';
-            if ($recommend !== '') {
-                $address = $recommend;
-            }
-        }
-        if ($address === '') {
-            $address = isset($result['address']) ? trim((string)$result['address']) : '';
-        }
-        if ($address === '' && isset($result['address_component']) && is_array($result['address_component'])) {
-            $parts = array(
-                isset($result['address_component']['province']) ? trim((string)$result['address_component']['province']) : '',
-                isset($result['address_component']['city']) ? trim((string)$result['address_component']['city']) : '',
-                isset($result['address_component']['district']) ? trim((string)$result['address_component']['district']) : '',
-                isset($result['address_component']['street']) ? trim((string)$result['address_component']['street']) : ''
-            );
-            $address = trim(implode('', $parts));
-        }
-        $address = Enhancement_Plugin::normalizeMomentLocationAddress($address);
-        if ($address === null) {
-            $address = '';
-        }
-
-        $this->response->throwJson(array(
-            'success' => true,
-            'latitude' => $latitude,
-            'longitude' => $longitude,
-            'address' => $address
-        ));
-    }
-
     public function insertMoment()
     {
         if (Enhancement_Plugin::momentsForm('insert')->validate()) {
@@ -2325,14 +2210,6 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 
         if ($this->request->is('do=meting-api')) {
             $this->metingApi();
-            return;
-        }
-
-        if ($this->request->is('do=moment-reverse-geocode')) {
-            Helper::security()->protect();
-            $user = Typecho_Widget::widget('Widget_User');
-            $user->pass('administrator');
-            $this->reverseGeocodeMoment();
             return;
         }
 

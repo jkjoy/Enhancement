@@ -1389,20 +1389,20 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         $longitude = new Typecho_Widget_Helper_Form_Element_Hidden('longitude');
         $form->addInput($longitude);
 
-        $reverseGeocodeUrl = Helper::security()->getIndex('/action/enhancement-edit?do=moment-reverse-geocode');
         $mapKeyConfigured = self::tencentMapKey() !== '';
+        $tencentMapKey = self::tencentMapKey();
         $locationAction = new Typecho_Widget_Helper_Form_Element_Fake('location_action', null);
         $locationAction->setAttribute('class', 'typecho-option enhancement-option-no-bullet');
         $locationAction->input->setAttribute('type', 'hidden');
         $locationAction->description(
             '<div class="enhancement-action-row">'
             . '<button type="button" class="btn enhancement-action-btn" id="enhancement-moment-locate-btn"'
-            . ' data-geocode-url="' . htmlspecialchars($reverseGeocodeUrl, ENT_QUOTES, 'UTF-8') . '"'
+            . ' data-map-key="' . htmlspecialchars($tencentMapKey, ENT_QUOTES, 'UTF-8') . '"'
             . ' data-map-key-ready="' . ($mapKeyConfigured ? '1' : '0') . '">'
             . _t('获取定位')
             . '</button>'
             . '<span class="enhancement-action-note" id="enhancement-moment-locate-status">'
-            . ($mapKeyConfigured ? _t('将优先使用腾讯地图 API 解析详细地址') : _t('未配置腾讯地图 API Key，仅获取经纬度'))
+            . ($mapKeyConfigured ? _t('将通过浏览器直接调用腾讯地图 API 解析详细地址') : _t('未配置腾讯地图 API Key，仅获取经纬度'))
             . '</span>'
             . '</div>'
         );

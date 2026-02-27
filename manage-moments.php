@@ -188,33 +188,55 @@ include 'common-js.php';
                 return;
             }
 
-            var geocodeUrl = (locateBtn.data('geocode-url') || '').toString();
-            var keyReady = String(locateBtn.data('map-key-ready') || '0') === '1';
-            if (!keyReady || geocodeUrl === '') {
+            var mapKey = (locateBtn.data('map-key') || '').toString().trim();
+            if (mapKey === '') {
                 setLocateStatus('已获取经纬度（未配置腾讯地图 API Key，跳过地址解析）', false);
                 return;
             }
 
-            setLocateStatus('已获取经纬度，正在解析详细地址...', false);
+            setLocateStatus('已获取经纬度，正在通过腾讯地图解析详细地址...', false);
             $.ajax({
-                url: geocodeUrl,
+                url: 'https://apis.map.qq.com/ws/geocoder/v1/',
                 method: 'GET',
-                dataType: 'json',
+                dataType: 'jsonp',
+                jsonp: 'callback',
                 timeout: 12000,
                 cache: false,
                 data: {
-                    latitude: latitude,
-                    longitude: longitude
+                    location: latitude + ',' + longitude,
+                    key: mapKey,
+                    get_poi: 0
                 }
             }).done(function (response) {
-                if (response && response.success) {
-                    if (addressInput.length && response.address) {
-                        addressInput.val(response.address);
+                if (response && Number(response.status) === 0) {
+                    var result = response.result || {};
+                    var address = '';
+                    if (result.formatted_addresses && result.formatted_addresses.recommend) {
+                        address = String(result.formatted_addresses.recommend || '').trim();
                     }
-                    setLocateStatus(response.address ? '定位成功：已填充详细地址' : '定位成功：已获取经纬度', false);
+                    if (!address && result.address) {
+                        address = String(result.address || '').trim();
+                    }
+                    if (!address && result.address_component) {
+                        var c = result.address_component;
+                        address = [
+                            c.province || '',
+                            c.city || '',
+                            c.district || '',
+                            c.street || ''
+                        ].join('').trim();
+                    }
+                    if (addressInput.length && address) {
+                        addressInput.val(address);
+                    }
+                    setLocateStatus(address ? '定位成功：已填充详细地址' : '定位成功：已获取经纬度', false);
                     return;
                 }
-                var errorMessage = (response && response.message) ? response.message : '地址解析失败，已保留经纬度';
+                var statusCode = response && typeof response.status !== 'undefined' ? String(response.status) : '';
+                var errorMessage = (response && response.message) ? String(response.message) : '地址解析失败，已保留经纬度';
+                if (statusCode !== '') {
+                    errorMessage = '腾讯地图解析失败（status ' + statusCode + '）：' + errorMessage;
+                }
                 setLocateStatus(errorMessage, true);
             }).fail(function () {
                 setLocateStatus('地址解析失败，已保留经纬度', true);
@@ -231,7 +253,7 @@ include 'common-js.php';
                 locateBtn.prop('disabled', true);
                 setLocateStatus('正在获取当前位置...', false);
 
-                navigator.geolocation.getCurrentPosition(function (position) {
+                function handlePositionSuccess(position) {
                     var latitude = Number(position.coords.latitude || 0).toFixed(7);
                     var longitude = Number(position.coords.longitude || 0).toFixed(7);
 
@@ -244,7 +266,15 @@ include 'common-js.php';
 
                     locateBtn.prop('disabled', false);
                     reverseGeocode(latitude, longitude);
-                }, function (error) {
+                }
+
+                function handlePositionError(error, triedFallback) {
+                    if (!triedFallback && error && error.code === 3) {
+                        setLocateStatus('高精度定位超时，正在尝试低精度定位...', false);
+                        requestPosition(true);
+                        return;
+                    }
+
                     locateBtn.prop('disabled', false);
                     var message = '定位失败';
                     if (error && error.code === 1) {
@@ -252,14 +282,30 @@ include 'common-js.php';
                     } else if (error && error.code === 2) {
                         message = '定位失败：无法获取位置信息';
                     } else if (error && error.code === 3) {
-                        message = '定位失败：请求超时';
+                        message = triedFallback
+                            ? '定位失败：低精度定位仍超时，请检查网络后重试'
+                            : '定位失败：请求超时';
                     }
                     setLocateStatus(message, true);
-                }, {
-                    enableHighAccuracy: true,
-                    timeout: 12000,
-                    maximumAge: 0
-                });
+                }
+
+                function requestPosition(useLowAccuracy) {
+                    navigator.geolocation.getCurrentPosition(function (position) {
+                        handlePositionSuccess(position);
+                    }, function (error) {
+                        handlePositionError(error, useLowAccuracy);
+                    }, useLowAccuracy ? {
+                        enableHighAccuracy: false,
+                        timeout: 20000,
+                        maximumAge: 600000
+                    } : {
+                        enableHighAccuracy: true,
+                        timeout: 15000,
+                        maximumAge: 0
+                    });
+                }
+
+                requestPosition(false);
             });
         }
 
