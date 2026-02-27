@@ -205,7 +205,8 @@ include 'common-js.php';
                 data: {
                     location: latitude + ',' + longitude,
                     key: mapKey,
-                    get_poi: 0
+                    get_poi: 0,
+                    output: 'jsonp'
                 }
             }).done(function (response) {
                 if (response && Number(response.status) === 0) {
