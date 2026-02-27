@@ -5,7 +5,7 @@
  * 具体功能包含:插件/主题zip上传,友情链接,瞬间,网站地图,编辑器增强,站外链接跳转,评论邮件通知,QQ通知,常见视频链接 音乐链接 解析,AI摘要生成等
  * @package Enhancement
  * @author 老孙博客
- * @version 1.1.7
+ * @version 1.1.8
  * @link HTTPS://www.IMSUN.ORG
  * @dependence 14.10.10-*
  */
@@ -583,6 +583,15 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         );
         $form->addInput($enableCommentSync);
 
+        $enableCommentSmiley = new Typecho_Widget_Helper_Form_Element_Radio(
+            'enable_comment_smiley',
+            array('1' => _t('启用'), '0' => _t('禁用')),
+            '1',
+            _t('评论表情'),
+            _t('评论框显示表情面板，并自动解析评论内容中的表情短代码')
+        );
+        $form->addInput($enableCommentSmiley);
+
         $enableTagsHelper = new Typecho_Widget_Helper_Form_Element_Radio(
             'enable_tags_helper',
             array('1' => _t('启用'), '0' => _t('禁用')),
@@ -1003,6 +1012,10 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             _t('填写评论表情解析函数名，留空则不处理')
         );
         $form->addInput($biaoqing);
+
+        $legacyCommentSmileySize = new Typecho_Widget_Helper_Form_Element_Hidden('comment_smiley_size');
+        $legacyCommentSmileySize->value('20px');
+        $form->addInput($legacyCommentSmileySize);
 
         $options = Typecho_Widget::widget('Widget_Options');
         $settings = self::pluginSettings($options);
@@ -1743,6 +1756,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         }
 
         self::renderCommentAuthorLinkEnhancer($archive);
+        self::renderCommentSmileyPicker($archive);
 
         if (!self::turnstileReady()) {
             return;
@@ -1790,6 +1804,135 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             . 'if(id){els[j].setAttribute("data-widget-id", id);}'
             . '}'
             . '}'
+            . '}'
+            . '})();</script>';
+    }
+
+    private static function renderCommentSmileyPicker($archive = null)
+    {
+        if (!($archive instanceof Widget_Archive) || !$archive->is('single')) {
+            return;
+        }
+
+        if (!self::commentSmileyEnabled()) {
+            return;
+        }
+
+        $baseUrl = self::commentSmileyBaseUrl();
+        if ($baseUrl === '') {
+            return;
+        }
+
+        $items = array();
+        foreach (self::commentSmileyDefinitions() as $item) {
+            $code = isset($item[0]) ? trim((string)$item[0]) : '';
+            $image = isset($item[1]) ? trim((string)$item[1]) : '';
+            $title = isset($item[3]) ? trim((string)$item[3]) : '';
+            if ($title === '' && isset($item[2])) {
+                $title = trim((string)$item[2]);
+            }
+
+            if ($code === '' || $image === '') {
+                continue;
+            }
+
+            $items[] = array(
+                'code' => $code,
+                'title' => $title !== '' ? $title : $code,
+                'image' => self::appendVersionToAssetUrl($baseUrl . '/' . ltrim($image, '/')),
+            );
+        }
+
+        if (empty($items)) {
+            return;
+        }
+
+        echo '<style id="enhancement-comment-smiley-style">'
+            . '.enhancement-comment-smiley{--enhancement-comment-smiley-size:20px;margin:0 0 10px;font-size:inherit;}'
+            . '.enhancement-comment-smiley-toggle{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid #ddd;border-radius:6px;background:#fff;color:#333;cursor:pointer;line-height:1;font-size:13px;transition:border-color .2s ease,background-color .2s ease;}'
+            . '.enhancement-comment-smiley-toggle:hover{border-color:#bbb;background:#fafafa;}'
+            . '.enhancement-comment-smiley-panel{display:none;margin-top:8px;padding:10px;border:1px solid #eee;border-radius:8px;background:#fff;box-sizing:border-box;max-height:220px;overflow:auto;}'
+            . '.enhancement-comment-smiley-panel.is-open{display:flex;flex-wrap:wrap;gap:8px;}'
+            . '.enhancement-comment-smiley-item{display:inline-flex;align-items:center;justify-content:center;padding:4px;border:1px solid transparent;border-radius:6px;background:#fff;cursor:pointer;line-height:0;transition:border-color .2s ease,background-color .2s ease;}'
+            . '.enhancement-comment-smiley-item:hover{border-color:#e2e2e2;background:#fafafa;}'
+            . '.enhancement-comment-smiley-item img{width:var(--enhancement-comment-smiley-size);height:var(--enhancement-comment-smiley-size);display:block;object-fit:contain;}'
+            . '#comments img[src*="/Enhancement/smiley/"], .comment-list img[src*="/Enhancement/smiley/"], .comment-content img[src*="/Enhancement/smiley/"]{width:20px !important;height:20px !important;max-width:20px !important;display:inline-block;vertical-align:-0.15em;margin:0 .08em;}'
+            . '</style>';
+
+        echo '<script>(function(){'
+            . 'var items=' . json_encode($items, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . ';'
+            . 'if(!items||!items.length){return;}'
+            . 'function createEvent(name){try{return new Event(name,{bubbles:true});}catch(e){var evt=document.createEvent("Event");evt.initEvent(name,true,true);return evt;}}'
+            . 'function insertText(textarea,text){if(!textarea){return;}'
+            . 'var value=textarea.value||"";'
+            . 'var start=typeof textarea.selectionStart==="number"?textarea.selectionStart:value.length;'
+            . 'var end=typeof textarea.selectionEnd==="number"?textarea.selectionEnd:value.length;'
+            . 'var before=value.slice(0,start);'
+            . 'var after=value.slice(end);'
+            . 'var prefix=before&&!/\s$/.test(before)?" ":"";'
+            . 'var suffix=after&&!/^\s/.test(after)?" ":"";'
+            . 'var insertValue=prefix+text+suffix;'
+            . 'textarea.value=before+insertValue+after;'
+            . 'var cursor=(before+insertValue).length;'
+            . 'textarea.focus();'
+            . 'if(typeof textarea.setSelectionRange==="function"){textarea.setSelectionRange(cursor,cursor);}'
+            . 'textarea.dispatchEvent(createEvent("input"));'
+            . 'textarea.dispatchEvent(createEvent("change"));'
+            . '}'
+            . 'function bindForm(form){'
+            . 'if(!form||form.getAttribute("data-enhancement-smiley")==="1"){return;}'
+            . 'var textarea=form.querySelector(\'textarea[name="text"], textarea#textarea, textarea#text\');'
+            . 'if(!textarea){return;}'
+            . 'form.setAttribute("data-enhancement-smiley","1");'
+            . 'var wrapper=document.createElement("div");'
+            . 'wrapper.className="enhancement-comment-smiley";'
+            . 'var toggle=document.createElement("button");'
+            . 'toggle.type="button";'
+            . 'toggle.className="enhancement-comment-smiley-toggle";'
+            . 'toggle.innerHTML="<span aria-hidden=\\"true\\">😊</span><span>表情</span>";'
+            . 'var panel=document.createElement("div");'
+            . 'panel.className="enhancement-comment-smiley-panel";'
+            . 'for(var i=0;i<items.length;i++){'
+            . 'var item=items[i]||{};'
+            . 'if(!item.code||!item.image){continue;}'
+            . 'var btn=document.createElement("button");'
+            . 'btn.type="button";'
+            . 'btn.className="enhancement-comment-smiley-item";'
+            . 'btn.setAttribute("title",item.title||item.code);'
+            . 'btn.setAttribute("aria-label",item.title||item.code);'
+            . 'btn.setAttribute("data-code",item.code);'
+            . 'var img=document.createElement("img");'
+            . 'img.src=item.image;'
+            . 'img.alt=item.code;'
+            . 'img.loading="lazy";'
+            . 'btn.appendChild(img);'
+            . 'btn.addEventListener("click",function(e){'
+            . 'e.preventDefault();'
+            . 'insertText(textarea,this.getAttribute("data-code")||"");'
+            . '});'
+            . 'panel.appendChild(btn);'
+            . '}'
+            . 'toggle.addEventListener("click",function(e){'
+            . 'e.preventDefault();'
+            . 'panel.classList.toggle("is-open");'
+            . '});'
+            . 'document.addEventListener("click",function(e){'
+            . 'if(!wrapper.contains(e.target)){panel.classList.remove("is-open");}'
+            . '});'
+            . 'wrapper.appendChild(toggle);'
+            . 'wrapper.appendChild(panel);'
+            . 'if(textarea.parentNode){textarea.parentNode.insertBefore(wrapper,textarea);}'
+            . 'else{form.insertBefore(wrapper,form.firstChild);}'
+            . '}'
+            . 'function init(){'
+            . 'var forms=document.querySelectorAll(\'form[action*="/comment"], form#comment-form, #comment-form form, form.comment-form\');'
+            . 'if(!forms||!forms.length){return;}'
+            . 'for(var i=0;i<forms.length;i++){bindForm(forms[i]);}'
+            . '}'
+            . 'if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",init);}else{init();}'
+            . 'if(window.MutationObserver&&document.body){'
+            . 'var observer=new MutationObserver(function(){init();});'
+            . 'observer.observe(document.body,{childList:true,subtree:true});'
             . '}'
             . '})();</script>';
     }
@@ -3469,6 +3612,15 @@ while ($tags->next()) {
             return false;
         }
         return $settings->enable_music_parser == '1';
+    }
+
+    public static function commentSmileyEnabled(): bool
+    {
+        $settings = self::pluginSettings(Typecho_Widget::widget('Widget_Options'));
+        if (!isset($settings->enable_comment_smiley)) {
+            return true;
+        }
+        return $settings->enable_comment_smiley == '1';
     }
 
     public static function attachmentPreviewEnabled(): bool
@@ -5428,6 +5580,105 @@ while ($tags->next()) {
         echo '<link rel="stylesheet" href="' . $cssUrl . '">' . "\n";
     }
 
+    private static function commentSmileyDefinitions(): array
+    {
+        return array(
+            array(':?:', 'doubt.png', '疑问', '疑问'),
+            array(':razz:', 'razz.png', '调皮', '调皮'),
+            array(':sad:', 'sad.png', '难过', '难过'),
+            array(':evil:', 'evil.png', '抠鼻', '抠鼻'),
+            array(':naughty:', 'naughty.png', '顽皮', '顽皮'),
+            array(':!:', 'scare.png', '吓', '吓'),
+            array(':smile:', 'smile.png', '微笑', '微笑'),
+            array(':oops:', 'oops.png', '憨笑', '憨笑'),
+            array(':neutral:', 'neutral.png', '亲亲', '亲亲'),
+            array(':cry:', 'cry.png', '大哭', '大哭'),
+            array(':mrgreen:', 'mrgreen.png', '呲牙', '呲牙'),
+            array(':grin:', 'grin.png', '坏笑', '坏笑'),
+            array(':eek:', 'eek.png', '惊讶', '惊讶'),
+            array(':shock:', 'shock.png', '发呆', '发呆'),
+            array(':???:', 'bz.png', '撇嘴', '撇嘴'),
+            array(':cool:', 'cool.png', '酷', '酷'),
+            array(':lol:', 'lol.png', '偷笑', '偷笑'),
+            array(':mad:', 'mad.png', '咒骂', '咒骂'),
+            array(':twisted:', 'twisted.png', '发怒', '发怒'),
+            array(':roll:', 'roll.png', '白眼', '白眼'),
+            array(':wink:', 'wink.png', '鼓掌', '鼓掌'),
+            array(':idea:', 'idea.png', '想法', '想法'),
+            array(':despise:', 'despise.png', '蔑视', '蔑视'),
+            array(':celebrate:', 'celebrate.png', '庆祝', '庆祝'),
+            array(':watermelon:', 'watermelon.png', '西瓜', '西瓜'),
+            array(':xmas:', 'xmas.png', '圣诞', '圣诞'),
+            array(':warn:', 'warn.png', '警告', '警告'),
+            array(':rainbow:', 'rainbow.png', '彩虹', '彩虹'),
+            array(':loveyou:', 'loveyou.png', '爱你', '爱你'),
+            array(':love:', 'love.png', '爱', '爱'),
+            array(':beer:', 'beer.png', '啤酒', '啤酒'),
+        );
+    }
+
+    private static function commentSmileyBaseUrl(): string
+    {
+        $options = Typecho_Widget::widget('Widget_Options');
+        $pluginUrl = rtrim((string)$options->pluginUrl, '/');
+        if ($pluginUrl === '') {
+            return '';
+        }
+
+        return $pluginUrl . '/Enhancement/smiley';
+    }
+
+    private static function parseCommentSmileyShortcodes(string $text): string
+    {
+        if ($text === '') {
+            return $text;
+        }
+
+        $baseUrl = self::commentSmileyBaseUrl();
+        if ($baseUrl === '') {
+            return $text;
+        }
+
+        $replaceMap = array();
+        foreach (self::commentSmileyDefinitions() as $item) {
+            $code = isset($item[0]) ? trim((string)$item[0]) : '';
+            $image = isset($item[1]) ? trim((string)$item[1]) : '';
+            $title = isset($item[3]) ? trim((string)$item[3]) : '';
+            if ($title === '' && isset($item[2])) {
+                $title = trim((string)$item[2]);
+            }
+
+            if ($code === '' || $image === '') {
+                continue;
+            }
+
+            $imageUrl = htmlspecialchars(
+                self::appendVersionToAssetUrl($baseUrl . '/' . ltrim($image, '/')),
+                ENT_QUOTES,
+                'UTF-8'
+            );
+            $safeCode = htmlspecialchars($code, ENT_QUOTES, 'UTF-8');
+            $safeTitle = htmlspecialchars($title !== '' ? $title : $code, ENT_QUOTES, 'UTF-8');
+
+            $replaceMap[$code] = '<img class="biaoqing enhancement-smiley" width="20" height="20" src="' . $imageUrl . '" alt="' . $safeCode . '" title="' . $safeTitle . '" />';
+        }
+
+        if (empty($replaceMap)) {
+            return $text;
+        }
+
+        uksort($replaceMap, function ($a, $b) {
+            $lenA = Typecho_Common::strLen((string)$a);
+            $lenB = Typecho_Common::strLen((string)$b);
+            if ($lenA === $lenB) {
+                return strcmp((string)$b, (string)$a);
+            }
+            return $lenB - $lenA;
+        });
+
+        return strtr($text, $replaceMap);
+    }
+
     public static function parse($text, $widget, $lastResult)
     {
         $text = empty($lastResult) ? $text : $lastResult;
@@ -5455,6 +5706,10 @@ while ($tags->next()) {
 
             if ($isContentWidget) {
                 $text = self::parseEnhancementShortcodes($text, $widget);
+            }
+
+            if ($isCommentWidget && self::commentSmileyEnabled()) {
+                $text = self::parseCommentSmileyShortcodes($text);
             }
 
             $text = self::rewriteExternalLinks($text);
