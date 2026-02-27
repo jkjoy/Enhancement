@@ -7,6 +7,32 @@ class Enhancement_Memos_Action extends Typecho_Widget implements Widget_Interfac
     private $options;
     private $prefix;
 
+    private function configuredToken(): string
+    {
+        try {
+            $settings = $this->options->plugin('Enhancement');
+        } catch (Exception $e) {
+            $settings = (object) array();
+        }
+
+        return isset($settings->moments_token) ? trim((string)$settings->moments_token) : '';
+    }
+
+    private function validateToken($incomingToken): bool
+    {
+        $token = $this->configuredToken();
+        $incomingToken = trim((string)$incomingToken);
+        if ($token === '' || $incomingToken === '') {
+            return false;
+        }
+
+        if (function_exists('hash_equals')) {
+            return hash_equals($token, $incomingToken);
+        }
+
+        return $token === $incomingToken;
+    }
+
     private function getBearerToken(): ?string
     {
         $headers = array(
@@ -42,6 +68,8 @@ class Enhancement_Memos_Action extends Typecho_Widget implements Widget_Interfac
     {
         Enhancement_Plugin::ensureMomentsTable();
 
+        $showAll = $this->validateToken($this->getBearerToken());
+
         $limit = intval($this->request->get('limit', 20));
         if ($limit <= 0) {
             $limit = 20;
@@ -59,16 +87,37 @@ class Enhancement_Memos_Action extends Typecho_Widget implements Widget_Interfac
             ->order($this->prefix . 'moments.mid', Typecho_Db::SORT_DESC)
             ->limit($limit)
             ->offset($offset);
+        if (!$showAll) {
+            $sql->where('status = ? OR status IS NULL OR status = ?', 'public', '');
+        }
 
         try {
             $rows = $this->db->fetchAll($sql);
         } catch (Exception $e) {
-            $this->response->throwJson(array());
-            return;
+            if (!$showAll) {
+                try {
+                    $fallbackSql = $this->db->select()->from($this->prefix . 'moments')
+                        ->order($this->prefix . 'moments.mid', Typecho_Db::SORT_DESC)
+                        ->limit($limit)
+                        ->offset($offset);
+                    $rows = $this->db->fetchAll($fallbackSql);
+                } catch (Exception $e2) {
+                    $this->response->throwJson(array());
+                    return;
+                }
+            } else {
+                $this->response->throwJson(array());
+                return;
+            }
         }
 
         $items = array();
         foreach ($rows as $row) {
+            $momentStatus = Enhancement_Plugin::normalizeMomentStatus(isset($row['status']) ? $row['status'] : '', 'public');
+            if (!$showAll && $momentStatus !== 'public') {
+                continue;
+            }
+
             $tagsRaw = isset($row['tags']) ? trim($row['tags']) : '';
             $tags = array();
             if ($tagsRaw !== '') {
@@ -110,13 +159,23 @@ class Enhancement_Memos_Action extends Typecho_Widget implements Widget_Interfac
             }
             $timeString = $timestamp > 0 ? date('Y-m-d H:i', $timestamp) : '';
 
+            $latitude = Enhancement_Plugin::normalizeMomentLatitude(isset($row['latitude']) ? $row['latitude'] : '');
+            $longitude = Enhancement_Plugin::normalizeMomentLongitude(isset($row['longitude']) ? $row['longitude'] : '');
+            if ($latitude === null || $longitude === null) {
+                $latitude = null;
+                $longitude = null;
+            }
+
             $items[] = array(
                 'id' => (string)$row['mid'],
                 'content' => (string)$row['content'],
                 'time' => $timeString,
                 'tags' => $tags,
                 'media' => $media,
-                'source' => Enhancement_Plugin::normalizeMomentSource(isset($row['source']) ? $row['source'] : '', 'web')
+                'status' => $momentStatus,
+                'source' => Enhancement_Plugin::normalizeMomentSource(isset($row['source']) ? $row['source'] : '', 'web'),
+                'latitude' => $latitude,
+                'longitude' => $longitude
             );
         }
 
@@ -127,12 +186,7 @@ class Enhancement_Memos_Action extends Typecho_Widget implements Widget_Interfac
     {
         Enhancement_Plugin::ensureMomentsTable();
 
-        try {
-            $settings = $this->options->plugin('Enhancement');
-        } catch (Exception $e) {
-            $settings = (object) array();
-        }
-        $token = isset($settings->moments_token) ? trim((string)$settings->moments_token) : '';
+        $token = $this->configuredToken();
 
         if ($token === '') {
             $this->response->setStatus(403)->throwJson(array(
@@ -152,11 +206,7 @@ class Enhancement_Memos_Action extends Typecho_Widget implements Widget_Interfac
             return;
         }
 
-        $tokenValid = function_exists('hash_equals')
-            ? hash_equals($token, (string)$incomingToken)
-            : ($token === (string)$incomingToken);
-
-        if (!$tokenValid) {
+        if (!$this->validateToken($incomingToken)) {
             $this->response->setStatus(403)->throwJson(array(
                 'success' => false,
                 'message' => _t('Token 无效')
@@ -170,6 +220,10 @@ class Enhancement_Memos_Action extends Typecho_Widget implements Widget_Interfac
         $mediaValue = null;
         $createdValue = null;
         $sourceValue = null;
+        $statusValue = null;
+        $latitudeValue = null;
+        $longitudeValue = null;
+        $locationAddressValue = null;
 
         if (is_array($payload)) {
             $content = $payload['content'] ?? '';
@@ -177,12 +231,20 @@ class Enhancement_Memos_Action extends Typecho_Widget implements Widget_Interfac
             $mediaValue = $payload['media'] ?? null;
             $createdValue = $payload['created'] ?? null;
             $sourceValue = $payload['source'] ?? null;
+            $statusValue = $payload['status'] ?? null;
+            $latitudeValue = isset($payload['latitude']) ? $payload['latitude'] : (isset($payload['lat']) ? $payload['lat'] : null);
+            $longitudeValue = isset($payload['longitude']) ? $payload['longitude'] : (isset($payload['lng']) ? $payload['lng'] : null);
+            $locationAddressValue = isset($payload['location_address']) ? $payload['location_address'] : (isset($payload['address']) ? $payload['address'] : null);
         } else {
             $content = $this->request->get('content');
             $tagsValue = $this->request->get('tags');
             $mediaValue = $this->request->get('media');
             $createdValue = $this->request->get('created');
             $sourceValue = $this->request->get('source');
+            $statusValue = $this->request->get('status');
+            $latitudeValue = $this->request->get('latitude', $this->request->get('lat'));
+            $longitudeValue = $this->request->get('longitude', $this->request->get('lng'));
+            $locationAddressValue = $this->request->get('location_address', $this->request->get('address'));
         }
 
         $content = trim((string)$content);
@@ -246,12 +308,24 @@ class Enhancement_Memos_Action extends Typecho_Widget implements Widget_Interfac
 
         $sourceDefault = 'api';
         $source = Enhancement_Plugin::normalizeMomentSource($sourceValue, $sourceDefault);
+        $status = Enhancement_Plugin::normalizeMomentStatus($statusValue, 'public');
+        $latitude = Enhancement_Plugin::normalizeMomentLatitude($latitudeValue);
+        $longitude = Enhancement_Plugin::normalizeMomentLongitude($longitudeValue);
+        if ($latitude === null || $longitude === null) {
+            $latitude = null;
+            $longitude = null;
+        }
+        $locationAddress = Enhancement_Plugin::normalizeMomentLocationAddress($locationAddressValue);
 
         $moment = array(
             'content' => $content,
             'tags' => $tags,
             'media' => $media,
             'source' => $source,
+            'status' => $status,
+            'latitude' => $latitude,
+            'longitude' => $longitude,
+            'location_address' => $locationAddress,
             'created' => $created
         );
 

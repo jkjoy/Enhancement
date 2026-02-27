@@ -17,6 +17,10 @@ CREATE TABLE IF NOT EXISTS `typecho_moments` (
   `tags` text DEFAULT NULL,
   `media` text DEFAULT NULL,
   `source` varchar(20) DEFAULT 'web',
+  `status` varchar(20) DEFAULT 'public',
+  `latitude` varchar(20) DEFAULT NULL,
+  `longitude` varchar(20) DEFAULT NULL,
+  `location_address` varchar(255) DEFAULT NULL,
   `created` integer DEFAULT 0
 );
 

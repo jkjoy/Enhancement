@@ -55,6 +55,8 @@ include 'menu.php';
                                 <col width="15"/>
                                 <col width=""/>
                                 <col width="16%"/>
+                                <col width="10%"/>
+                                <col width="18%"/>
                                 <col width="12%"/>
                                 <col width="16%"/>
                             </colgroup>
@@ -63,6 +65,8 @@ include 'menu.php';
                                     <th> </th>
                                     <th><?php _e('内容'); ?></th>
                                     <th><?php _e('标签'); ?></th>
+                                    <th><?php _e('状态'); ?></th>
+                                    <th><?php _e('定位'); ?></th>
                                     <th><?php _e('来源'); ?></th>
                                     <th><?php _e('时间'); ?></th>
                                 </tr>
@@ -91,6 +95,23 @@ include 'menu.php';
                                             echo $tags;
                                         ?></td>
                                         <td><?php
+                                            $statusRaw = isset($moment['status']) ? (string)$moment['status'] : '';
+                                            $status = Enhancement_Plugin::normalizeMomentStatus($statusRaw, 'public');
+                                            echo $status === 'private' ? _t('私密') : _t('公开');
+                                        ?></td>
+                                        <td><?php
+                                            $address = isset($moment['location_address']) ? trim((string)$moment['location_address']) : '';
+                                            $latitude = isset($moment['latitude']) ? trim((string)$moment['latitude']) : '';
+                                            $longitude = isset($moment['longitude']) ? trim((string)$moment['longitude']) : '';
+                                            if ($address !== '') {
+                                                echo htmlspecialchars($address, ENT_QUOTES, 'UTF-8');
+                                            } else if ($latitude !== '' && $longitude !== '') {
+                                                echo htmlspecialchars($latitude . ', ' . $longitude, ENT_QUOTES, 'UTF-8');
+                                            } else {
+                                                echo '-';
+                                            }
+                                        ?></td>
+                                        <td><?php
                                             $sourceRaw = isset($moment['source']) ? trim((string)$moment['source']) : '';
                                             $source = Enhancement_Plugin::normalizeMomentSource($sourceRaw, 'web');
                                             if ($source === 'mobile') {
@@ -111,7 +132,7 @@ include 'menu.php';
                                     <?php endforeach; ?>
                                 <?php else: ?>
                                     <tr>
-                                        <td colspan="5"><h6 class="typecho-list-table-title"><?php _e('没有任何瞬间'); ?></h6></td>
+                                        <td colspan="7"><h6 class="typecho-list-table-title"><?php _e('没有任何瞬间'); ?></h6></td>
                                     </tr>
                                 <?php endif; ?>
                             </tbody>
@@ -147,6 +168,100 @@ include 'common-js.php';
             btnEl       :   '.dropdown-toggle',
             menuEl      :   '.dropdown-menu'
         });
+
+        var locateBtn = $('#enhancement-moment-locate-btn');
+        var locateStatus = $('#enhancement-moment-locate-status');
+        var latitudeInput = $('input[name="latitude"]');
+        var longitudeInput = $('input[name="longitude"]');
+        var addressInput = $('input[name="location_address"]');
+
+        function setLocateStatus(text, isError) {
+            if (!locateStatus.length) {
+                return;
+            }
+            locateStatus.text(text || '');
+            locateStatus.css('color', isError ? '#c0392b' : '#666');
+        }
+
+        function reverseGeocode(latitude, longitude) {
+            if (!locateBtn.length) {
+                return;
+            }
+
+            var geocodeUrl = (locateBtn.data('geocode-url') || '').toString();
+            var keyReady = String(locateBtn.data('map-key-ready') || '0') === '1';
+            if (!keyReady || geocodeUrl === '') {
+                setLocateStatus('已获取经纬度（未配置腾讯地图 API Key，跳过地址解析）', false);
+                return;
+            }
+
+            setLocateStatus('已获取经纬度，正在解析详细地址...', false);
+            $.ajax({
+                url: geocodeUrl,
+                method: 'GET',
+                dataType: 'json',
+                timeout: 12000,
+                cache: false,
+                data: {
+                    latitude: latitude,
+                    longitude: longitude
+                }
+            }).done(function (response) {
+                if (response && response.success) {
+                    if (addressInput.length && response.address) {
+                        addressInput.val(response.address);
+                    }
+                    setLocateStatus(response.address ? '定位成功：已填充详细地址' : '定位成功：已获取经纬度', false);
+                    return;
+                }
+                var errorMessage = (response && response.message) ? response.message : '地址解析失败，已保留经纬度';
+                setLocateStatus(errorMessage, true);
+            }).fail(function () {
+                setLocateStatus('地址解析失败，已保留经纬度', true);
+            });
+        }
+
+        if (locateBtn.length) {
+            locateBtn.on('click', function () {
+                if (!navigator.geolocation) {
+                    setLocateStatus('当前浏览器不支持定位 API', true);
+                    return;
+                }
+
+                locateBtn.prop('disabled', true);
+                setLocateStatus('正在获取当前位置...', false);
+
+                navigator.geolocation.getCurrentPosition(function (position) {
+                    var latitude = Number(position.coords.latitude || 0).toFixed(7);
+                    var longitude = Number(position.coords.longitude || 0).toFixed(7);
+
+                    if (latitudeInput.length) {
+                        latitudeInput.val(latitude);
+                    }
+                    if (longitudeInput.length) {
+                        longitudeInput.val(longitude);
+                    }
+
+                    locateBtn.prop('disabled', false);
+                    reverseGeocode(latitude, longitude);
+                }, function (error) {
+                    locateBtn.prop('disabled', false);
+                    var message = '定位失败';
+                    if (error && error.code === 1) {
+                        message = '定位失败：用户拒绝了定位权限';
+                    } else if (error && error.code === 2) {
+                        message = '定位失败：无法获取位置信息';
+                    } else if (error && error.code === 3) {
+                        message = '定位失败：请求超时';
+                    }
+                    setLocateStatus(message, true);
+                }, {
+                    enableHighAccuracy: true,
+                    timeout: 12000,
+                    maximumAge: 0
+                });
+            });
+        }
 
         <?php if (isset($request->mid)): ?>
         $('.typecho-mini-panel').effect('highlight', '#AACB36');

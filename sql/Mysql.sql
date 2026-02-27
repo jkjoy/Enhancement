@@ -18,6 +18,10 @@ CREATE TABLE IF NOT EXISTS `typecho_moments` (
   `tags` varchar(200) DEFAULT NULL COMMENT '标签',
   `media` text DEFAULT NULL COMMENT '媒体JSON',
   `source` varchar(20) DEFAULT 'web' COMMENT '来源',
+  `status` varchar(20) DEFAULT 'public' COMMENT '状态（public/private）',
+  `latitude` varchar(20) DEFAULT NULL COMMENT '纬度',
+  `longitude` varchar(20) DEFAULT NULL COMMENT '经度',
+  `location_address` varchar(255) DEFAULT NULL COMMENT '定位地址',
   `created` int(10) UNSIGNED DEFAULT '0' COMMENT '创建时间',
   PRIMARY KEY (`mid`)
 ) ENGINE=MYISAM DEFAULT CHARSET=%charset%;

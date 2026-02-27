@@ -565,6 +565,16 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         );
         $form->addInput($momentsToken->addRule('maxLength', _t('Token 最多100个字符'), 100));
 
+        $tencentMapKey = new Typecho_Widget_Helper_Form_Element_Text(
+            'tencent_map_key',
+            null,
+            '',
+            _t('腾讯地图 API Key'),
+            _t('用于瞬间“获取定位”后的逆地址解析，建议在腾讯地图控制台限制来源域名')
+        );
+        $tencentMapKey->input->setAttribute('autocomplete', 'off');
+        $form->addInput($tencentMapKey->addRule('maxLength', _t('API Key 最多120个字符'), 120));
+
         $momentsImageText = new Typecho_Widget_Helper_Form_Element_Text(
             'moments_image_text',
             null,
@@ -1351,6 +1361,56 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         $tags = new Typecho_Widget_Helper_Form_Element_Text('tags', null, null, _t('标签'), _t('可填逗号分隔或 JSON 数组'));
         $form->addInput($tags);
 
+        $status = new Typecho_Widget_Helper_Form_Element_Radio(
+            'status',
+            array(
+                'public' => _t('公开'),
+                'private' => _t('私密')
+            ),
+            'public',
+            _t('状态'),
+            _t('公开：前台 API 默认可见；私密：仅携带有效 Token 请求 API 时可见')
+        );
+        $form->addInput($status);
+
+        $locationAddress = new Typecho_Widget_Helper_Form_Element_Text(
+            'location_address',
+            null,
+            null,
+            _t('定位地址'),
+            _t('点击“获取定位”后自动填充地址并保存到数据库，避免重复查询')
+        );
+        $locationAddress->input->setAttribute('placeholder', _t('未获取定位'));
+        $form->addInput($locationAddress);
+
+        $latitude = new Typecho_Widget_Helper_Form_Element_Hidden('latitude');
+        $form->addInput($latitude);
+
+        $longitude = new Typecho_Widget_Helper_Form_Element_Hidden('longitude');
+        $form->addInput($longitude);
+
+        $reverseGeocodeUrl = Helper::security()->getIndex('/action/enhancement-edit?do=moment-reverse-geocode');
+        $mapKeyConfigured = self::tencentMapKey() !== '';
+        $locationAction = new Typecho_Widget_Helper_Form_Element_Fake('location_action', null);
+        $locationAction->setAttribute('class', 'typecho-option enhancement-option-no-bullet');
+        $locationAction->input->setAttribute('type', 'hidden');
+        $locationAction->description(
+            '<div class="enhancement-action-row">'
+            . '<button type="button" class="btn enhancement-action-btn" id="enhancement-moment-locate-btn"'
+            . ' data-geocode-url="' . htmlspecialchars($reverseGeocodeUrl, ENT_QUOTES, 'UTF-8') . '"'
+            . ' data-map-key-ready="' . ($mapKeyConfigured ? '1' : '0') . '">'
+            . _t('获取定位')
+            . '</button>'
+            . '<span class="enhancement-action-note" id="enhancement-moment-locate-status">'
+            . ($mapKeyConfigured ? _t('将优先使用腾讯地图 API 解析详细地址') : _t('未配置腾讯地图 API Key，仅获取经纬度'))
+            . '</span>'
+            . '</div>'
+        );
+        if (isset($locationAction->container)) {
+            $locationAction->container->setAttribute('style', 'list-style:none;margin:0;padding:0;');
+        }
+        $form->addInput($locationAction);
+
         $do = new Typecho_Widget_Helper_Form_Element_Hidden('do');
         $form->addInput($do);
 
@@ -1373,12 +1433,17 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
 
             $content->value($item['content']);
             $tags->value($item['tags']);
+            $status->value(isset($item['status']) ? self::normalizeMomentStatus($item['status'], 'public') : 'public');
+            $locationAddress->value(isset($item['location_address']) ? $item['location_address'] : '');
+            $latitude->value(isset($item['latitude']) ? $item['latitude'] : '');
+            $longitude->value(isset($item['longitude']) ? $item['longitude'] : '');
             $do->value('update');
             $mid->value($item['mid']);
             $submit->value(_t('编辑瞬间'));
             $_action = 'update';
         } else {
             $do->value('insert');
+            $status->value('public');
             $submit->value(_t('发布瞬间'));
             $_action = 'insert';
         }
@@ -1390,6 +1455,10 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         if ('insert' == $action || 'update' == $action) {
             $content->addRule('required', _t('必须填写内容'));
             $tags->addRule('maxLength', _t('标签最多包含200个字符'), 200);
+            $status->addRule(array('Enhancement_Plugin', 'validateMomentStatus'), _t('状态值无效'));
+            $locationAddress->addRule('maxLength', _t('定位地址最多255个字符'), 255);
+            $latitude->addRule(array('Enhancement_Plugin', 'validateMomentLatitude'), _t('纬度格式不正确，范围应为 -90 到 90'));
+            $longitude->addRule(array('Enhancement_Plugin', 'validateMomentLongitude'), _t('经度格式不正确，范围应为 -180 到 180'));
         }
         if ('update' == $action) {
             $mid->addRule('required', _t('记录主键不存在'));
@@ -1521,6 +1590,99 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         return $media;
     }
 
+    public static function tencentMapKey(): string
+    {
+        $settings = self::pluginSettings(Typecho_Widget::widget('Widget_Options'));
+        return isset($settings->tencent_map_key) ? trim((string)$settings->tencent_map_key) : '';
+    }
+
+    public static function normalizeMomentLatitude($latitude)
+    {
+        $latitude = trim((string)$latitude);
+        if ($latitude === '' || !is_numeric($latitude)) {
+            return null;
+        }
+
+        $value = floatval($latitude);
+        if ($value < -90 || $value > 90) {
+            return null;
+        }
+
+        return rtrim(rtrim(sprintf('%.7F', $value), '0'), '.');
+    }
+
+    public static function normalizeMomentLongitude($longitude)
+    {
+        $longitude = trim((string)$longitude);
+        if ($longitude === '' || !is_numeric($longitude)) {
+            return null;
+        }
+
+        $value = floatval($longitude);
+        if ($value < -180 || $value > 180) {
+            return null;
+        }
+
+        return rtrim(rtrim(sprintf('%.7F', $value), '0'), '.');
+    }
+
+    public static function normalizeMomentLocationAddress($address, $maxLength = 255)
+    {
+        $address = trim((string)$address);
+        if ($address === '') {
+            return null;
+        }
+
+        $maxLength = intval($maxLength);
+        if ($maxLength <= 0) {
+            $maxLength = 255;
+        }
+
+        if (Typecho_Common::strLen($address) > $maxLength) {
+            $address = Typecho_Common::subStr($address, 0, $maxLength, '');
+        }
+
+        return $address;
+    }
+
+    public static function validateMomentLatitude($latitude)
+    {
+        $latitude = trim((string)$latitude);
+        if ($latitude === '') {
+            return true;
+        }
+        return self::normalizeMomentLatitude($latitude) !== null;
+    }
+
+    public static function validateMomentLongitude($longitude)
+    {
+        $longitude = trim((string)$longitude);
+        if ($longitude === '') {
+            return true;
+        }
+        return self::normalizeMomentLongitude($longitude) !== null;
+    }
+
+    public static function normalizeMomentStatus($status, $default = 'public')
+    {
+        $allowed = array('public', 'private');
+        $status = strtolower(trim((string)$status));
+        if (!in_array($status, $allowed, true)) {
+            $status = strtolower(trim((string)$default));
+            if (!in_array($status, $allowed, true)) {
+                $status = 'public';
+            }
+        }
+
+        return $status;
+    }
+
+    public static function validateMomentStatus($status)
+    {
+        $status = strtolower(trim((string)$status));
+        return in_array($status, array('public', 'private'), true);
+    }
+
     public static function normalizeMomentSource($source, $default = 'web')
     {
         $allowed = array('web', 'mobile', 'api');
@@ -1606,6 +1768,138 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         }
     }
 
+    public static function ensureMomentsStatusColumn()
+    {
+        $db = Typecho_Db::get();
+        $type = explode('_', $db->getAdapterName());
+        $type = array_pop($type);
+        $prefix = $db->getPrefix();
+        $table = $prefix . 'moments';
+
+        try {
+            if ('Mysql' === $type) {
+                $row = $db->fetchRow('SHOW COLUMNS FROM `' . $table . '` LIKE \'status\'');
+                if (!is_array($row) || empty($row)) {
+                    $db->query('ALTER TABLE `' . $table . '` ADD COLUMN `status` varchar(20) DEFAULT \'public\' AFTER `source`', Typecho_Db::WRITE);
+                }
+                return;
+            }
+
+            if ('Pgsql' === $type) {
+                $row = $db->fetchRow(
+                    $db->select('column_name')
+                        ->from('information_schema.columns')
+                        ->where('table_name = ?', $table)
+                        ->where('column_name = ?', 'status')
+                        ->limit(1)
+                );
+                if (!is_array($row) || empty($row)) {
+                    $db->query('ALTER TABLE "' . $table . '" ADD COLUMN "status" varchar(20) DEFAULT \'public\'', Typecho_Db::WRITE);
+                }
+                return;
+            }
+
+            if ('SQLite' === $type) {
+                $rows = $db->fetchAll('PRAGMA table_info(`' . $table . '`)');
+                $hasStatus = false;
+                if (is_array($rows)) {
+                    foreach ($rows as $row) {
+                        $name = isset($row['name']) ? strtolower((string)$row['name']) : '';
+                        if ($name === 'status') {
+                            $hasStatus = true;
+                            break;
+                        }
+                    }
+                }
+                if (!$hasStatus) {
+                    $db->query('ALTER TABLE `' . $table . '` ADD COLUMN `status` varchar(20) DEFAULT \'public\'', Typecho_Db::WRITE);
+                }
+                return;
+            }
+        } catch (Exception $e) {
+            // ignore migration errors to avoid blocking runtime
+        }
+    }
+
+    public static function ensureMomentsLocationColumns()
+    {
+        $db = Typecho_Db::get();
+        $type = explode('_', $db->getAdapterName());
+        $type = array_pop($type);
+        $prefix = $db->getPrefix();
+        $table = $prefix . 'moments';
+
+        $columns = array('latitude', 'longitude', 'location_address');
+
+        try {
+            if ('Mysql' === $type) {
+                $columnRows = array();
+                foreach ($columns as $column) {
+                    $columnRows[$column] = $db->fetchRow('SHOW COLUMNS FROM `' . $table . '` LIKE \'' . $column . '\'');
+                }
+
+                if (!is_array($columnRows['latitude']) || empty($columnRows['latitude'])) {
+                    $db->query('ALTER TABLE `' . $table . '` ADD COLUMN `latitude` varchar(20) DEFAULT NULL AFTER `status`', Typecho_Db::WRITE);
+                }
+                if (!is_array($columnRows['longitude']) || empty($columnRows['longitude'])) {
+                    $db->query('ALTER TABLE `' . $table . '` ADD COLUMN `longitude` varchar(20) DEFAULT NULL AFTER `latitude`', Typecho_Db::WRITE);
+                }
+                if (!is_array($columnRows['location_address']) || empty($columnRows['location_address'])) {
+                    $db->query('ALTER TABLE `' . $table . '` ADD COLUMN `location_address` varchar(255) DEFAULT NULL AFTER `longitude`', Typecho_Db::WRITE);
+                }
+                return;
+            }
+
+            if ('Pgsql' === $type) {
+                foreach ($columns as $column) {
+                    $row = $db->fetchRow(
+                        $db->select('column_name')
+                            ->from('information_schema.columns')
+                            ->where('table_name = ?', $table)
+                            ->where('column_name = ?', $column)
+                            ->limit(1)
+                    );
+                    if (is_array($row) && !empty($row)) {
+                        continue;
+                    }
+
+                    if ($column === 'location_address') {
+                        $db->query('ALTER TABLE "' . $table . '" ADD COLUMN "location_address" varchar(255) DEFAULT NULL', Typecho_Db::WRITE);
+                    } else {
+                        $db->query('ALTER TABLE "' . $table . '" ADD COLUMN "' . $column . '" varchar(20) DEFAULT NULL', Typecho_Db::WRITE);
+                    }
+                }
+                return;
+            }
+
+            if ('SQLite' === $type) {
+                $rows = $db->fetchAll('PRAGMA table_info(`' . $table . '`)');
+                $existing = array();
+                if (is_array($rows)) {
+                    foreach ($rows as $row) {
+                        $name = isset($row['name']) ? strtolower((string)$row['name']) : '';
+                        if ($name !== '') {
+                            $existing[$name] = true;
+                        }
+                    }
+                }
+
+                if (!isset($existing['latitude'])) {
+                    $db->query('ALTER TABLE `' . $table . '` ADD COLUMN `latitude` varchar(20) DEFAULT NULL', Typecho_Db::WRITE);
+                }
+                if (!isset($existing['longitude'])) {
+                    $db->query('ALTER TABLE `' . $table . '` ADD COLUMN `longitude` varchar(20) DEFAULT NULL', Typecho_Db::WRITE);
+                }
+                if (!isset($existing['location_address'])) {
+                    $db->query('ALTER TABLE `' . $table . '` ADD COLUMN `location_address` varchar(255) DEFAULT NULL', Typecho_Db::WRITE);
+                }
+                return;
+            }
+        } catch (Exception $e) {
+            // ignore migration errors to avoid blocking runtime
+        }
+    }
+
     public static function ensureMomentsTable()
     {
         $db = Typecho_Db::get();
@@ -1633,6 +1927,8 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         }
 
         self::ensureMomentsSourceColumn();
+        self::ensureMomentsStatusColumn();
+        self::ensureMomentsLocationColumns();
     }
 
     public static function turnstileEnabled(): bool
