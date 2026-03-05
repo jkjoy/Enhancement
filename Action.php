@@ -1573,6 +1573,129 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         );
     }
 
+    private function getLinkByLid($lid)
+    {
+        $lid = intval($lid);
+        if ($lid <= 0) {
+            return null;
+        }
+
+        $row = $this->db->fetchRow(
+            $this->db->select('lid', 'name', 'url', 'email', 'state')
+                ->from($this->prefix . 'links')
+                ->where('lid = ?', $lid)
+                ->limit(1)
+        );
+
+        return is_array($row) ? $row : null;
+    }
+
+    private function canSendLinkApprovalMail(array $settings = null): bool
+    {
+        if ($settings === null) {
+            $settings = $this->collectPluginSettings();
+        }
+
+        if (!is_array($settings)) {
+            return false;
+        }
+
+        $enableLinkApprovalMail = isset($settings['enable_link_approval_mail_notifier'])
+            ? trim((string)$settings['enable_link_approval_mail_notifier'])
+            : '1';
+        if ($enableLinkApprovalMail !== '1') {
+            return false;
+        }
+
+        $required = array('STMPHost', 'SMTPUserName', 'SMTPPassword', 'SMTPPort', 'from');
+        foreach ($required as $key) {
+            $value = isset($settings[$key]) ? trim((string)$settings[$key]) : '';
+            if ($value === '') {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function sendLinkApprovalMail(array $link, array $settings = null): bool
+    {
+        $email = isset($link['email']) ? trim((string)$link['email']) : '';
+        if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            return false;
+        }
+
+        if ($settings === null) {
+            $settings = $this->collectPluginSettings();
+        }
+
+        if (!$this->canSendLinkApprovalMail($settings)) {
+            return false;
+        }
+
+        $siteTitle = trim((string)$this->options->title);
+        if ($siteTitle === '') {
+            $siteTitle = '网站';
+        }
+        $siteUrl = trim((string)$this->options->siteUrl);
+
+        $linkName = isset($link['name']) ? trim((string)$link['name']) : '';
+        $linkUrl = isset($link['url']) ? trim((string)$link['url']) : '';
+        $toName = $linkName !== '' ? $linkName : $email;
+
+        $safeSiteTitle = htmlspecialchars($siteTitle, ENT_QUOTES, 'UTF-8');
+        $safeSiteUrl = htmlspecialchars($siteUrl, ENT_QUOTES, 'UTF-8');
+        $safeLinkName = htmlspecialchars($linkName !== '' ? $linkName : '-', ENT_QUOTES, 'UTF-8');
+        $safeLinkUrl = htmlspecialchars($linkUrl !== '' ? $linkUrl : '-', ENT_QUOTES, 'UTF-8');
+        $subject = '您的友情链接申请已审核通过 - ' . $siteTitle;
+        $html = '<p>您好，您在 <strong>' . $safeSiteTitle . '</strong> 提交的友情链接已审核通过。</p>'
+            . '<p>友链名称：' . $safeLinkName . '<br>友链地址：' . $safeLinkUrl . '</p>'
+            . '<p>站点地址：<a href="' . $safeSiteUrl . '" target="_blank" rel="noopener noreferrer">' . $safeSiteUrl . '</a></p>'
+            . '<p>感谢支持。</p>';
+
+        $from = isset($settings['from']) ? trim((string)$settings['from']) : '';
+        if ($from === '') {
+            return false;
+        }
+        $fromName = isset($settings['fromName']) ? trim((string)$settings['fromName']) : '';
+        if ($fromName === '') {
+            $fromName = $siteTitle;
+        }
+
+        try {
+            require_once __DIR__ . '/CommentNotifier/PHPMailer/PHPMailer.php';
+            require_once __DIR__ . '/CommentNotifier/PHPMailer/SMTP.php';
+            require_once __DIR__ . '/CommentNotifier/PHPMailer/Exception.php';
+
+            $mail = new \PHPMailer\PHPMailer\PHPMailer(false);
+            $mail->CharSet = \PHPMailer\PHPMailer\PHPMailer::CHARSET_UTF8;
+            $mail->Encoding = \PHPMailer\PHPMailer\PHPMailer::ENCODING_BASE64;
+            $mail->isSMTP();
+            $mail->Host = trim((string)$settings['STMPHost']);
+            $mail->SMTPAuth = true;
+            $mail->Username = trim((string)$settings['SMTPUserName']);
+            $mail->Password = trim((string)$settings['SMTPPassword']);
+
+            $smtpSecure = isset($settings['SMTPSecure']) ? trim((string)$settings['SMTPSecure']) : '';
+            if ($smtpSecure !== '') {
+                $mail->SMTPSecure = $smtpSecure;
+            }
+
+            $smtpPort = isset($settings['SMTPPort']) ? intval($settings['SMTPPort']) : 0;
+            $mail->Port = $smtpPort > 0 ? $smtpPort : 25;
+
+            $mail->setFrom($from, $fromName);
+            $mail->addAddress($email, $toName);
+            $mail->Subject = $subject;
+            $mail->isHTML();
+            $mail->Body = $html;
+
+            return (bool)$mail->send();
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
     public function insertEnhancement()
     {
         if (Enhancement_Plugin::form('insert')->validate()) {
@@ -1704,7 +1827,8 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 
         /** 取出数据 */
         $item = $this->request->from('email', 'image', 'url', 'state');
-        $item_lid = $this->request->get('lid');
+        $item_lid = intval($this->request->get('lid'));
+        $before = $this->getLinkByLid($item_lid);
 
         /** 过滤XSS */
         $item['name'] = $this->request->filter('xss')->name;
@@ -1713,7 +1837,18 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $item['user'] = $this->request->filter('xss')->user;
 
         /** 更新数据 */
-        $this->db->query($this->db->update($this->prefix . 'links')->rows($item)->where('lid = ?', $item_lid));
+        $updated = $this->db->query($this->db->update($this->prefix . 'links')->rows($item)->where('lid = ?', $item_lid));
+
+        $oldState = is_array($before) && isset($before['state']) ? trim((string)$before['state']) : '';
+        $newState = isset($item['state']) ? trim((string)$item['state']) : '';
+        if ($updated && $oldState !== '1' && $newState === '1') {
+            $notifyLink = array(
+                'name' => isset($item['name']) ? (string)$item['name'] : (is_array($before) && isset($before['name']) ? (string)$before['name'] : ''),
+                'url' => isset($item['url']) ? (string)$item['url'] : (is_array($before) && isset($before['url']) ? (string)$before['url'] : ''),
+                'email' => isset($item['email']) ? (string)$item['email'] : (is_array($before) && isset($before['email']) ? (string)$before['email'] : '')
+            );
+            $this->sendLinkApprovalMail($notifyLink);
+        }
 
         /** 设置高亮 */
         $this->widget('Widget_Notice')->highlight('enhancement-' . $item_lid);
@@ -1755,10 +1890,18 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
     {
         $lids = $this->request->filter('int')->getArray('lid');
         $approveCount = 0;
+        $pluginSettings = $this->collectPluginSettings();
+        $canSendMail = $this->canSendLinkApprovalMail($pluginSettings);
         if ($lids && is_array($lids)) {
             foreach ($lids as $lid) {
+                $current = $this->getLinkByLid($lid);
+                $wasApproved = is_array($current) && isset($current['state']) && trim((string)$current['state']) === '1';
+
                 if ($this->db->query($this->db->update($this->prefix . 'links')->rows(array('state' => '1'))->where('lid = ?', $lid))) {
                     $approveCount++;
+                    if ($canSendMail && !$wasApproved && is_array($current)) {
+                        $this->sendLinkApprovalMail($current, $pluginSettings);
+                    }
                 }
             }
         }

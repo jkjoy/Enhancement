@@ -5,7 +5,7 @@
  * 具体功能包含:插件/主题zip上传,友情链接,瞬间,网站地图,编辑器增强,站外链接跳转,评论邮件通知,QQ通知,常见视频链接 音乐链接 解析,AI摘要生成等
  * @package Enhancement
  * @author 老孙博客
- * @version 1.1.8
+ * @version 1.1.9
  * @link HTTPS://www.IMSUN.ORG
  * @dependence 14.10.10-*
  */
@@ -555,6 +555,15 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         );
         $dsize->input->setAttribute('class', 'w-10');
         $form->addInput($dsize->addRule('isInteger', _t('请填写整数数字')));
+        
+        $enableLinkApprovalMailNotifier = new Typecho_Widget_Helper_Form_Element_Radio(
+            'enable_link_approval_mail_notifier',
+            array('1' => _t('启用'), '0' => _t('禁用')),
+            '0',
+            _t('友情链接审核通过邮件提醒'),
+            _t('开启后，友情链接审核通过时会向该友链填写的邮箱发送提醒（需已配置 SMTP）')
+        );
+        $form->addInput($enableLinkApprovalMailNotifier);
 
         $momentsToken = new Typecho_Widget_Helper_Form_Element_Text(
             'moments_token',
