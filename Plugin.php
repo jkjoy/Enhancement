@@ -5,10 +5,23 @@
  * 具体功能包含:插件/主题zip上传,友情链接,瞬间,网站地图,编辑器增强,站外链接跳转,评论邮件通知,QQ通知,常见视频链接 音乐链接 解析,AI摘要生成等
  * @package Enhancement
  * @author 老孙博客
- * @version 1.1.9
+ * @version 1.2.0
  * @link HTTPS://www.IMSUN.ORG
  * @dependence 14.10.10-*
  */
+
+$enhancementS3Files = array(
+    __DIR__ . '/S3Upload/Utils.php',
+    __DIR__ . '/S3Upload/S3Client.php',
+    __DIR__ . '/S3Upload/StreamUploader.php',
+    __DIR__ . '/S3Upload/FileHandler.php'
+);
+foreach ($enhancementS3Files as $enhancementS3File) {
+    if (is_file($enhancementS3File)) {
+        require_once $enhancementS3File;
+    }
+}
+unset($enhancementS3Files, $enhancementS3File);
 
 class Enhancement_Plugin implements Typecho_Plugin_Interface
 {
@@ -219,6 +232,11 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         Typecho_Plugin::factory('Widget_Archive')->header = array('Enhancement_Plugin', 'archiveHeader');
         Typecho_Plugin::factory('Widget_Archive')->footer = array('Enhancement_Plugin', 'turnstileFooter');
         Typecho_Plugin::factory('Widget_Archive')->callEnhancement = array('Enhancement_Plugin', 'output_str');
+        Typecho_Plugin::factory('Widget_Upload')->uploadHandle = array('Enhancement_S3Upload_FileHandler', 'uploadHandle');
+        Typecho_Plugin::factory('Widget_Upload')->modifyHandle = array('Enhancement_S3Upload_FileHandler', 'modifyHandle');
+        Typecho_Plugin::factory('Widget_Upload')->deleteHandle = array('Enhancement_S3Upload_FileHandler', 'deleteHandle');
+        Typecho_Plugin::factory('Widget_Upload')->attachmentHandle = array('Enhancement_S3Upload_FileHandler', 'attachmentHandle');
+        Typecho_Plugin::factory('Widget_Upload')->attachmentDataHandle = array('Enhancement_S3Upload_FileHandler', 'attachmentDataHandle');
         return _t($info);
     }
 
@@ -526,7 +544,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             'pattern_text',
             null,
             '<li><a href="{url}" title="{title}" target="_blank" rel="noopener">{name}</a></li>',
-            _t('<h3 class="enhancement-title">友链输出设置</h3>SHOW_TEXT模式源码规则'),
+            _t('<h3 class="enhancement-title">友链输出设置</h3><hr/>SHOW_TEXT模式源码规则'),
             _t('使用SHOW_TEXT(仅文字)模式输出时的源码，可按上表规则替换其中字段')
         );
         $form->addInput($pattern_text);
@@ -569,7 +587,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             'moments_token',
             null,
             '',
-            _t('<h3 class="enhancement-title">瞬间设置</h3>瞬间 API Token'),
+            _t('<h3 class="enhancement-title">瞬间设置</h3><hr/>瞬间 API Token'),
             _t('用于 /api/v1/memos 发布瞬间（Authorization: Bearer <token>）')
         );
         $form->addInput($momentsToken->addRule('maxLength', _t('Token 最多100个字符'), 100));
@@ -597,7 +615,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             'enable_comment_sync',
             array('1' => _t('启用'), '0' => _t('禁用')),
             '1',
-            _t('<h3 class="enhancement-title">功能开关</h3>评论同步'),
+            _t('<h3 class="enhancement-title">功能开关</h3><hr/>评论同步'),
             _t('同步游客/登录用户历史评论中的网址、昵称和邮箱')
         );
         $form->addInput($enableCommentSync);
@@ -698,7 +716,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             'enable_turnstile',
             array('1' => _t('启用'), '0' => _t('禁用')),
             '0',
-            _t('<h3 class="enhancement-title">安全设置</h3>Turnstile 人机验证'),
+            _t('<h3 class="enhancement-title">安全设置</h3><hr/>Turnstile 人机验证'),
             _t('统一保护评论提交与友情链接提交')
         );
         $form->addInput($enableTurnstile);
@@ -735,7 +753,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             'enable_ai_summary',
             array('1' => _t('启用'), '0' => _t('禁用')),
             '0',
-            _t('<h3 class="enhancement-title">AI 摘要设置</h3>自动生成文章摘要'),
+            _t('<h3 class="enhancement-title">AI 摘要设置</h3><hr/>自动生成文章摘要'),
             _t('发布文章时调用 AI 生成摘要，并写入自定义字段')
         );
         $form->addInput($enableAiSummary);
@@ -743,7 +761,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         $aiSummaryApiUrl = new Typecho_Widget_Helper_Form_Element_Text(
             'ai_summary_api_url',
             null,
-            'https://api.openai.com/v1/chat/completions',
+            'https://api.deepseek.com',
             _t('AI API 地址'),
             _t('支持 OpenAI 兼容接口；可填完整 chat/completions 地址或仅填基础地址')
         );
@@ -762,7 +780,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         $aiSummaryModel = new Typecho_Widget_Helper_Form_Element_Text(
             'ai_summary_model',
             null,
-            'gpt-4o-mini',
+            'deepseek-chat',
             _t('AI 模型'),
             _t('例如：gpt-4o-mini、deepseek-chat、qwen-plus')
         );
@@ -837,7 +855,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             'enable_comment_by_qq',
             array('1' => _t('启用'), '0' => _t('禁用')),
             '0',
-            _t('<h3 class="enhancement-title">QQ 通知设置</h3>QQ评论通知'),
+            _t('<h3 class="enhancement-title">QQ 通知设置</h3><hr/>QQ评论通知'),
             _t('评论通过时通过 QQ 机器人推送通知')
         );
         $form->addInput($enableCommentByQQ);
@@ -914,7 +932,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             'enable_comment_notifier',
             array('1' => _t('启用'), '0' => _t('禁用')),
             '0',
-            _t('<h3 class="enhancement-title">邮件提醒设置（SMTP）</h3>评论邮件提醒'),
+            _t('<h3 class="enhancement-title">邮件提醒设置（SMTP）</h3><hr/>评论邮件提醒'),
             _t('评论通过/回复时发送邮件提醒')
         );
         $form->addInput($enableCommentNotifier);
@@ -1032,6 +1050,135 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         );
         $form->addInput($biaoqing);
 
+        $enableS3Upload = new Typecho_Widget_Helper_Form_Element_Radio(
+            'enable_s3_upload',
+            array('1' => _t('启用'), '0' => _t('禁用')),
+            '0',
+            _t('<h3 class="enhancement-title">附件上传（S3）</h3><hr/>S3 远程上传'),
+            _t('启用后接管附件上传到 S3 兼容存储；未完整配置时自动回退本地上传')
+        );
+        $form->addInput($enableS3Upload);
+
+        $s3Endpoint = new Typecho_Widget_Helper_Form_Element_Text(
+            's3_endpoint',
+            null,
+            's3.amazonaws.com',
+            _t('S3 Endpoint'),
+            _t('例如：s3.amazonaws.com、oss-cn-hangzhou.aliyuncs.com（不要包含 http:// 或 https://）')
+        );
+        $form->addInput($s3Endpoint->addRule('maxLength', _t('Endpoint 最多200个字符'), 200));
+
+        $s3Bucket = new Typecho_Widget_Helper_Form_Element_Text(
+            's3_bucket',
+            null,
+            '',
+            _t('Bucket'),
+            _t('存储桶名称')
+        );
+        $form->addInput($s3Bucket->addRule('maxLength', _t('Bucket 最多120个字符'), 120));
+
+        $s3Region = new Typecho_Widget_Helper_Form_Element_Text(
+            's3_region',
+            null,
+            'us-east-1',
+            _t('Region'),
+            _t('例如：us-east-1、ap-east-1、cn-north-1')
+        );
+        $form->addInput($s3Region->addRule('maxLength', _t('Region 最多120个字符'), 120));
+
+        $s3AccessKey = new Typecho_Widget_Helper_Form_Element_Text(
+            's3_access_key',
+            null,
+            '',
+            _t('Access Key'),
+            _t('S3 访问密钥 ID')
+        );
+        $s3AccessKey->input->setAttribute('autocomplete', 'off');
+        $form->addInput($s3AccessKey->addRule('maxLength', _t('Access Key 最多200个字符'), 200));
+
+        $s3SecretKey = new Typecho_Widget_Helper_Form_Element_Text(
+            's3_secret_key',
+            null,
+            '',
+            _t('Secret Key'),
+            _t('S3 访问密钥密码')
+        );
+        $s3SecretKey->input->setAttribute('autocomplete', 'off');
+        $form->addInput($s3SecretKey->addRule('maxLength', _t('Secret Key 最多300个字符'), 300));
+
+        $s3CustomDomain = new Typecho_Widget_Helper_Form_Element_Text(
+            's3_custom_domain',
+            null,
+            '',
+            _t('自定义域名'),
+            _t('可填 CDN 域名，例如 cdn.example.com（不要包含 http:// 或 https://）')
+        );
+        $form->addInput($s3CustomDomain->addRule('maxLength', _t('自定义域名最多200个字符'), 200));
+
+        $s3UseHttps = new Typecho_Widget_Helper_Form_Element_Radio(
+            's3_use_https',
+            array('1' => _t('使用'), '0' => _t('不使用')),
+            '1',
+            _t('使用 HTTPS'),
+            _t('上传与生成访问链接时使用 https 协议')
+        );
+        $form->addInput($s3UseHttps);
+
+        $s3UrlStyle = new Typecho_Widget_Helper_Form_Element_Radio(
+            's3_url_style',
+            array('path' => _t('路径形式'), 'virtual' => _t('虚拟主机形式')),
+            'path',
+            _t('URL 访问方式'),
+            _t('路径形式：endpoint/bucket/object；虚拟主机形式：bucket.endpoint/object')
+        );
+        $form->addInput($s3UrlStyle);
+
+        $s3CustomPath = new Typecho_Widget_Helper_Form_Element_Text(
+            's3_custom_path',
+            null,
+            '',
+            _t('自定义路径前缀'),
+            _t('可选，如 uploads 或 assets/images；不要包含开头和结尾斜杠')
+        );
+        $form->addInput($s3CustomPath->addRule('maxLength', _t('路径前缀最多200个字符'), 200));
+
+        $s3SaveLocal = new Typecho_Widget_Helper_Form_Element_Radio(
+            's3_save_local',
+            array('1' => _t('保存'), '0' => _t('不保存')),
+            '0',
+            _t('保存本地备份'),
+            _t('启用后会同时在本地 uploads 目录保留一份文件副本')
+        );
+        $form->addInput($s3SaveLocal);
+
+        $s3CompressImages = new Typecho_Widget_Helper_Form_Element_Radio(
+            's3_compress_images',
+            array('1' => _t('启用'), '0' => _t('禁用')),
+            '0',
+            _t('图片压缩'),
+            _t('启用后仅对大于 100KB 的图片进行压缩并转 WebP')
+        );
+        $form->addInput($s3CompressImages);
+
+        $s3CompressQuality = new Typecho_Widget_Helper_Form_Element_Text(
+            's3_compress_quality',
+            null,
+            '85',
+            _t('压缩质量'),
+            _t('1-100，数值越大质量越高但文件越大')
+        );
+        $s3CompressQuality->input->setAttribute('class', 'w-10');
+        $form->addInput($s3CompressQuality->addRule('isInteger', _t('请填写整数数字')));
+
+        $s3SslVerify = new Typecho_Widget_Helper_Form_Element_Radio(
+            's3_ssl_verify',
+            array('1' => _t('启用'), '0' => _t('禁用')),
+            '1',
+            _t('SSL 证书验证'),
+            _t('若目标存储证书配置异常导致上传失败，可临时关闭排查')
+        );
+        $form->addInput($s3SslVerify);
+
         $legacyCommentSmileySize = new Typecho_Widget_Helper_Form_Element_Hidden('comment_smiley_size');
         $legacyCommentSmileySize->value('20px');
         $form->addInput($legacyCommentSmileySize);
@@ -1049,7 +1196,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             'delete_links_table_on_deactivate',
             array('0' => _t('否（不删除）'), '1' => _t('是（删除）')),
             $deleteLinksDefault,
-            _t('<h3 class="enhancement-title">维护设置</h3>禁用插件时删除友情链接表（links）'),
+            _t('<h3 class="enhancement-title">维护设置</h3><hr/>禁用插件时删除友情链接表（links）'),
             _t('谨慎开启，会删除 links 表数据')
         );
         $form->addInput($deleteLinksTable);
@@ -3935,6 +4082,28 @@ while ($tags->next()) {
             return false;
         }
         return $settings->enable_attachment_preview == '1';
+    }
+
+    public static function s3UploadEnabled(): bool
+    {
+        $settings = self::pluginSettings(Typecho_Widget::widget('Widget_Options'));
+        if (!isset($settings->enable_s3_upload)) {
+            return false;
+        }
+        return trim((string)$settings->enable_s3_upload) === '1';
+    }
+
+    public static function s3UploadConfigured(): bool
+    {
+        $settings = self::pluginSettings(Typecho_Widget::widget('Widget_Options'));
+        $required = array('s3_endpoint', 's3_bucket', 's3_region', 's3_access_key', 's3_secret_key');
+        foreach ($required as $key) {
+            $value = isset($settings->{$key}) ? trim((string)$settings->{$key}) : '';
+            if ($value === '') {
+                return false;
+            }
+        }
+        return true;
     }
 
     public static function aiSummaryEnabled(): bool
