@@ -69,18 +69,21 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
     private static function ensurePluginConfigOptionExists()
     {
         $pluginName = 'Enhancement';
-        $optionName = 'plugin:' . $pluginName;
-        $optionValue = '{}';
+        $globalOptionName = 'plugin:' . $pluginName;
+        $globalOptionValue = self::normalizeOptionRows($globalOptionName, true, '{}');
+        self::normalizeOptionRows('_plugin:' . $pluginName, false, '{}');
+        self::syncOptionCache($globalOptionName, $globalOptionValue, $pluginName);
+    }
 
-        try {
-            $options = Typecho_Widget::widget('Widget_Options');
-            $settings = $options->plugin($pluginName);
-            if (is_object($settings)) {
-                return;
-            }
-        } catch (Exception $e) {
-            // 配置缺失时继续自动补齐
+    private static function normalizeOptionRows($optionName, $ensureGlobalRow = false, $defaultValue = '{}')
+    {
+        $optionName = trim((string)$optionName);
+        if ($optionName === '') {
+            return '{}';
         }
+
+        $defaultValue = self::normalizePluginConfigValue($defaultValue);
+        $globalValue = $defaultValue;
 
         try {
             $db = Typecho_Db::get();
@@ -90,52 +93,56 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
                     ->where('name = ?', $optionName)
             );
 
-            if (empty($rows)) {
-                $db->query(
-                    $db->insert('table.options')->rows(array(
-                        'name' => $optionName,
-                        'user' => 0,
-                        'value' => $optionValue
-                    ))
-                );
-            } else {
-                $hasGlobalOption = false;
-
-                foreach ($rows as $row) {
-                    $userId = isset($row['user']) ? intval($row['user']) : 0;
-                    $currentValue = isset($row['value']) ? (string)$row['value'] : '';
-                    $normalizedValue = self::normalizePluginConfigValue($currentValue);
-
-                    if ($currentValue !== $normalizedValue) {
-                        $db->query(
-                            $db->update('table.options')
-                                ->rows(array('value' => $normalizedValue))
-                                ->where('name = ?', $optionName)
-                                ->where('user = ?', $userId)
-                        );
-                    }
-
-                    if ($userId === 0) {
-                        $hasGlobalOption = true;
-                        $optionValue = $normalizedValue;
-                    }
-                }
-
-                if (!$hasGlobalOption) {
+            if (!is_array($rows) || empty($rows)) {
+                if ($ensureGlobalRow) {
                     $db->query(
                         $db->insert('table.options')->rows(array(
                             'name' => $optionName,
                             'user' => 0,
-                            'value' => $optionValue
+                            'value' => $globalValue
                         ))
                     );
                 }
+
+                return $globalValue;
+            }
+
+            $hasGlobalRow = false;
+
+            foreach ($rows as $row) {
+                $userId = isset($row['user']) ? intval($row['user']) : 0;
+                $currentValue = isset($row['value']) ? (string)$row['value'] : '';
+                $normalizedValue = self::normalizePluginConfigValue($currentValue);
+
+                if ($currentValue !== $normalizedValue) {
+                    $db->query(
+                        $db->update('table.options')
+                            ->rows(array('value' => $normalizedValue))
+                            ->where('name = ?', $optionName)
+                            ->where('user = ?', $userId)
+                    );
+                }
+
+                if ($userId === 0) {
+                    $hasGlobalRow = true;
+                    $globalValue = $normalizedValue;
+                }
+            }
+
+            if ($ensureGlobalRow && !$hasGlobalRow) {
+                $db->query(
+                    $db->insert('table.options')->rows(array(
+                        'name' => $optionName,
+                        'user' => 0,
+                        'value' => $globalValue
+                    ))
+                );
             }
         } catch (Exception $e) {
-            // 数据库不可写或查询异常时，继续尝试修正当前请求缓存
+            // ignore db normalize errors
         }
 
-        self::syncOptionCache($optionName, $optionValue, $pluginName);
+        return $globalValue;
     }
 
     private static function normalizePluginConfigValue($value)
@@ -375,6 +382,8 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
      */
     public static function activate()
     {
+        self::ensurePluginConfigOptionExists();
+
         $info = Enhancement_Plugin::enhancementInstall();
         Helper::addPanel(3, 'Enhancement/manage-enhancement.php', _t('链接'), _t('链接审核与管理'), 'administrator');
         Helper::addPanel(3, 'Enhancement/manage-moments.php', _t('瞬间'), _t('瞬间管理'), 'administrator');
@@ -1516,6 +1525,96 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
      */
     public static function personalConfig(Typecho_Widget_Helper_Form $form)
     {
+    }
+
+    private static function normalizeSettingsForStorage($settings)
+    {
+        if (!is_array($settings)) {
+            return array();
+        }
+
+        $normalized = array();
+        foreach ($settings as $key => $value) {
+            $key = trim((string)$key);
+            if ($key === '') {
+                continue;
+            }
+
+            if (is_array($value)) {
+                $normalized[$key] = $value;
+                continue;
+            }
+
+            if (is_bool($value)) {
+                $normalized[$key] = $value ? '1' : '0';
+            } elseif (is_null($value)) {
+                $normalized[$key] = '';
+            } elseif (is_scalar($value)) {
+                $normalized[$key] = (string)$value;
+            }
+        }
+
+        return $normalized;
+    }
+
+    public static function configHandle($settings, $isInit)
+    {
+        if (!is_array($settings)) {
+            return;
+        }
+
+        self::ensurePluginConfigOptionExists();
+
+        $optionName = 'plugin:Enhancement';
+        $incoming = self::normalizeSettingsForStorage($settings);
+        if (empty($incoming)) {
+            return;
+        }
+
+        $currentJson = self::normalizeOptionRows($optionName, true, '{}');
+        $current = json_decode((string)$currentJson, true);
+        if (!is_array($current)) {
+            $current = array();
+        }
+        $current = self::normalizeSettingsForStorage($current);
+
+        $merged = array_merge($current, $incoming);
+        $json = json_encode($merged, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($json === false || $json === null) {
+            $json = '{}';
+        }
+
+        try {
+            $db = Typecho_Db::get();
+            $row = $db->fetchRow(
+                $db->select('name')
+                    ->from('table.options')
+                    ->where('name = ?', $optionName)
+                    ->where('user = ?', 0)
+                    ->limit(1)
+            );
+
+            if (is_array($row) && !empty($row)) {
+                $db->query(
+                    $db->update('table.options')
+                        ->rows(array('value' => $json))
+                        ->where('name = ?', $optionName)
+                        ->where('user = ?', 0)
+                );
+            } else {
+                $db->query(
+                    $db->insert('table.options')->rows(array(
+                        'name' => $optionName,
+                        'user' => 0,
+                        'value' => $json
+                    ))
+                );
+            }
+        } catch (Exception $e) {
+            // ignore save errors
+        }
+
+        self::syncOptionCache($optionName, $json, 'Enhancement');
     }
 
     public static function enhancementInstall()
