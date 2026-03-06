@@ -20,22 +20,25 @@ class Enhancement_S3Upload_Utils
     {
         $date = date('Y-m-d H:i:s');
         $logMessage = "[{$date}] [{$level}] {$message}\n";
-        
-        $logDir = __TYPECHO_ROOT_DIR__ . '/usr/logs';
-        if (!is_dir($logDir)) {
-            @mkdir($logDir, 0755, true);
+
+        $logFiles = array(
+            __TYPECHO_ROOT_DIR__ . '/usr/logs/enhancement-s3upload.log',
+            dirname(__DIR__) . '/enhancement-s3upload.log',
+            rtrim((string)sys_get_temp_dir(), '/\\') . '/enhancement-s3upload.log'
+        );
+
+        foreach ($logFiles as $logFile) {
+            $logDir = dirname($logFile);
+            if (!is_dir($logDir)) {
+                @mkdir($logDir, 0755, true);
+            }
+
+            if (is_dir($logDir) && is_writable($logDir) && @error_log($logMessage, 3, $logFile)) {
+                return;
+            }
         }
 
-        $logFile = $logDir . '/enhancement-s3upload.log';
-        $written = false;
-
-        if (is_dir($logDir) && is_writable($logDir)) {
-            $written = @error_log($logMessage, 3, $logFile);
-        }
-
-        if (!$written) {
-            error_log('[Enhancement S3Upload] ' . trim($logMessage));
-        }
+        error_log('[Enhancement S3Upload] ' . trim($logMessage));
     }
 
     /**

@@ -14,6 +14,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
 {
     public static $commentNotifierPanel = 'Enhancement/CommentNotifier/console.php';
     private static $s3RuntimeLoaded = null;
+    private static $s3UploadHookLogged = false;
 
     private static function settingsBackupNamePrefix()
     {
@@ -452,12 +453,25 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         Typecho_Plugin::factory('Widget_Archive')->header = array('Enhancement_Plugin', 'archiveHeader');
         Typecho_Plugin::factory('Widget_Archive')->footer = array('Enhancement_Plugin', 'turnstileFooter');
         Typecho_Plugin::factory('Widget_Archive')->callEnhancement = array('Enhancement_Plugin', 'output_str');
-        Typecho_Plugin::factory('Widget_Upload')->uploadHandle = array(__CLASS__, 's3UploadHandle');
-        Typecho_Plugin::factory('Widget_Upload')->modifyHandle = array(__CLASS__, 's3ModifyHandle');
-        Typecho_Plugin::factory('Widget_Upload')->deleteHandle = array(__CLASS__, 's3DeleteHandle');
-        Typecho_Plugin::factory('Widget_Upload')->attachmentHandle = array(__CLASS__, 's3AttachmentHandle');
-        Typecho_Plugin::factory('Widget_Upload')->attachmentDataHandle = array(__CLASS__, 's3AttachmentDataHandle');
+        self::registerS3UploadHooks();
         return _t($info);
+    }
+
+    private static function registerS3UploadHooks()
+    {
+        $targets = array(
+            'Widget\\Upload',
+            'Widget_Upload'
+        );
+
+        foreach ($targets as $target) {
+            $factory = Typecho_Plugin::factory($target);
+            $factory->uploadHandle = array(__CLASS__, 's3UploadHandle');
+            $factory->modifyHandle = array(__CLASS__, 's3ModifyHandle');
+            $factory->deleteHandle = array(__CLASS__, 's3DeleteHandle');
+            $factory->attachmentHandle = array(__CLASS__, 's3AttachmentHandle');
+            $factory->attachmentDataHandle = array(__CLASS__, 's3AttachmentDataHandle');
+        }
     }
 
     /**
@@ -1647,6 +1661,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         }
 
         self::syncOptionCache($optionName, $storedValue, 'Enhancement');
+        self::registerS3UploadHooks();
     }
 
     public static function enhancementInstall()
@@ -4486,8 +4501,15 @@ while ($tags->next()) {
     public static function s3UploadHandle($file)
     {
         if (!self::loadS3Runtime()) {
+            error_log('[Enhancement S3Upload] 上传钩子触发，但未加载到 S3 运行时文件');
             return false;
         }
+
+        if (!self::$s3UploadHookLogged && class_exists('Enhancement_S3Upload_Utils')) {
+            Enhancement_S3Upload_Utils::log('已进入 Enhancement S3 上传钩子', 'info');
+            self::$s3UploadHookLogged = true;
+        }
+
         return Enhancement_S3Upload_FileHandler::uploadHandle($file);
     }
 
