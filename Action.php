@@ -1617,6 +1617,208 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         return is_array($row) ? $row : null;
     }
 
+    private function canUseLinkNotificationMail(array $settings = null): bool
+    {
+        if ($settings === null) {
+            $settings = $this->collectPluginSettings();
+        }
+
+        if (!is_array($settings)) {
+            return false;
+        }
+
+        $required = array('STMPHost', 'SMTPUserName', 'SMTPPassword', 'SMTPPort', 'from');
+        foreach ($required as $key) {
+            $value = isset($settings[$key]) ? trim((string)$settings[$key]) : '';
+            if ($value === '') {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function getLinkAdminMailRecipient(array $settings = null)
+    {
+        if ($settings === null) {
+            $settings = $this->collectPluginSettings();
+        }
+
+        if (!is_array($settings)) {
+            return null;
+        }
+
+        $email = isset($settings['adminfrom']) ? trim((string)$settings['adminfrom']) : '';
+        if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $email = isset($settings['from']) ? trim((string)$settings['from']) : '';
+        }
+
+        if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            return null;
+        }
+
+        $name = isset($settings['fromName']) ? trim((string)$settings['fromName']) : '';
+        if ($name === '') {
+            $name = trim((string)$this->options->title);
+        }
+        if ($name === '') {
+            $name = '管理员';
+        }
+
+        return array(
+            'email' => $email,
+            'name' => $name
+        );
+    }
+
+    private function canSendLinkSubmitAdminMail(array $settings = null): bool
+    {
+        if ($settings === null) {
+            $settings = $this->collectPluginSettings();
+        }
+
+        if (!is_array($settings)) {
+            return false;
+        }
+
+        $enabled = isset($settings['enable_link_submit_admin_mail_notifier'])
+            ? trim((string)$settings['enable_link_submit_admin_mail_notifier'])
+            : '0';
+        if ($enabled !== '1') {
+            return false;
+        }
+
+        if (!$this->canUseLinkNotificationMail($settings)) {
+            return false;
+        }
+
+        return is_array($this->getLinkAdminMailRecipient($settings));
+    }
+
+    private function sendLinkNotificationMail($email, $toName, $subject, $html, array $settings = null): bool
+    {
+        $email = trim((string)$email);
+        if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            return false;
+        }
+
+        if ($settings === null) {
+            $settings = $this->collectPluginSettings();
+        }
+
+        if (!$this->canUseLinkNotificationMail($settings)) {
+            return false;
+        }
+
+        $siteTitle = trim((string)$this->options->title);
+        if ($siteTitle === '') {
+            $siteTitle = '网站';
+        }
+
+        $from = isset($settings['from']) ? trim((string)$settings['from']) : '';
+        if ($from === '') {
+            return false;
+        }
+
+        $fromName = isset($settings['fromName']) ? trim((string)$settings['fromName']) : '';
+        if ($fromName === '') {
+            $fromName = $siteTitle;
+        }
+
+        try {
+            require_once __DIR__ . '/CommentNotifier/PHPMailer/PHPMailer.php';
+            require_once __DIR__ . '/CommentNotifier/PHPMailer/SMTP.php';
+            require_once __DIR__ . '/CommentNotifier/PHPMailer/Exception.php';
+
+            $mail = new \PHPMailer\PHPMailer\PHPMailer(false);
+            $mail->CharSet = \PHPMailer\PHPMailer\PHPMailer::CHARSET_UTF8;
+            $mail->Encoding = \PHPMailer\PHPMailer\PHPMailer::ENCODING_BASE64;
+            $mail->isSMTP();
+            $mail->Host = trim((string)$settings['STMPHost']);
+            $mail->SMTPAuth = true;
+            $mail->Username = trim((string)$settings['SMTPUserName']);
+            $mail->Password = trim((string)$settings['SMTPPassword']);
+
+            $smtpSecure = isset($settings['SMTPSecure']) ? trim((string)$settings['SMTPSecure']) : '';
+            if ($smtpSecure !== '') {
+                $mail->SMTPSecure = $smtpSecure;
+            }
+
+            $smtpPort = isset($settings['SMTPPort']) ? intval($settings['SMTPPort']) : 0;
+            $mail->Port = $smtpPort > 0 ? $smtpPort : 25;
+
+            $mail->setFrom($from, $fromName);
+            $mail->addAddress($email, trim((string)$toName));
+            $mail->Subject = (string)$subject;
+            $mail->isHTML();
+            $mail->Body = (string)$html;
+
+            return (bool)$mail->send();
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    private function sendLinkSubmissionAdminMail(array $link, array $settings = null): bool
+    {
+        if ($settings === null) {
+            $settings = $this->collectPluginSettings();
+        }
+
+        if (!$this->canSendLinkSubmitAdminMail($settings)) {
+            return false;
+        }
+
+        $recipient = $this->getLinkAdminMailRecipient($settings);
+        if (!is_array($recipient)) {
+            return false;
+        }
+
+        $siteTitle = trim((string)$this->options->title);
+        if ($siteTitle === '') {
+            $siteTitle = '网站';
+        }
+        $siteUrl = trim((string)$this->options->siteUrl);
+        $reviewUrl = Typecho_Common::url('extending.php?panel=Enhancement%2Fmanage-enhancement.php', $this->options->adminUrl);
+
+        $linkName = isset($link['name']) ? trim((string)$link['name']) : '';
+        $linkUrl = isset($link['url']) ? trim((string)$link['url']) : '';
+        $linkEmail = isset($link['email']) ? trim((string)$link['email']) : '';
+        $linkDescription = isset($link['description']) ? trim((string)$link['description']) : '';
+        $submittedAt = date('Y-m-d H:i:s');
+
+        $safeSiteTitle = htmlspecialchars($siteTitle, ENT_QUOTES, 'UTF-8');
+        $safeLinkName = htmlspecialchars($linkName !== '' ? $linkName : '-', ENT_QUOTES, 'UTF-8');
+        $safeLinkUrl = htmlspecialchars($linkUrl !== '' ? $linkUrl : '-', ENT_QUOTES, 'UTF-8');
+        $safeLinkEmail = htmlspecialchars($linkEmail !== '' ? $linkEmail : '-', ENT_QUOTES, 'UTF-8');
+        $safeSubmittedAt = htmlspecialchars($submittedAt, ENT_QUOTES, 'UTF-8');
+        $safeReviewUrl = htmlspecialchars($reviewUrl, ENT_QUOTES, 'UTF-8');
+
+        $html = '<p>您好，<strong>' . $safeSiteTitle . '</strong> 收到一条新的友情链接申请，请及时审核。</p>'
+            . '<p>友链名称：' . $safeLinkName
+            . '<br>友链地址：' . $safeLinkUrl
+            . '<br>申请邮箱：' . $safeLinkEmail
+            . '<br>提交时间：' . $safeSubmittedAt . '</p>';
+
+        if ($linkDescription !== '') {
+            $html .= '<p>网站描述：' . nl2br(htmlspecialchars($linkDescription, ENT_QUOTES, 'UTF-8')) . '</p>';
+        }
+
+        $html .= '<p>审核地址：<a href="' . $safeReviewUrl . '" target="_blank" rel="noopener noreferrer">' . $safeReviewUrl . '</a></p>';
+        if ($siteUrl !== '') {
+            $safeSiteUrl = htmlspecialchars($siteUrl, ENT_QUOTES, 'UTF-8');
+            $html .= '<p>站点地址：<a href="' . $safeSiteUrl . '" target="_blank" rel="noopener noreferrer">' . $safeSiteUrl . '</a></p>';
+        }
+
+        return $this->sendLinkNotificationMail(
+            $recipient['email'],
+            $recipient['name'],
+            '新的友情链接申请待审核 - ' . $siteTitle,
+            $html,
+            $settings
+        );
+    }
+
     private function canSendLinkApprovalMail(array $settings = null): bool
     {
         if ($settings === null) {
@@ -1834,6 +2036,12 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 
         /** 插入数据 */
         $item_lid = $this->db->query($this->db->insert($this->prefix . 'links')->rows($item));
+
+        $pluginSettings = $this->collectPluginSettings();
+        if ($this->canSendLinkSubmitAdminMail($pluginSettings)) {
+            $this->sendLinkSubmissionAdminMail($item, $pluginSettings);
+        }
+        Enhancement_Plugin::notifyLinkSubmissionByQQ($item);
 
         if ($this->request->isAjax()) {
             $this->response->throwJson(array(

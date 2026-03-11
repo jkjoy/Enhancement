@@ -819,6 +819,15 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         );
         $form->addInput($enableLinkApprovalMailNotifier);
 
+        $enableLinkSubmitAdminMailNotifier = new Typecho_Widget_Helper_Form_Element_Radio(
+            'enable_link_submit_admin_mail_notifier',
+            array('1' => _t('启用'), '0' => _t('禁用')),
+            '0',
+            _t('新友情链接申请通知管理员'),
+            _t('开启后，前台提交新的友情链接申请时会向站长收件邮箱发送审核提醒；若未填写站长收件邮箱，则回退到 SMTP 邮箱地址（需已配置 SMTP）')
+        );
+        $form->addInput($enableLinkSubmitAdminMailNotifier);
+
         $momentsToken = new Typecho_Widget_Helper_Form_Element_Text(
             'moments_token',
             null,
@@ -1141,6 +1150,15 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             _t('评论通过时通过 QQ 机器人推送通知')
         );
         $form->addInput($enableCommentByQQ);
+
+        $enableLinkSubmitByQQ = new Typecho_Widget_Helper_Form_Element_Radio(
+            'enable_link_submit_by_qq',
+            array('1' => _t('启用'), '0' => _t('禁用')),
+            '0',
+            _t('友情链接申请通知'),
+            _t('前台提交新的友情链接申请时，通过 QQ 机器人推送通知')
+        );
+        $form->addInput($enableLinkSubmitByQQ);
 
         $defaultQqApi = defined('__TYPECHO_COMMENT_BY_QQ_API_URL__')
             ? __TYPECHO_COMMENT_BY_QQ_API_URL__
@@ -2896,6 +2914,97 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         self::commentByQQ($edit, 'approved');
     }
 
+    private static function qqNotifyFeatureEnabled($settings = null): bool
+    {
+        if ($settings === null) {
+            $options = Typecho_Widget::widget('Widget_Options');
+            $settings = self::pluginSettings($options);
+        }
+
+        return (isset($settings->enable_comment_by_qq) && $settings->enable_comment_by_qq == '1')
+            || (isset($settings->enable_link_submit_by_qq) && $settings->enable_link_submit_by_qq == '1');
+    }
+
+    private static function qqNotifyConfigured($settings = null): bool
+    {
+        if ($settings === null) {
+            $options = Typecho_Widget::widget('Widget_Options');
+            $settings = self::pluginSettings($options);
+        }
+
+        $apiUrl = isset($settings->qqboturl) ? trim((string)$settings->qqboturl) : '';
+        $qqNum = isset($settings->qq) ? trim((string)$settings->qq) : '';
+
+        return $apiUrl !== '' && $qqNum !== '';
+    }
+
+    private static function dispatchQqNotifyMessage(string $message, $settings = null)
+    {
+        $message = trim($message);
+        if ($message === '') {
+            return;
+        }
+
+        if ($settings === null) {
+            $options = Typecho_Widget::widget('Widget_Options');
+            $settings = self::pluginSettings($options);
+        }
+
+        if (!self::qqNotifyConfigured($settings)) {
+            return;
+        }
+
+        if (self::commentByQQAsyncQueueEnabled($settings)) {
+            self::enqueueCommentByQQ($message);
+            return;
+        }
+
+        self::sendCommentByQQMessage($message, false);
+    }
+
+    public static function notifyLinkSubmissionByQQ(array $link)
+    {
+        $options = Typecho_Widget::widget('Widget_Options');
+        $settings = self::pluginSettings($options);
+        if (!isset($settings->enable_link_submit_by_qq) || $settings->enable_link_submit_by_qq != '1') {
+            return;
+        }
+        if (!self::qqNotifyConfigured($settings)) {
+            return;
+        }
+
+        $siteTitle = isset($options->title) ? trim((string)$options->title) : '';
+        if ($siteTitle === '') {
+            $siteTitle = '网站';
+        }
+
+        $linkName = isset($link['name']) ? trim((string)$link['name']) : '';
+        $linkUrl = isset($link['url']) ? trim((string)$link['url']) : '';
+        $linkEmail = isset($link['email']) ? trim((string)$link['email']) : '';
+        $linkDescription = isset($link['description']) ? trim((string)$link['description']) : '';
+        $reviewUrl = Typecho_Common::url('extending.php?panel=Enhancement%2Fmanage-enhancement.php', $options->adminUrl);
+
+        $message = sprintf(
+            "【友情链接申请通知】\n"
+            . "🌐 站点：%s\n"
+            . "🔖 友链名称：%s\n"
+            . "🔗 友链地址：%s\n"
+            . "📮 申请邮箱：%s\n"
+            . "📝 网站描述：%s\n"
+            . "🕒 提交时间：%s\n"
+            . "🛠 审核地址：%s",
+            $siteTitle,
+            $linkName !== '' ? $linkName : '-',
+            $linkUrl !== '' ? $linkUrl : '-',
+            $linkEmail !== '' ? $linkEmail : '-',
+            $linkDescription !== '' ? $linkDescription : '-',
+            date('Y-m-d H:i:s'),
+            $reviewUrl
+        );
+
+        self::dispatchQqNotifyMessage($message, $settings);
+    }
+
     public static function commentByQQ($comment, $statusOverride = null)
     {
         $options = Typecho_Widget::widget('Widget_Options');
@@ -2909,13 +3018,6 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         }
 
         if ($comment->authorId === $comment->ownerId) {
-            return;
-        }
-
-        $apiUrl = isset($settings->qqboturl) ? trim((string)$settings->qqboturl) : '';
-        $qqNum = isset($settings->qq) ? trim((string)$settings->qq) : '';
-
-        if ($apiUrl === '' || $qqNum === '') {
             return;
         }
 
@@ -2939,88 +3041,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             $comment->permalink
         );
 
-        if (self::commentByQQAsyncQueueEnabled($settings)) {
-            self::enqueueCommentByQQ((string)$message);
-            return;
-        }
-
-        $payload = array(
-            'user_id' => (int)$qqNum,
-            'message' => $message
-        );
-
-        if (!function_exists('curl_init')) {
-            return;
-        }
-
-        $jsonPayload = json_encode($payload, JSON_UNESCAPED_UNICODE);
-        if ($jsonPayload === false) {
-            return;
-        }
-
-        $endpoint = rtrim($apiUrl, '/') . '/send_msg';
-        $lastErrorNo = 0;
-        $lastError = '';
-        $lastHttpCode = 0;
-        $lastResponse = '';
-
-        for ($attempt = 1; $attempt <= 2; $attempt++) {
-            $ch = curl_init();
-            $curlOptions = array(
-                CURLOPT_URL => $endpoint,
-                CURLOPT_POST => true,
-                CURLOPT_POSTFIELDS => $jsonPayload,
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_CONNECTTIMEOUT => 3,
-                CURLOPT_TIMEOUT => 5,
-                CURLOPT_HTTPHEADER => array(
-                    'Content-Type: application/json; charset=UTF-8',
-                    'Accept: application/json'
-                ),
-                CURLOPT_SSL_VERIFYPEER => false
-            );
-
-            if (defined('CURLOPT_IPRESOLVE') && defined('CURL_IPRESOLVE_V4')) {
-                $curlOptions[CURLOPT_IPRESOLVE] = CURL_IPRESOLVE_V4;
-            }
-            if (defined('CURLOPT_NOSIGNAL')) {
-                $curlOptions[CURLOPT_NOSIGNAL] = true;
-            }
-
-            curl_setopt_array($ch, $curlOptions);
-
-            $response = curl_exec($ch);
-            $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            $errno = curl_errno($ch);
-            $error = $errno ? curl_error($ch) : '';
-            curl_close($ch);
-
-            if ($errno === 0 && $httpCode >= 200 && $httpCode < 300) {
-                return;
-            }
-
-            $lastErrorNo = $errno;
-            $lastError = $error;
-            $lastHttpCode = $httpCode;
-            $lastResponse = substr((string) $response, 0, 200);
-
-            if ($errno === CURLE_OPERATION_TIMEDOUT && $attempt < 2) {
-                usleep(150000);
-                continue;
-            }
-            break;
-        }
-
-        if ($lastErrorNo !== 0) {
-            if ($lastErrorNo !== CURLE_OPERATION_TIMEDOUT) {
-                error_log('[Enhancement][CommentsByQQ] CURL错误: ' . $lastError);
-            }
-            return;
-        }
-
-        if ($lastHttpCode >= 400) {
-            error_log(sprintf('[Enhancement][CommentsByQQ] 响应异常 [HTTP %d]: %s', $lastHttpCode, $lastResponse));
-        }
+        self::dispatchQqNotifyMessage((string)$message, $settings);
     }
 
     private static function commentByQQAsyncQueueEnabled($settings = null): bool
@@ -3074,7 +3095,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
 
         $options = Typecho_Widget::widget('Widget_Options');
         $settings = self::pluginSettings($options);
-        if (!isset($settings->enable_comment_by_qq) || $settings->enable_comment_by_qq != '1') {
+        if (!self::qqNotifyFeatureEnabled($settings)) {
             return;
         }
         if (!self::commentByQQAsyncQueueEnabled($settings)) {
