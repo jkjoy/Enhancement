@@ -3899,10 +3899,16 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         var translating = false;
         var lastRequestKey = '';
         var $status = $('#enh-ai-slug-status');
+        var $button = $('#enh-ai-slug-generate');
 
         if (!$status.length) {
             $status = $('<p id="enh-ai-slug-status" style="margin-top:4px;color:#888;font-size:12px;line-height:1.5;"></p>');
             $slug.closest('.typecho-option, li, .col-mb-12, .col-tb-8, td').append($status);
+        }
+
+        if (!$button.length) {
+            $button = $('<button type="button" id="enh-ai-slug-generate" class="btn" style="margin-top:6px;">AI 生成 slug</button>');
+            $status.before($button);
         }
 
         function setStatus(text, color) {
@@ -3910,10 +3916,10 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             $status.css('color', color || '#888');
         }
 
-        function scheduleTranslate() {
+        function requestTranslate(trigger, force) {
             var slugValue = $.trim($slug.val() || '');
             var titleValue = $.trim($title.val() || '');
-            if (slugValue !== '') {
+            if (!force && slugValue !== '') {
                 setStatus('');
                 return;
             }
@@ -3922,50 +3928,58 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
                 return;
             }
 
+            var cidValue = $.trim(($cid.val() || ''));
+            var requestKey = titleValue + '|' + cidValue;
+            if (translating || (!force && requestKey === lastRequestKey)) {
+                return;
+            }
+
+            translating = true;
+            if (!force) {
+                lastRequestKey = requestKey;
+            }
+            $button.prop('disabled', true).text('生成中...');
+            setStatus(force ? '正在重新生成 slug…' : '正在生成 slug…', '#576a7a');
+
+            $.ajax({
+                url: actionUrl,
+                method: 'POST',
+                dataType: 'json',
+                data: {
+                    title: titleValue,
+                    cid: cidValue,
+                    trigger: trigger || 'clear'
+                }
+            }).done(function (response) {
+                if (response && response.success && response.slug) {
+                    $slug.val(response.slug).trigger('change');
+                    setStatus(force ? '已重新生成 slug' : '已自动生成 slug', '#2d8a34');
+                    return;
+                }
+
+                var message = response && response.message ? response.message : '生成 slug 失败';
+                setStatus(message, '#c23030');
+                lastRequestKey = '';
+            }).fail(function (xhr) {
+                var message = '生成 slug 失败';
+                if (xhr && xhr.responseJSON && xhr.responseJSON.message) {
+                    message = xhr.responseJSON.message;
+                }
+                setStatus(message, '#c23030');
+                lastRequestKey = '';
+            }).always(function () {
+                translating = false;
+                $button.prop('disabled', false).text('AI 生成 slug');
+            });
+        }
+
+        function scheduleTranslate() {
             if (requestTimer) {
                 window.clearTimeout(requestTimer);
             }
 
             requestTimer = window.setTimeout(function () {
-                var cidValue = $.trim(($cid.val() || ''));
-                var requestKey = titleValue + '|' + cidValue;
-                if (translating || requestKey === lastRequestKey) {
-                    return;
-                }
-
-                translating = true;
-                lastRequestKey = requestKey;
-                setStatus('正在生成 slug…', '#576a7a');
-
-                $.ajax({
-                    url: actionUrl,
-                    method: 'POST',
-                    dataType: 'json',
-                    data: {
-                        title: titleValue,
-                        cid: cidValue,
-                        trigger: 'clear'
-                    }
-                }).done(function (response) {
-                    if (response && response.success && response.slug) {
-                        $slug.val(response.slug).trigger('change');
-                        setStatus('已自动生成 slug', '#2d8a34');
-                        return;
-                    }
-
-                    var message = response && response.message ? response.message : '生成 slug 失败';
-                    setStatus(message, '#c23030');
-                    lastRequestKey = '';
-                }).fail(function (xhr) {
-                    var message = '生成 slug 失败';
-                    if (xhr && xhr.responseJSON && xhr.responseJSON.message) {
-                        message = xhr.responseJSON.message;
-                    }
-                    setStatus(message, '#c23030');
-                    lastRequestKey = '';
-                }).always(function () {
-                    translating = false;
-                });
+                requestTranslate('clear', false);
             }, 250);
         }
 
@@ -3982,6 +3996,15 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
                 lastRequestKey = '';
                 scheduleTranslate();
             }
+        });
+
+        $button.on('click', function (event) {
+            event.preventDefault();
+            if (requestTimer) {
+                window.clearTimeout(requestTimer);
+            }
+            lastRequestKey = '';
+            requestTranslate('button', true);
         });
     });
 })(window.jQuery);
