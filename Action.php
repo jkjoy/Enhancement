@@ -2466,6 +2466,58 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         ));
     }
 
+    public function resolveAttachmentUrls()
+    {
+        $cidList = $this->request->getArray('cid');
+        if (empty($cidList)) {
+            $rawCid = trim((string)$this->request->get('cid'));
+            if ($rawCid !== '') {
+                $cidList = preg_split('/\s*,\s*/', $rawCid);
+            }
+        }
+
+        $cleanCids = array();
+        foreach ((array)$cidList as $cid) {
+            $cid = intval($cid);
+            if ($cid > 0) {
+                $cleanCids[$cid] = $cid;
+            }
+        }
+
+        if (empty($cleanCids)) {
+            $this->response->throwJson(array(
+                'success' => true,
+                'urls' => array()
+            ));
+            return;
+        }
+
+        $rows = $this->db->fetchAll(
+            $this->db->select('cid', 'text')
+                ->from('table.contents')
+                ->where('type = ?', 'attachment')
+                ->where('cid IN ?', array_values($cleanCids))
+        );
+
+        $urls = array();
+        foreach ((array)$rows as $row) {
+            $content = json_decode(isset($row['text']) ? (string)$row['text'] : '', true);
+            if (!is_array($content) || empty($content)) {
+                continue;
+            }
+
+            $url = Enhancement_Plugin::resolveAttachmentUrl($content);
+            if ($url !== '') {
+                $urls[(string)intval($row['cid'])] = $url;
+            }
+        }
+
+        $this->response->throwJson(array(
+            'success' => true,
+            'urls' => $urls
+        ));
+    }
+
     public function goRedirect()
     {
         $target = $this->request->get('target');
@@ -2633,6 +2685,14 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             $user = Typecho_Widget::widget('Widget_User');
             $user->pass('administrator');
             $this->previewAiSlug();
+            return;
+        }
+
+        if ($this->request->is('do=resolve-attachment-urls')) {
+            Helper::security()->protect();
+            $user = Typecho_Widget::widget('Widget_User');
+            $user->pass('administrator');
+            $this->resolveAttachmentUrls();
             return;
         }
 

@@ -4181,6 +4181,9 @@ HTML
 
     public static function writePostBottom()
     {
+        if (self::s3UploadEnabled() && self::s3UploadConfigured()) {
+            Enhancement_AttachmentHelper::addS3UrlSyncScript();
+        }
         if (self::attachmentPreviewEnabled()) {
             Enhancement_AttachmentHelper::addEnhancedFeatures();
         }
@@ -4191,6 +4194,9 @@ HTML
 
     public static function writePageBottom()
     {
+        if (self::s3UploadEnabled() && self::s3UploadConfigured()) {
+            Enhancement_AttachmentHelper::addS3UrlSyncScript();
+        }
         if (self::attachmentPreviewEnabled()) {
             Enhancement_AttachmentHelper::addEnhancedFeatures();
         }
@@ -5066,6 +5072,49 @@ while ($tags->next()) {
             return '';
         }
         return Enhancement_S3Upload_FileHandler::attachmentDataHandle($content);
+    }
+
+    public static function resolveAttachmentUrl($content)
+    {
+        if (self::loadS3Runtime()) {
+            return Enhancement_S3Upload_FileHandler::attachmentHandle($content);
+        }
+
+        $path = '';
+        if (is_array($content)) {
+            if (isset($content['attachment'])) {
+                if (is_object($content['attachment']) && isset($content['attachment']->path)) {
+                    $path = (string)$content['attachment']->path;
+                } elseif (is_array($content['attachment']) && isset($content['attachment']['path'])) {
+                    $path = (string)$content['attachment']['path'];
+                }
+            }
+
+            if ($path === '' && isset($content['path'])) {
+                $path = (string)$content['path'];
+            }
+        } elseif (is_object($content)) {
+            if (isset($content->attachment)) {
+                if (is_object($content->attachment) && isset($content->attachment->path)) {
+                    $path = (string)$content->attachment->path;
+                } elseif (is_array($content->attachment) && isset($content->attachment['path'])) {
+                    $path = (string)$content->attachment['path'];
+                }
+            }
+
+            if ($path === '' && isset($content->path)) {
+                $path = (string)$content->path;
+            }
+        }
+
+        $path = ltrim(trim($path), '/');
+        if ($path === '') {
+            return '';
+        }
+
+        $options = Typecho_Widget::widget('Widget_Options');
+        $base = defined('__TYPECHO_UPLOAD_URL__') ? __TYPECHO_UPLOAD_URL__ : $options->siteUrl;
+        return Typecho_Common::url('/' . $path, $base);
     }
 
     public static function aiSummaryEnabled(): bool
@@ -7428,6 +7477,159 @@ while ($tags->next()) {
  */
 class Enhancement_AttachmentHelper
 {
+    public static function addS3UrlSyncScript()
+    {
+        $resolveUrl = Helper::security()->getIndex('/action/enhancement-edit?do=resolve-attachment-urls');
+        ?>
+        <script>
+        (function(window, $) {
+            if (!$ || !window.Typecho) {
+                return;
+            }
+
+            var endpoint = <?php echo json_encode($resolveUrl); ?>;
+            var cache = {};
+
+            function getCid($li) {
+                var cid = parseInt($li.attr('data-cid'), 10);
+                return isNaN(cid) || cid <= 0 ? 0 : cid;
+            }
+
+            function uniqueCids(cids) {
+                var seen = {};
+                var result = [];
+                $.each(cids, function(_, cid) {
+                    cid = parseInt(cid, 10);
+                    if (!cid || seen[cid]) {
+                        return;
+                    }
+                    seen[cid] = true;
+                    result.push(cid);
+                });
+                return result;
+            }
+
+            function applyUrl($li, url) {
+                if (!url) {
+                    return;
+                }
+                $li.attr('data-url', url);
+                $li.data('url', url);
+            }
+
+            function requestUrls(cids, callback) {
+                cids = uniqueCids(cids);
+                if (!cids.length) {
+                    if ($.isFunction(callback)) {
+                        callback({});
+                    }
+                    return;
+                }
+
+                $.post(endpoint, {cid: cids}, function(response) {
+                    var urls = response && response.urls ? response.urls : {};
+                    $.each(urls, function(cid, url) {
+                        if (url) {
+                            cache[String(cid)] = url;
+                        }
+                    });
+
+                    if ($.isFunction(callback)) {
+                        callback(urls);
+                    }
+                }, 'json').fail(function() {
+                    if ($.isFunction(callback)) {
+                        callback({});
+                    }
+                });
+            }
+
+            var api = window.EnhancementAttachmentUrlSync || {};
+
+            api.getUrl = function($li) {
+                var cid = getCid($li);
+                if (cid && cache[String(cid)]) {
+                    return cache[String(cid)];
+                }
+
+                var url = $li.data('url');
+                return typeof url === 'string' ? url : '';
+            };
+
+            api.refreshItems = function(items, callback) {
+                var $items = items && items.jquery ? items : $(items || '#file-list li[data-cid]');
+                var cids = [];
+
+                $items.each(function() {
+                    var cid = getCid($(this));
+                    if (cid > 0) {
+                        cids.push(cid);
+                    }
+                });
+
+                requestUrls(cids, function(urls) {
+                    $items.each(function() {
+                        var $li = $(this);
+                        var cid = getCid($li);
+                        var key = String(cid);
+                        var url = urls[key] || cache[key] || '';
+                        if (url) {
+                            applyUrl($li, url);
+                        }
+                    });
+
+                    if ($.isFunction(callback)) {
+                        callback($items);
+                    }
+                });
+            };
+
+            api.refresh = function(callback) {
+                api.refreshItems($('#file-list li[data-cid]'), function() {
+                    if ($.isFunction(callback)) {
+                        callback();
+                    }
+                });
+            };
+
+            api.refreshItem = function($li, callback) {
+                api.refreshItems($li, function() {
+                    if ($.isFunction(callback)) {
+                        callback(api.getUrl($li));
+                    }
+                });
+            };
+
+            window.EnhancementAttachmentUrlSync = api;
+
+            $(function() {
+                api.refresh();
+
+                $(document).off('click.enhancement-s3-sync', '#file-list li .insert');
+                $(document).on('click.enhancement-s3-sync', '#file-list li .insert', function(e) {
+                    var $link = $(this);
+                    var $li = $link.closest('li');
+                    var cid = getCid($li);
+
+                    if (!cid) {
+                        return;
+                    }
+
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+
+                    api.refreshItem($li, function(url) {
+                        Typecho.insertFileToEditor($link.text(), url || api.getUrl($li), $li.data('image') == 1);
+                    });
+
+                    return false;
+                });
+            });
+        })(window, window.jQuery);
+        </script>
+        <?php
+    }
+
     public static function addEnhancedFeatures()
     {
         ?>
@@ -7458,6 +7660,21 @@ class Enhancement_AttachmentHelper
         </style>
         <script>
         $(document).ready(function() {
+            function refreshAttachmentUrls(items, callback) {
+                if (window.EnhancementAttachmentUrlSync && typeof window.EnhancementAttachmentUrlSync.refreshItems === 'function') {
+                    window.EnhancementAttachmentUrlSync.refreshItems(items || $('#file-list li[data-cid]'), function() {
+                        if (typeof callback === 'function') {
+                            callback();
+                        }
+                    });
+                    return;
+                }
+
+                if (typeof callback === 'function') {
+                    callback();
+                }
+            }
+
             // 批量操作UI按钮
             var $batchActions = $('<div class="batch-actions"></div>')
                 .append('<button type="button" class="btn-batch primary" id="batch-insert">批量插入</button>')
@@ -7479,24 +7696,26 @@ class Enhancement_AttachmentHelper
             $('#batch-insert').on('click', function(e) {
                 e.preventDefault();
                 e.stopPropagation();
-                var content = '';
-                $('#file-list li').each(function() {
-                    if ($(this).find('.att-enhanced-checkbox').is(':checked')) {
-                        var $li = $(this);
-                        var title = $li.find('.att-enhanced-fname').text();
-                        var url = $li.data('url');
-                        var isImage = $li.data('image') == 1;
-                        content += isImage ? '![' + title + '](' + url + ')\n' : '[' + title + '](' + url + ')\n';
+                refreshAttachmentUrls($('#file-list li'), function() {
+                    var content = '';
+                    $('#file-list li').each(function() {
+                        if ($(this).find('.att-enhanced-checkbox').is(':checked')) {
+                            var $li = $(this);
+                            var title = $li.find('.att-enhanced-fname').text();
+                            var url = $li.data('url');
+                            var isImage = $li.data('image') == 1;
+                            content += isImage ? '![' + title + '](' + url + ')\n' : '[' + title + '](' + url + ')\n';
+                        }
+                    });
+                    if (content) {
+                        var textarea = $('#text');
+                        var pos = textarea.getSelection();
+                        var newContent = textarea.val();
+                        newContent = newContent.substring(0, pos.start) + content + newContent.substring(pos.end);
+                        textarea.val(newContent);
+                        textarea.focus();
                     }
                 });
-                if (content) {
-                    var textarea = $('#text');
-                    var pos = textarea.getSelection();
-                    var newContent = textarea.val();
-                    newContent = newContent.substring(0, pos.start) + content + newContent.substring(pos.end);
-                    textarea.val(newContent);
-                    textarea.focus();
-                }
             });
 
             $('#select-all').on('click', function(e) {
@@ -7554,22 +7773,25 @@ class Enhancement_AttachmentHelper
                 e.stopPropagation();
                 var $li = $(this).closest('li');
                 var title = $li.find('.att-enhanced-fname').text();
-                Typecho.insertFileToEditor(title, $li.data('url'), $li.data('image') == 1);
+                refreshAttachmentUrls($li, function() {
+                    Typecho.insertFileToEditor(title, $li.data('url'), $li.data('image') == 1);
+                });
             });
 
             // 上传完成后增强新项
             var originalUploadComplete = Typecho.uploadComplete;
             Typecho.uploadComplete = function(attachment) {
-                setTimeout(function() {
-                    enhanceFileList();
-                }, 200);
                 if (typeof originalUploadComplete === 'function') {
                     originalUploadComplete(attachment);
                 }
+
+                setTimeout(function() {
+                    refreshAttachmentUrls($('#file-list li'), enhanceFileList);
+                }, 200);
             };
 
             // 首次增强
-            enhanceFileList();
+            refreshAttachmentUrls($('#file-list li'), enhanceFileList);
         });
         </script>
         <?php
