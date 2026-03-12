@@ -7489,6 +7489,55 @@ class Enhancement_AttachmentHelper
 
             var endpoint = <?php echo json_encode($resolveUrl); ?>;
             var cache = {};
+            var api = window.EnhancementAttachmentUrlSync || {};
+
+            function getEditor() {
+                return $('#text');
+            }
+
+            function normalizeSelection(selection, length) {
+                if (!selection || typeof selection.start !== 'number' || typeof selection.end !== 'number') {
+                    return null;
+                }
+
+                var maxLength = typeof length === 'number' && length >= 0 ? length : 0;
+                var start = Math.max(0, Math.min(selection.start, maxLength));
+                var end = Math.max(start, Math.min(selection.end, maxLength));
+
+                return {
+                    start: start,
+                    end: end
+                };
+            }
+
+            function getCurrentSelection() {
+                var $textarea = getEditor();
+                if (!$textarea.length || typeof $textarea.getSelection !== 'function') {
+                    return null;
+                }
+
+                return normalizeSelection($textarea.getSelection(), $textarea.val().length);
+            }
+
+            function setEditorSelection(selection) {
+                var $textarea = getEditor();
+                if (!$textarea.length || typeof $textarea.setSelection !== 'function') {
+                    return false;
+                }
+
+                selection = normalizeSelection(selection, $textarea.val().length);
+                if (!selection) {
+                    return false;
+                }
+
+                $textarea.focus();
+                $textarea.setSelection(selection.start, selection.end);
+                return true;
+            }
+
+            function buildInsertContent(title, url, isImage) {
+                return isImage ? '![' + title + '](' + url + ')' : '[' + title + '](' + url + ')';
+            }
 
             function getCid($li) {
                 var cid = parseInt($li.attr('data-cid'), 10);
@@ -7544,7 +7593,54 @@ class Enhancement_AttachmentHelper
                 });
             }
 
-            var api = window.EnhancementAttachmentUrlSync || {};
+            api.captureSelection = function() {
+                var selection = getCurrentSelection();
+                if (selection) {
+                    api.lastSelection = selection;
+                }
+
+                return selection;
+            };
+
+            api.restoreSelection = function() {
+                if (!api.lastSelection) {
+                    return false;
+                }
+
+                return setEditorSelection(api.lastSelection);
+            };
+
+            api.insertContent = function(content) {
+                var $textarea = getEditor();
+                if (!$textarea.length) {
+                    return;
+                }
+
+                var text = typeof content === 'string' ? content : '';
+                var currentValue = $textarea.val();
+                var selection = normalizeSelection(api.lastSelection || getCurrentSelection(), currentValue.length);
+                if (!selection) {
+                    selection = {
+                        start: currentValue.length,
+                        end: currentValue.length
+                    };
+                }
+
+                var nextValue = currentValue.substring(0, selection.start) + text + currentValue.substring(selection.end);
+                var caret = selection.start + text.length;
+
+                $textarea.val(nextValue);
+                api.lastSelection = {
+                    start: caret,
+                    end: caret
+                };
+
+                setEditorSelection(api.lastSelection);
+            };
+
+            api.insertFile = function(title, url, isImage) {
+                api.insertContent(buildInsertContent(title, url, isImage) + '\n');
+            };
 
             api.getUrl = function($li) {
                 var cid = getCid($li);
@@ -7603,6 +7699,20 @@ class Enhancement_AttachmentHelper
             window.EnhancementAttachmentUrlSync = api;
 
             $(function() {
+                var $textarea = getEditor();
+                if ($textarea.length) {
+                    $textarea.off('.enhancement-s3-selection');
+                    $textarea.on('click.enhancement-s3-selection keyup.enhancement-s3-selection mouseup.enhancement-s3-selection select.enhancement-s3-selection input.enhancement-s3-selection focus.enhancement-s3-selection', function() {
+                        api.captureSelection();
+                    });
+                    api.captureSelection();
+                }
+
+                $(document).off('mousedown.enhancement-s3-selection', '#file-list li .insert, .btn-insert, #batch-insert');
+                $(document).on('mousedown.enhancement-s3-selection', '#file-list li .insert, .btn-insert, #batch-insert', function() {
+                    api.captureSelection();
+                });
+
                 api.refresh();
 
                 $(document).off('click.enhancement-s3-sync', '#file-list li .insert');
@@ -7619,7 +7729,7 @@ class Enhancement_AttachmentHelper
                     e.stopImmediatePropagation();
 
                     api.refreshItem($li, function(url) {
-                        Typecho.insertFileToEditor($link.text(), url || api.getUrl($li), $li.data('image') == 1);
+                        api.insertFile($link.text(), url || api.getUrl($li), $li.data('image') == 1);
                     });
 
                     return false;
@@ -7660,6 +7770,26 @@ class Enhancement_AttachmentHelper
         </style>
         <script>
         $(document).ready(function() {
+            function captureEditorSelection() {
+                if (window.EnhancementAttachmentUrlSync && typeof window.EnhancementAttachmentUrlSync.captureSelection === 'function') {
+                    window.EnhancementAttachmentUrlSync.captureSelection();
+                }
+            }
+
+            function insertEditorContent(content) {
+                if (window.EnhancementAttachmentUrlSync && typeof window.EnhancementAttachmentUrlSync.insertContent === 'function') {
+                    window.EnhancementAttachmentUrlSync.insertContent(content);
+                    return;
+                }
+
+                var textarea = $('#text');
+                var pos = textarea.getSelection();
+                var newContent = textarea.val();
+                newContent = newContent.substring(0, pos.start) + content + newContent.substring(pos.end);
+                textarea.val(newContent);
+                textarea.focus();
+            }
+
             function refreshAttachmentUrls(items, callback) {
                 if (window.EnhancementAttachmentUrlSync && typeof window.EnhancementAttachmentUrlSync.refreshItems === 'function') {
                     window.EnhancementAttachmentUrlSync.refreshItems(items || $('#file-list li[data-cid]'), function() {
@@ -7684,18 +7814,16 @@ class Enhancement_AttachmentHelper
 
             // 插入格式
             Typecho.insertFileToEditor = function(title, url, isImage) {
-                var textarea = $('#text'), 
-                    sel = textarea.getSelection(),
-                    insertContent = isImage ? '![' + title + '](' + url + ')' : 
-                                            '[' + title + '](' + url + ')';
-                textarea.replaceSelection(insertContent + '\n');
-                textarea.focus();
+                var insertContent = isImage ? '![' + title + '](' + url + ')' :
+                    '[' + title + '](' + url + ')';
+                insertEditorContent(insertContent + '\n');
             };
 
             // 批量插入
             $('#batch-insert').on('click', function(e) {
                 e.preventDefault();
                 e.stopPropagation();
+                captureEditorSelection();
                 refreshAttachmentUrls($('#file-list li'), function() {
                     var content = '';
                     $('#file-list li').each(function() {
@@ -7708,12 +7836,7 @@ class Enhancement_AttachmentHelper
                         }
                     });
                     if (content) {
-                        var textarea = $('#text');
-                        var pos = textarea.getSelection();
-                        var newContent = textarea.val();
-                        newContent = newContent.substring(0, pos.start) + content + newContent.substring(pos.end);
-                        textarea.val(newContent);
-                        textarea.focus();
+                        insertEditorContent(content);
                     }
                 });
             });
@@ -7773,6 +7896,7 @@ class Enhancement_AttachmentHelper
                 e.stopPropagation();
                 var $li = $(this).closest('li');
                 var title = $li.find('.att-enhanced-fname').text();
+                captureEditorSelection();
                 refreshAttachmentUrls($li, function() {
                     Typecho.insertFileToEditor(title, $li.data('url'), $li.data('image') == 1);
                 });
