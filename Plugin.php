@@ -621,6 +621,31 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         return Enhancement_S3Helper::enabled();
     }
 
+    public static function s3UploadHandle($file)
+    {
+        return Enhancement_S3Helper::uploadHandle($file);
+    }
+
+    public static function s3ModifyHandle($content, $file)
+    {
+        return Enhancement_S3Helper::modifyHandle($content, $file);
+    }
+
+    public static function s3DeleteHandle($content)
+    {
+        return Enhancement_S3Helper::deleteHandle($content);
+    }
+
+    public static function s3AttachmentHandle($content)
+    {
+        return Enhancement_S3Helper::attachmentHandle($content);
+    }
+
+    public static function s3AttachmentDataHandle($content)
+    {
+        return Enhancement_S3Helper::attachmentDataHandle($content);
+    }
+
     public static function s3UploadConfigured(): bool
     {
         return Enhancement_S3Helper::configured();
@@ -692,4 +717,3 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         return Enhancement_ContentParseHelper::parse($text, $widget, $lastResult);
     }
 }
-
