@@ -94,7 +94,7 @@ class Enhancement_AvatarHelper
         }
 
         self::$commentFilterRegistered = true;
-        Typecho_Plugin::factory('Widget_Abstract_Comments')->filter = array('Enhancement_Plugin', 'filterCommentRowUrl');
+        Typecho_Plugin::factory('Widget_Abstract_Comments')->filter = Enhancement_Plugin::callback('filterCommentRowUrl');
     }
 
     private static function normalizeBase(string $base): string

@@ -5,7 +5,7 @@
  * 具体功能包含:插件/主题zip上传,友情链接,瞬间,网站地图,编辑器增强,站外链接跳转,评论邮件通知,QQ通知,常见视频链接 音乐链接 解析,AI摘要生成等
  * @package Enhancement
  * @author 老孙博客
- * @version 1.2.2
+ * @version 1.2.3
  * @link HTTPS://www.IMSUN.ORG
  * @dependence 14.10.10-*
  */
@@ -37,6 +37,24 @@ require_once __DIR__ . '/ContentParseHelper.php';
 class Enhancement_Plugin implements Typecho_Plugin_Interface
 {
     public static $commentNotifierPanel = 'Enhancement/CommentNotifier/console.php';
+
+    public static function callback($method)
+    {
+        return array(self::callbackClass(), (string)$method);
+    }
+
+    public static function callbackClass(): string
+    {
+        if (
+            class_exists('\\Typecho\\Plugin', false)
+            && class_exists('\\TypechoPlugin\\Enhancement\\Plugin', false)
+        ) {
+            return '\\TypechoPlugin\\Enhancement\\Plugin';
+        }
+
+        return 'Enhancement_Plugin';
+    }
+
     private static function settingsBackupNamePrefix()
     {
         return 'plugin:Enhancement:backup:';
@@ -716,4 +734,8 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
     {
         return Enhancement_ContentParseHelper::parse($text, $widget, $lastResult);
     }
+}
+
+if (!class_exists('\\TypechoPlugin\\Enhancement\\Plugin', false)) {
+    class_alias('Enhancement_Plugin', '\\TypechoPlugin\\Enhancement\\Plugin');
 }
