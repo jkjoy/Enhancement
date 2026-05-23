@@ -176,12 +176,14 @@ class Enhancement_ConfigUiHelper
 .enhancement-settings-nav-label{display:inline-block;min-width:0;font-size:13px;line-height:1;}
 .enhancement-settings-content-wrap{min-width:0;padding:0 0 72px;box-sizing:border-box;}
 form.enhancement-settings-form{margin:0;}
-form.enhancement-settings-form.enhancement-settings-form--enhanced .typecho-option-submit{display:none!important;}
-.enhancement-settings-submit-bar{position:fixed!important;right:24px!important;bottom:24px!important;z-index:2147483000!important;display:flex!important;justify-content:flex-end!important;visibility:visible!important;opacity:1!important;pointer-events:none!important;}
-.enhancement-settings-submit-btn{appearance:none!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;width:auto!important;height:42px!important;min-width:104px!important;padding:0 18px!important;border:1px solid #2563eb!important;border-radius:8px!important;background:#2563eb!important;color:#fff!important;box-sizing:border-box!important;font-size:13px!important;font-weight:600!important;line-height:1!important;text-decoration:none!important;cursor:pointer!important;box-shadow:0 12px 28px rgba(37,99,235,.28)!important;pointer-events:auto!important;}
-.enhancement-settings-submit-btn:hover,.enhancement-settings-submit-btn:focus{background:#1d4ed8!important;border-color:#1d4ed8!important;box-shadow:0 14px 32px rgba(37,99,235,.34)!important;outline:none!important;}
-.enhancement-settings-tab-save-btn{display:none;appearance:none;border:1px solid #2563eb;border-bottom:none;border-radius:8px 8px 0 0;background:#2563eb;color:#fff;padding:8px 13px;font-size:13px;font-weight:600;line-height:1;white-space:nowrap;cursor:pointer;box-sizing:border-box;box-shadow:0 -2px 0 rgba(255,255,255,.2) inset;}
-.enhancement-settings-tab-save-btn:hover,.enhancement-settings-tab-save-btn:focus{background:#1d4ed8;border-color:#1d4ed8;outline:none;text-decoration:none;}
+form.enhancement-settings-form.enhancement-settings-form--enhanced .typecho-option-submit{display:flex!important;align-items:center;justify-content:flex-end;position:fixed!important;right:24px!important;bottom:24px!important;z-index:1000!important;margin:0!important;padding:0!important;border:0!important;background:transparent!important;box-shadow:none!important;width:auto!important;list-style:none!important;}
+form.enhancement-settings-form.enhancement-settings-form--enhanced .typecho-option-submit li{margin:0!important;padding:0!important;list-style:none!important;width:auto!important;}
+form.enhancement-settings-form.enhancement-settings-form--enhanced .typecho-option-submit input[type="submit"],
+form.enhancement-settings-form.enhancement-settings-form--enhanced .typecho-option-submit button[type="submit"]{appearance:none;display:inline-flex;align-items:center;justify-content:center;height:40px;min-width:104px;padding:0 18px;border:1px solid #2563eb;border-radius:8px;background:#2563eb;color:#fff;box-sizing:border-box;font-size:13px;font-weight:600;line-height:1;cursor:pointer;box-shadow:none;}
+form.enhancement-settings-form.enhancement-settings-form--enhanced .typecho-option-submit input[type="submit"]:hover,
+form.enhancement-settings-form.enhancement-settings-form--enhanced .typecho-option-submit input[type="submit"]:focus,
+form.enhancement-settings-form.enhancement-settings-form--enhanced .typecho-option-submit button[type="submit"]:hover,
+form.enhancement-settings-form.enhancement-settings-form--enhanced .typecho-option-submit button[type="submit"]:focus{background:#1d4ed8;border-color:#1d4ed8;outline:none;}
 .enhancement-settings-main{display:block;}
 .enhancement-settings-panel{display:none;background:transparent;border:0;border-radius:0;padding:0;box-shadow:none;}
 .enhancement-settings-panel.is-active{display:block;}
@@ -213,19 +215,18 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select{width:
 }
 @media (max-width: 640px){
     .enhancement-settings-header{margin-bottom:10px;}
+    .enhancement-settings-content-wrap{padding-bottom:24px;}
     .enhancement-settings-toolbar-btn{width:100%;}
     .enhancement-settings-tabs{top:46px;z-index:60;padding-top:8px;}
     .enhancement-settings-tabs-row{align-items:flex-end;}
     .enhancement-settings-nav{flex:1 1 auto;min-width:0;}
-    .enhancement-settings-tab-save-btn{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;}
-    .enhancement-settings-submit-bar{left:12px!important;right:12px!important;bottom:12px!important;justify-content:stretch!important;}
-    .enhancement-settings-submit-btn{width:100%!important;height:42px!important;min-width:0!important;padding:0 16px!important;}
+    form.enhancement-settings-form.enhancement-settings-form--enhanced .typecho-option-submit{position:static!important;right:auto!important;bottom:auto!important;z-index:auto!important;justify-content:stretch;margin:20px 0 0!important;padding:16px 0 0!important;border-top:1px solid #e2e8f0!important;}
+    form.enhancement-settings-form.enhancement-settings-form--enhanced .typecho-option-submit li{width:100%!important;}
+    form.enhancement-settings-form.enhancement-settings-form--enhanced .typecho-option-submit input[type="submit"],
+    form.enhancement-settings-form.enhancement-settings-form--enhanced .typecho-option-submit button[type="submit"]{width:100%;height:42px;min-width:0;}
     .enhancement-settings-tools{align-items:stretch;}
 }
 </style>
-<div id="enhancement-settings-submit-bar" class="enhancement-settings-submit-bar">
-    <button type="button" class="enhancement-settings-submit-btn">保存设置</button>
-</div>
 <script>
 (function () {
     var booted = false;
@@ -275,17 +276,10 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select{width:
         var $brand = $('<div class="enhancement-settings-brand"><h2>Enhancement <span class="enhancement-settings-version"></span></h2><p>按功能分组管理插件设置，支持搜索、标签切换和快捷保存。</p></div>');
         var $tools = $('<div class="enhancement-settings-tools"></div>');
         var $search = $('<label class="enhancement-settings-search"><span class="enhancement-settings-search-icon" aria-hidden="true">⌕</span><input type="search" id="enhancement-settings-search-input" placeholder="搜索设置项"></label>');
-        var $saveBar = $('#enhancement-settings-submit-bar');
-        if (!$saveBar.length) {
-            $saveBar = $('<div id="enhancement-settings-submit-bar" class="enhancement-settings-submit-bar"><button type="button" class="enhancement-settings-submit-btn">保存设置</button></div>');
-            $page.append($saveBar);
-        }
-        var $saveBtn = $saveBar.find('.enhancement-settings-submit-btn');
         var $toggleBtn = $('<button type="button" class="enhancement-settings-toolbar-btn">展开全部</button>');
         var $body = $('<div class="enhancement-settings-body"></div>');
-        var $tabs = $('<div class="enhancement-settings-tabs"><div class="enhancement-settings-tabs-row"><div class="enhancement-settings-nav" role="tablist" aria-label="插件设置分组"></div><button type="button" class="enhancement-settings-tab-save-btn">保存</button></div></div>');
+        var $tabs = $('<div class="enhancement-settings-tabs"><div class="enhancement-settings-tabs-row"><div class="enhancement-settings-nav" role="tablist" aria-label="插件设置分组"></div></div></div>');
         var $nav = $tabs.find('.enhancement-settings-nav');
-        var $tabSaveBtn = $tabs.find('.enhancement-settings-tab-save-btn');
         var $contentWrap = $('<div class="enhancement-settings-content-wrap"></div>');
         var $main = $('<div class="enhancement-settings-main"></div>');
         var $empty = $('<div class="enhancement-settings-empty">没有找到匹配的设置项，请换个关键词试试。</div>');
@@ -302,6 +296,17 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select{width:
         $configForm.prepend($main);
         $main.append($empty);
         if ($submit.length) {
+            var $submitControl = $submit.find('input[type="submit"], button[type="submit"]').first();
+            if ($submitControl.length) {
+                if ($submitControl.is('input')) {
+                    $submitControl.val('保存设置');
+                } else {
+                    $submitControl.text('保存设置');
+                }
+            }
+            $configForm.append($submit);
+        } else {
+            $submit = $('<ul class="typecho-option typecho-option-submit"><li><button type="submit" class="primary">保存设置</button></li></ul>');
             $configForm.append($submit);
         }
 
@@ -474,27 +479,6 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select{width:
 
             currentSectionId = sectionId;
             updateLayout();
-        });
-
-        function saveSettings() {
-            var formNode = $configForm.get(0);
-            var submitNode = $submit.find('input[type="submit"], button[type="submit"]').filter(':enabled').first().get(0);
-            if (submitNode && submitNode.click) {
-                submitNode.click();
-                return;
-            }
-            if (formNode && formNode.requestSubmit) {
-                formNode.requestSubmit();
-                return;
-            }
-            if (formNode && formNode.submit) {
-                formNode.submit();
-            }
-        }
-
-        $saveBtn.on('click', saveSettings);
-        $tabSaveBtn.on('click', function () {
-            saveSettings();
         });
 
         $toggleBtn.on('click', function () {
