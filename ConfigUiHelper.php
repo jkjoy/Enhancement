@@ -127,6 +127,9 @@ class Enhancement_ConfigUiHelper
     .enhancement-action-btn:focus{
         text-decoration: none !important;
     }
+    .enhancement-update-upgrade.is-hidden{
+        display: none !important;
+    }
     .enhancement-action-note{
         color: #666;
         line-height: 1.6;
@@ -323,6 +326,9 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select{width:
             if (value.indexOf('备份') >= 0) {
                 return '备份';
             }
+            if (value.indexOf('概览') >= 0 || value.indexOf('帮助') >= 0) {
+                return '帮助';
+            }
             if (value.indexOf('更新') >= 0 || value.indexOf('升级') >= 0) {
                 return '更新';
             }
@@ -369,14 +375,6 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select{width:
             });
         }
 
-        if ($introBlocks.length || $miscBlocks.length) {
-            pushSection('概览', $.makeArray($introBlocks).concat($.makeArray($miscBlocks)));
-        }
-
-        if ($backupBlocks.length) {
-            pushSection('备份', $.makeArray($backupBlocks));
-        }
-
         if ($updateBlocks.length) {
             pushSection('更新', $.makeArray($updateBlocks));
         }
@@ -398,6 +396,14 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select{width:
             }
         });
         pushSection(currentTitle, currentNodes);
+
+        if ($backupBlocks.length) {
+            pushSection('备份', $.makeArray($backupBlocks));
+        }
+
+        if ($introBlocks.length || $miscBlocks.length) {
+            pushSection('帮助', $.makeArray($introBlocks).concat($.makeArray($miscBlocks)));
+        }
 
         if (!sections.length) {
             return;
@@ -458,7 +464,7 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select{width:
             }
 
             $box.find('.enhancement-update-status').html(html);
-            $box.find('.enhancement-update-upgrade').toggle(hasUpdate);
+            $box.find('.enhancement-update-upgrade').toggleClass('is-hidden', !hasUpdate);
         }
 
         $app.on('click', '.enhancement-update-check', function (event) {
@@ -764,7 +770,7 @@ HTML
         }
         $upgradeButton = $hasUpdate
             ? '<a class="btn enhancement-action-btn primary enhancement-update-upgrade" href="' . htmlspecialchars($upgradeUrl, ENT_QUOTES, 'UTF-8') . '" onclick="return window.confirm(\'确定要从远程仓库下载并覆盖当前 Enhancement 插件目录吗？建议先备份插件文件。\');">' . _t('在线升级') . '</a>'
-            : '<a class="btn enhancement-action-btn primary enhancement-update-upgrade" href="' . htmlspecialchars($upgradeUrl, ENT_QUOTES, 'UTF-8') . '" style="display:none;" onclick="return window.confirm(\'确定要从远程仓库下载并覆盖当前 Enhancement 插件目录吗？建议先备份插件文件。\');">' . _t('在线升级') . '</a>';
+            : '<a class="btn enhancement-action-btn primary enhancement-update-upgrade is-hidden" href="' . htmlspecialchars($upgradeUrl, ENT_QUOTES, 'UTF-8') . '" onclick="return window.confirm(\'确定要从远程仓库下载并覆盖当前 Enhancement 插件目录吗？建议先备份插件文件。\');">' . _t('在线升级') . '</a>';
 
         echo '<div class="typecho-option">'
             . '<h3 class="enhancement-title">版本更新</h3>'
