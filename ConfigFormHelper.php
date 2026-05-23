@@ -753,6 +753,11 @@ class Enhancement_ConfigFormHelper
         $backupRows = Enhancement_SettingsHelper::listSettingsBackups(5);
         Enhancement_ConfigUiHelper::renderBackupHistory($backupRows);
 
+        $checkUpdateUrl = Helper::security()->getIndex('/action/enhancement-edit?do=check-plugin-update');
+        $upgradeUrl = Helper::security()->getIndex('/action/enhancement-edit?do=upgrade-plugin');
+        $updateState = Enhancement_SettingsHelper::readPluginUpdateState();
+        Enhancement_ConfigUiHelper::renderUpdateActions(Enhancement_Plugin::getPluginVersion(), $checkUpdateUrl, $upgradeUrl, $updateState);
+
         $template = new Typecho_Widget_Helper_Form_Element_Text(
             'template',
             null,

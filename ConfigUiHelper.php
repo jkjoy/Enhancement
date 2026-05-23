@@ -205,6 +205,7 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select{width:
 .enhancement-settings-app .enhancement-subtitle{margin:8px 0 10px;font-size:16px;line-height:1.35;font-weight:700;color:#1e293b;}
 .enhancement-settings-app .enhancement-subtitle::before{content:none !important;display:none !important;}
 .enhancement-settings-app .enhancement-backup-box{margin-top:0;border-color:#dce6f5;border-radius:8px;background:#f8fbff;}
+.enhancement-settings-app .enhancement-update-box{margin-top:0;padding:12px;border:1px solid #dce6f5;border-radius:8px;background:#f8fbff;}
 .enhancement-settings-app .enhancement-action-note{color:#64748b;}
 .enhancement-settings-empty{display:none;padding:32px 16px;text-align:center;font-size:14px;line-height:1.8;color:#64748b;background:#fff;border:1px dashed #d8e2f0;border-radius:8px;}
 .enhancement-settings-app.is-searching .enhancement-settings-empty.is-visible{display:block;}
@@ -266,7 +267,10 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select{width:
         var $backupBlocks = $looseBlocks.filter(function () {
             return $(this).find('.enhancement-backup-box').length > 0;
         });
-        var $miscBlocks = $looseBlocks.not($introBlocks).not($backupBlocks);
+        var $updateBlocks = $looseBlocks.filter(function () {
+            return $(this).find('.enhancement-update-box').length > 0;
+        });
+        var $miscBlocks = $looseBlocks.not($introBlocks).not($backupBlocks).not($updateBlocks);
 
         $introBlocks.find('#enhancement-links-help-toggle').remove();
         $introBlocks.find('#enhancement-links-help').show();
@@ -319,6 +323,9 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select{width:
             if (value.indexOf('备份') >= 0) {
                 return '备份';
             }
+            if (value.indexOf('更新') >= 0 || value.indexOf('升级') >= 0) {
+                return '更新';
+            }
             if (value.indexOf('友链') >= 0) {
                 return '友链';
             }
@@ -368,6 +375,10 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select{width:
 
         if ($backupBlocks.length) {
             pushSection('备份', $.makeArray($backupBlocks));
+        }
+
+        if ($updateBlocks.length) {
+            pushSection('更新', $.makeArray($updateBlocks));
         }
 
         var currentTitle = '';
@@ -658,6 +669,38 @@ HTML
         }
 
         echo '</ol>'
+            . '</div>'
+            . '</div>';
+    }
+
+    public static function renderUpdateActions($currentVersion, $checkUrl, $upgradeUrl, array $updateState = array())
+    {
+        $currentVersion = trim((string)$currentVersion);
+        if ($currentVersion === '') {
+            $currentVersion = _t('未知');
+        }
+
+        $remoteVersion = isset($updateState['remote_version']) ? trim((string)$updateState['remote_version']) : '';
+        $hasUpdate = $remoteVersion !== ''
+            && $currentVersion !== _t('未知')
+            && version_compare(preg_replace('/^[vV]\s*/', '', $remoteVersion), preg_replace('/^[vV]\s*/', '', $currentVersion), '>');
+        $updateHint = $hasUpdate
+            ? '<p class="enhancement-action-note" style="margin:8px 0 0;color:#1a7f37;">' . _t('已检测到新版本：%s', '<strong>' . htmlspecialchars($remoteVersion, ENT_QUOTES, 'UTF-8') . '</strong>') . '</p>'
+            : '<p class="enhancement-action-note" style="margin:8px 0 0;">' . _t('点击“检查更新”后，如有新版本才会显示在线升级按钮。') . '</p>';
+        $upgradeButton = $hasUpdate
+            ? '<a class="btn enhancement-action-btn primary" href="' . htmlspecialchars($upgradeUrl, ENT_QUOTES, 'UTF-8') . '" onclick="return window.confirm(\'确定要从远程仓库下载并覆盖当前 Enhancement 插件目录吗？建议先备份插件文件。\');">' . _t('在线升级') . '</a>'
+            : '';
+
+        echo '<div class="typecho-option">'
+            . '<h3 class="enhancement-title">版本更新</h3>'
+            . '<div class="enhancement-update-box">'
+            . '<p style="margin:0;">' . _t('当前版本：%s', '<strong>' . htmlspecialchars($currentVersion, ENT_QUOTES, 'UTF-8') . '</strong>') . '</p>'
+            . '<p class="enhancement-action-note" style="margin:8px 0 0;">' . _t('远程仓库：%s', '<code>github.com/jkjoy/Enhancement</code>') . '</p>'
+            . $updateHint
+            . '<div class="enhancement-backup-actions">'
+            . '<a class="btn enhancement-action-btn" href="' . htmlspecialchars($checkUrl, ENT_QUOTES, 'UTF-8') . '">' . _t('检查更新') . '</a>'
+            . $upgradeButton
+            . '</div>'
             . '</div>'
             . '</div>';
     }

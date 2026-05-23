@@ -1242,6 +1242,417 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $this->deleteInstalledPackage($this->request->get('name'), _t('主题'), $themeDir, false);
     }
 
+    private function pluginUpdateResponse($success, $message, $statusCode = 200)
+    {
+        $statusCode = intval($statusCode);
+        if ($statusCode > 0) {
+            $this->response->setStatus($statusCode);
+        }
+
+        if ($this->request->isAjax()) {
+            $this->response->throwJson(array(
+                'success' => (bool)$success,
+                'message' => (string)$message
+            ));
+            return;
+        }
+
+        $this->widget('Widget_Notice')->set(
+            (string)$message,
+            null,
+            $success ? 'success' : 'error'
+        );
+        $this->response->goBack();
+    }
+
+    private function remoteEnhancementPluginInfoUrl()
+    {
+        return 'https://raw.githubusercontent.com/jkjoy/Enhancement/main/Plugin.php';
+    }
+
+    private function remoteEnhancementZipUrl()
+    {
+        return 'https://github.com/jkjoy/Enhancement/archive/refs/heads/main.zip';
+    }
+
+    private function httpGetText($url, &$errorMessage, $timeout = 20)
+    {
+        $errorMessage = '';
+        if (!function_exists('curl_init')) {
+            $errorMessage = _t('当前环境不支持 cURL，无法访问远程仓库');
+            return false;
+        }
+
+        $ch = curl_init();
+        curl_setopt_array($ch, array(
+            CURLOPT_URL => (string)$url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS => 5,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_TIMEOUT => intval($timeout),
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_ENCODING => '',
+            CURLOPT_HTTPHEADER => array(
+                'Accept: application/vnd.github+json, application/json, text/plain, */*',
+                'User-Agent: Enhancement-Updater'
+            )
+        ));
+
+        $body = curl_exec($ch);
+        $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        if (curl_errno($ch)) {
+            $errorMessage = curl_error($ch);
+            curl_close($ch);
+            return false;
+        }
+        curl_close($ch);
+
+        if ($httpCode < 200 || $httpCode >= 300) {
+            $errorMessage = _t('远程仓库响应异常（HTTP %d）', $httpCode);
+            return false;
+        }
+
+        if (!is_string($body) || $body === '') {
+            $errorMessage = _t('远程仓库返回内容为空');
+            return false;
+        }
+
+        return $body;
+    }
+
+    private function downloadRemoteFile($url, $targetFile, &$errorMessage)
+    {
+        $errorMessage = '';
+        if (!function_exists('curl_init')) {
+            $errorMessage = _t('当前环境不支持 cURL，无法下载更新包');
+            return false;
+        }
+
+        $fp = @fopen($targetFile, 'wb');
+        if (!$fp) {
+            $errorMessage = _t('无法创建临时下载文件');
+            return false;
+        }
+
+        $ch = curl_init();
+        curl_setopt_array($ch, array(
+            CURLOPT_URL => (string)$url,
+            CURLOPT_FILE => $fp,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS => 5,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_TIMEOUT => 180,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_ENCODING => '',
+            CURLOPT_HTTPHEADER => array(
+                'Accept: application/zip, application/octet-stream, */*',
+                'User-Agent: Enhancement-Updater'
+            )
+        ));
+
+        $ok = curl_exec($ch);
+        $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_errno($ch) ? curl_error($ch) : '';
+        curl_close($ch);
+        fclose($fp);
+
+        if (!$ok || $curlError !== '') {
+            @unlink($targetFile);
+            $errorMessage = $curlError !== '' ? $curlError : _t('更新包下载失败');
+            return false;
+        }
+
+        if ($httpCode < 200 || $httpCode >= 300) {
+            @unlink($targetFile);
+            $errorMessage = _t('更新包下载失败（HTTP %d）', $httpCode);
+            return false;
+        }
+
+        if (!is_file($targetFile) || filesize($targetFile) <= 0) {
+            @unlink($targetFile);
+            $errorMessage = _t('更新包为空');
+            return false;
+        }
+
+        if (!$this->isZipFile($targetFile)) {
+            @unlink($targetFile);
+            $errorMessage = _t('下载内容不是有效 ZIP 更新包');
+            return false;
+        }
+
+        return true;
+    }
+
+    private function normalizeUpdateVersion($version)
+    {
+        return preg_replace('/^[vV]\s*/', '', trim((string)$version));
+    }
+
+    private function fetchRemoteEnhancementInfo(&$errorMessage)
+    {
+        $raw = $this->httpGetText($this->remoteEnhancementPluginInfoUrl(), $errorMessage, 20);
+        if ($raw === false) {
+            return false;
+        }
+
+        $raw = ltrim((string)$raw, "\xEF\xBB\xBF");
+        $info = $this->parseUploadPluginInfo($raw);
+        $name = isset($info['name']) ? trim((string)$info['name']) : '';
+        $version = isset($info['version']) ? trim((string)$info['version']) : '';
+        if (strcasecmp($name, 'Enhancement') !== 0 || $version === '') {
+            $errorMessage = _t('远程仓库 Plugin.php 校验失败，无法识别 Enhancement 版本');
+            return false;
+        }
+
+        return array(
+            'version' => $version,
+            'zip_url' => $this->remoteEnhancementZipUrl(),
+            'source_url' => 'https://github.com/jkjoy/Enhancement'
+        );
+    }
+
+    private function validateZipArchivePaths(ZipArchive $zip, &$errorMessage)
+    {
+        $errorMessage = '';
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $entry = str_replace('\\', '/', (string)$zip->getNameIndex($i));
+            $entry = ltrim($entry, '/');
+            if ($entry === '') {
+                continue;
+            }
+
+            if (strpos($entry, '../') !== false || preg_match('/^[a-zA-Z]:/', $entry) || strpos($entry, "\0") !== false) {
+                $errorMessage = _t('更新包包含非法路径，已拒绝安装');
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function findExtractedEnhancementSource($extractDir, &$errorMessage)
+    {
+        $errorMessage = '';
+        $candidates = array($extractDir);
+        $items = @scandir($extractDir);
+        if (is_array($items)) {
+            foreach ($items as $item) {
+                if ($item === '.' || $item === '..') {
+                    continue;
+                }
+                $path = $extractDir . DIRECTORY_SEPARATOR . $item;
+                if (is_dir($path)) {
+                    $candidates[] = $path;
+                }
+            }
+        }
+
+        foreach ($candidates as $candidate) {
+            $pluginFile = rtrim($candidate, '/\\') . DIRECTORY_SEPARATOR . 'Plugin.php';
+            if (!is_file($pluginFile)) {
+                continue;
+            }
+
+            $content = @file_get_contents($pluginFile);
+            if ($content === false) {
+                continue;
+            }
+
+            $info = $this->parseUploadPluginInfo(ltrim((string)$content, "\xEF\xBB\xBF"));
+            $name = isset($info['name']) ? trim((string)$info['name']) : '';
+            if (strcasecmp($name, 'Enhancement') === 0) {
+                return $candidate;
+            }
+        }
+
+        $errorMessage = _t('更新包中没有找到有效的 Enhancement/Plugin.php');
+        return false;
+    }
+
+    private function buildPluginUpdateTempPath($pluginRoot, $prefix)
+    {
+        for ($i = 0; $i < 8; $i++) {
+            $path = rtrim($pluginRoot, '/\\') . DIRECTORY_SEPARATOR . $prefix . date('YmdHis') . '-' . mt_rand(1000, 9999);
+            if (!file_exists($path)) {
+                return $path;
+            }
+        }
+
+        return '';
+    }
+
+    private function installDownloadedEnhancementPackage($zipFile, $remoteVersion, &$message)
+    {
+        $message = '';
+        if (!class_exists('ZipArchive')) {
+            $message = _t('当前环境不支持 ZipArchive，无法在线升级');
+            return false;
+        }
+
+        $pluginDir = defined('__TYPECHO_PLUGIN_DIR__') ? __TYPECHO_PLUGIN_DIR__ : '/usr/plugins';
+        $rootDir = defined('__TYPECHO_ROOT_DIR__') ? __TYPECHO_ROOT_DIR__ : dirname(dirname(dirname(__FILE__)));
+        $pluginRoot = rtrim($rootDir . $pluginDir, '/\\');
+        $targetDir = $pluginRoot . DIRECTORY_SEPARATOR . 'Enhancement';
+        $currentDir = dirname(__FILE__);
+        $pluginRootReal = realpath($pluginRoot);
+        $currentReal = realpath($currentDir);
+        $targetReal = realpath($targetDir);
+
+        if (!$pluginRootReal || !$currentReal || !$targetReal || strcasecmp($currentReal, $targetReal) !== 0) {
+            $message = _t('当前插件目录不是 usr/plugins/Enhancement，已取消在线升级');
+            return false;
+        }
+
+        if (!is_writable($pluginRoot) || !is_writable($targetDir)) {
+            $message = _t('插件目录不可写，请检查权限：%s', $targetDir);
+            return false;
+        }
+
+        $zip = new ZipArchive();
+        if ($zip->open($zipFile) !== true) {
+            $message = _t('无法打开更新包，可能已损坏');
+            return false;
+        }
+
+        $pathError = '';
+        if (!$this->validateZipArchivePaths($zip, $pathError)) {
+            $zip->close();
+            $message = $pathError;
+            return false;
+        }
+
+        $extractDir = $this->buildPluginUpdateTempPath($pluginRoot, '.enhancement-update-');
+        if ($extractDir === '' || !@mkdir($extractDir, 0755, true)) {
+            $zip->close();
+            $message = _t('无法创建更新临时目录');
+            return false;
+        }
+
+        if (!$zip->extractTo($extractDir)) {
+            $zip->close();
+            $this->removeDirectoryRecursively($extractDir);
+            $message = _t('更新包解压失败，请检查目录权限');
+            return false;
+        }
+        $zip->close();
+
+        $sourceError = '';
+        $sourceDir = $this->findExtractedEnhancementSource($extractDir, $sourceError);
+        if ($sourceDir === false) {
+            $this->removeDirectoryRecursively($extractDir);
+            $message = $sourceError;
+            return false;
+        }
+
+        $backupDir = $this->buildPluginUpdateTempPath($pluginRoot, '.Enhancement-backup-');
+        if ($backupDir === '') {
+            $this->removeDirectoryRecursively($extractDir);
+            $message = _t('无法创建当前插件备份目录名');
+            return false;
+        }
+
+        if (!@rename($targetDir, $backupDir)) {
+            $this->removeDirectoryRecursively($extractDir);
+            $message = _t('无法备份当前插件目录，在线升级已取消');
+            return false;
+        }
+
+        if (!@rename($sourceDir, $targetDir)) {
+            @rename($backupDir, $targetDir);
+            $this->removeDirectoryRecursively($extractDir);
+            $message = _t('无法将新版本目录重命名为 Enhancement，已尝试恢复旧版本');
+            return false;
+        }
+
+        $this->removeDirectoryRecursively($extractDir);
+        $cleanupOk = $this->removeDirectoryRecursively($backupDir);
+        $message = _t('Enhancement 已升级到 %s。', $remoteVersion);
+        if (!$cleanupOk && is_dir($backupDir)) {
+            $message .= _t(' 旧版本备份目录未能自动删除：%s', $backupDir);
+        }
+
+        return true;
+    }
+
+    public function checkPluginUpdate()
+    {
+        $errorMessage = '';
+        $remoteInfo = $this->fetchRemoteEnhancementInfo($errorMessage);
+        if ($remoteInfo === false) {
+            Enhancement_SettingsHelper::clearPluginUpdateState();
+            $this->pluginUpdateResponse(false, _t('检查更新失败：%s', $errorMessage), 500);
+            return;
+        }
+
+        $currentVersion = Enhancement_Plugin::getPluginVersion();
+        $remoteVersion = isset($remoteInfo['version']) ? (string)$remoteInfo['version'] : '';
+        $compare = version_compare($this->normalizeUpdateVersion($remoteVersion), $this->normalizeUpdateVersion($currentVersion));
+        if ($compare > 0) {
+            Enhancement_SettingsHelper::savePluginUpdateState(array(
+                'current_version' => (string)$currentVersion,
+                'remote_version' => (string)$remoteVersion,
+                'zip_url' => isset($remoteInfo['zip_url']) ? (string)$remoteInfo['zip_url'] : $this->remoteEnhancementZipUrl(),
+                'source_url' => isset($remoteInfo['source_url']) ? (string)$remoteInfo['source_url'] : 'https://github.com/jkjoy/Enhancement',
+                'checked_at' => time()
+            ));
+            $this->pluginUpdateResponse(true, _t('发现新版本：当前 %s，远程 %s。已显示“在线升级”按钮。', $currentVersion, $remoteVersion), 200);
+            return;
+        }
+
+        Enhancement_SettingsHelper::clearPluginUpdateState();
+        $this->pluginUpdateResponse(true, _t('当前已是最新版本：%s（远程仓库版本：%s）', $currentVersion, $remoteVersion), 200);
+    }
+
+    public function upgradePlugin()
+    {
+        $updateState = Enhancement_SettingsHelper::readPluginUpdateState();
+        $stateVersion = isset($updateState['remote_version']) ? trim((string)$updateState['remote_version']) : '';
+        $currentVersion = Enhancement_Plugin::getPluginVersion();
+        if ($stateVersion === '' || version_compare($this->normalizeUpdateVersion($stateVersion), $this->normalizeUpdateVersion($currentVersion)) <= 0) {
+            Enhancement_SettingsHelper::clearPluginUpdateState();
+            $this->pluginUpdateResponse(false, _t('请先检查更新，检测到新版本后才可以在线升级。'), 400);
+            return;
+        }
+
+        $errorMessage = '';
+        $remoteInfo = $this->fetchRemoteEnhancementInfo($errorMessage);
+        if ($remoteInfo === false) {
+            $this->pluginUpdateResponse(false, _t('获取远程版本失败：%s', $errorMessage), 500);
+            return;
+        }
+
+        $remoteVersion = isset($remoteInfo['version']) ? (string)$remoteInfo['version'] : '';
+        if (version_compare($this->normalizeUpdateVersion($remoteVersion), $this->normalizeUpdateVersion($currentVersion)) <= 0) {
+            Enhancement_SettingsHelper::clearPluginUpdateState();
+            $this->pluginUpdateResponse(true, _t('当前已是最新版本：%s，无需升级。', $currentVersion), 200);
+            return;
+        }
+
+        $tmpFile = tempnam(sys_get_temp_dir(), 'enhancement-update-');
+        if ($tmpFile === false || $tmpFile === '') {
+            $this->pluginUpdateResponse(false, _t('无法创建更新临时文件'), 500);
+            return;
+        }
+
+        $zipUrl = isset($remoteInfo['zip_url']) ? (string)$remoteInfo['zip_url'] : $this->remoteEnhancementZipUrl();
+        if (!$this->downloadRemoteFile($zipUrl, $tmpFile, $errorMessage)) {
+            @unlink($tmpFile);
+            $this->pluginUpdateResponse(false, _t('下载更新包失败：%s', $errorMessage), 500);
+            return;
+        }
+
+        $installMessage = '';
+        $ok = $this->installDownloadedEnhancementPackage($tmpFile, $remoteVersion, $installMessage);
+        @unlink($tmpFile);
+        if ($ok) {
+            Enhancement_SettingsHelper::clearPluginUpdateState();
+        }
+        $this->pluginUpdateResponse($ok, $ok ? $installMessage : _t('在线升级失败：%s', $installMessage), $ok ? 200 : 500);
+    }
+
     public function retryQqNotifyQueue()
     {
         try {
@@ -2637,6 +3048,8 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             'upload-package' => 'uploadPackage',
             'delete-plugin-package' => 'deletePluginPackage',
             'delete-theme-package' => 'deleteThemePackage',
+            'check-plugin-update' => 'checkPluginUpdate',
+            'upgrade-plugin' => 'upgradePlugin',
             'ai-summary-batch' => 'batchGenerateAiSummary',
             'ai-slug-translate' => 'previewAiSlug',
             'resolve-attachment-urls' => 'resolveAttachmentUrls'

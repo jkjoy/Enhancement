@@ -312,6 +312,92 @@ class Enhancement_SettingsHelper
         }
     }
 
+    public static function pluginUpdateStateOptionName()
+    {
+        return 'enh:update';
+    }
+
+    public static function readPluginUpdateState()
+    {
+        try {
+            $db = Typecho_Db::get();
+            $row = $db->fetchRow(
+                $db->select('value')
+                    ->from('table.options')
+                    ->where('name = ?', self::pluginUpdateStateOptionName())
+                    ->where('user = ?', 0)
+                    ->limit(1)
+            );
+
+            if (is_array($row) && isset($row['value'])) {
+                $decoded = json_decode((string)$row['value'], true);
+                if (is_array($decoded)) {
+                    return $decoded;
+                }
+            }
+        } catch (Exception $e) {
+            // ignore update state read errors
+        }
+
+        return array();
+    }
+
+    public static function savePluginUpdateState(array $state)
+    {
+        $value = json_encode($state, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (!is_string($value) || $value === '') {
+            return false;
+        }
+
+        try {
+            $db = Typecho_Db::get();
+            $optionName = self::pluginUpdateStateOptionName();
+            $row = $db->fetchRow(
+                $db->select('name')
+                    ->from('table.options')
+                    ->where('name = ?', $optionName)
+                    ->where('user = ?', 0)
+                    ->limit(1)
+            );
+
+            if (is_array($row) && !empty($row)) {
+                $db->query(
+                    $db->update('table.options')
+                        ->rows(array('value' => $value))
+                        ->where('name = ?', $optionName)
+                        ->where('user = ?', 0)
+                );
+            } else {
+                $db->query(
+                    $db->insert('table.options')->rows(array(
+                        'name' => $optionName,
+                        'user' => 0,
+                        'value' => $value
+                    ))
+                );
+            }
+
+            return true;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    public static function clearPluginUpdateState()
+    {
+        try {
+            $db = Typecho_Db::get();
+            $db->query(
+                $db->delete('table.options')
+                    ->where('name = ?', self::pluginUpdateStateOptionName())
+                    ->where('user = ?', 0)
+            );
+            return true;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
     public static function buildPluginConfigObject($optionValue)
     {
         $settings = self::decodePluginConfigValue($optionValue);
