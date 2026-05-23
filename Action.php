@@ -1242,7 +1242,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $this->deleteInstalledPackage($this->request->get('name'), _t('主题'), $themeDir, false);
     }
 
-    private function pluginUpdateResponse($success, $message, $statusCode = 200)
+    private function pluginUpdateResponse($success, $message, $statusCode = 200, array $extra = array())
     {
         $statusCode = intval($statusCode);
         if ($statusCode > 0) {
@@ -1250,10 +1250,14 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         }
 
         if ($this->request->isAjax()) {
-            $this->response->throwJson(array(
+            $payload = array(
                 'success' => (bool)$success,
                 'message' => (string)$message
-            ));
+            );
+            if (!empty($extra)) {
+                $payload = array_merge($payload, $extra);
+            }
+            $this->response->throwJson($payload);
             return;
         }
 
@@ -1275,6 +1279,55 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         return 'https://github.com/jkjoy/Enhancement/archive/refs/heads/main.zip';
     }
 
+    private function resolveCurlCaInfoPath()
+    {
+        static $resolved = null;
+        if ($resolved !== null) {
+            return $resolved;
+        }
+
+        $candidates = array(
+            ini_get('curl.cainfo'),
+            ini_get('openssl.cafile'),
+            dirname(__FILE__) . DIRECTORY_SEPARATOR . 'cacert.pem'
+        );
+
+        $rootDir = defined('__TYPECHO_ROOT_DIR__') ? __TYPECHO_ROOT_DIR__ : dirname(dirname(dirname(__FILE__)));
+        $rootDir = rtrim((string)$rootDir, '/\\');
+        if ($rootDir !== '') {
+            $coreDir = dirname(dirname($rootDir));
+            $candidates[] = $rootDir . DIRECTORY_SEPARATOR . 'cacert.pem';
+            $candidates[] = dirname($rootDir) . DIRECTORY_SEPARATOR . 'cacert.pem';
+            $candidates[] = $coreDir . DIRECTORY_SEPARATOR . 'etc' . DIRECTORY_SEPARATOR . 'cacert.pem';
+            $candidates[] = $coreDir . DIRECTORY_SEPARATOR . 'childApp' . DIRECTORY_SEPARATOR . 'tool' . DIRECTORY_SEPARATOR . 'phpMyAdmin' . DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR . 'composer' . DIRECTORY_SEPARATOR . 'ca-bundle' . DIRECTORY_SEPARATOR . 'res' . DIRECTORY_SEPARATOR . 'cacert.pem';
+        }
+
+        foreach ($candidates as $candidate) {
+            $candidate = trim((string)$candidate);
+            if ($candidate === '' || !is_file($candidate) || !is_readable($candidate)) {
+                continue;
+            }
+
+            $real = realpath($candidate);
+            $resolved = $real ? $real : $candidate;
+            return $resolved;
+        }
+
+        $resolved = '';
+        return $resolved;
+    }
+
+    private function applyCurlSslOptions($ch)
+    {
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
+
+        $caInfo = $this->resolveCurlCaInfoPath();
+        if ($caInfo !== '') {
+            curl_setopt($ch, CURLOPT_CAINFO, $caInfo);
+        }
+    }
+
     private function httpGetText($url, &$errorMessage, $timeout = 20)
     {
         $errorMessage = '';
@@ -1291,19 +1344,21 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             CURLOPT_MAXREDIRS => 5,
             CURLOPT_CONNECTTIMEOUT => 10,
             CURLOPT_TIMEOUT => intval($timeout),
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_ENCODING => '',
             CURLOPT_HTTPHEADER => array(
                 'Accept: application/vnd.github+json, application/json, text/plain, */*',
                 'User-Agent: Enhancement-Updater'
             )
         ));
+        $this->applyCurlSslOptions($ch);
 
         $body = curl_exec($ch);
         $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
         if (curl_errno($ch)) {
             $errorMessage = curl_error($ch);
+            if (stripos($errorMessage, 'SSL certificate') !== false || stripos($errorMessage, 'local issuer certificate') !== false) {
+                $errorMessage .= _t('。请确认服务器存在可读的 cacert.pem，或在 php.ini 配置 curl.cainfo / openssl.cafile。');
+            }
             curl_close($ch);
             return false;
         }
@@ -1344,14 +1399,13 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             CURLOPT_MAXREDIRS => 5,
             CURLOPT_CONNECTTIMEOUT => 10,
             CURLOPT_TIMEOUT => 180,
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_ENCODING => '',
             CURLOPT_HTTPHEADER => array(
                 'Accept: application/zip, application/octet-stream, */*',
                 'User-Agent: Enhancement-Updater'
             )
         ));
+        $this->applyCurlSslOptions($ch);
 
         $ok = curl_exec($ch);
         $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -1361,6 +1415,9 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 
         if (!$ok || $curlError !== '') {
             @unlink($targetFile);
+            if (stripos($curlError, 'SSL certificate') !== false || stripos($curlError, 'local issuer certificate') !== false) {
+                $curlError .= _t('。请确认服务器存在可读的 cacert.pem，或在 php.ini 配置 curl.cainfo / openssl.cafile。');
+            }
             $errorMessage = $curlError !== '' ? $curlError : _t('更新包下载失败');
             return false;
         }
@@ -1582,8 +1639,15 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $errorMessage = '';
         $remoteInfo = $this->fetchRemoteEnhancementInfo($errorMessage);
         if ($remoteInfo === false) {
-            Enhancement_SettingsHelper::clearPluginUpdateState();
-            $this->pluginUpdateResponse(false, _t('检查更新失败：%s', $errorMessage), 500);
+            $state = array(
+                'current_version' => (string)Enhancement_Plugin::getPluginVersion(),
+                'remote_version' => '',
+                'has_update' => false,
+                'error' => (string)$errorMessage,
+                'checked_at' => time()
+            );
+            Enhancement_SettingsHelper::savePluginUpdateState($state);
+            $this->pluginUpdateResponse(false, _t('检查更新失败：%s', $errorMessage), 500, array('update_state' => $state));
             return;
         }
 
@@ -1591,28 +1655,40 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $remoteVersion = isset($remoteInfo['version']) ? (string)$remoteInfo['version'] : '';
         $compare = version_compare($this->normalizeUpdateVersion($remoteVersion), $this->normalizeUpdateVersion($currentVersion));
         if ($compare > 0) {
-            Enhancement_SettingsHelper::savePluginUpdateState(array(
+            $state = array(
                 'current_version' => (string)$currentVersion,
                 'remote_version' => (string)$remoteVersion,
+                'has_update' => true,
+                'error' => '',
                 'zip_url' => isset($remoteInfo['zip_url']) ? (string)$remoteInfo['zip_url'] : $this->remoteEnhancementZipUrl(),
                 'source_url' => isset($remoteInfo['source_url']) ? (string)$remoteInfo['source_url'] : 'https://github.com/jkjoy/Enhancement',
                 'checked_at' => time()
-            ));
-            $this->pluginUpdateResponse(true, _t('发现新版本：当前 %s，远程 %s。已显示“在线升级”按钮。', $currentVersion, $remoteVersion), 200);
+            );
+            Enhancement_SettingsHelper::savePluginUpdateState($state);
+            $this->pluginUpdateResponse(true, _t('发现新版本：当前 %s，远程 %s。已显示“在线升级”按钮。', $currentVersion, $remoteVersion), 200, array('update_state' => $state));
             return;
         }
 
-        Enhancement_SettingsHelper::clearPluginUpdateState();
-        $this->pluginUpdateResponse(true, _t('当前已是最新版本：%s（远程仓库版本：%s）', $currentVersion, $remoteVersion), 200);
+        $state = array(
+            'current_version' => (string)$currentVersion,
+            'remote_version' => (string)$remoteVersion,
+            'has_update' => false,
+            'error' => '',
+            'zip_url' => isset($remoteInfo['zip_url']) ? (string)$remoteInfo['zip_url'] : $this->remoteEnhancementZipUrl(),
+            'source_url' => isset($remoteInfo['source_url']) ? (string)$remoteInfo['source_url'] : 'https://github.com/jkjoy/Enhancement',
+            'checked_at' => time()
+        );
+        Enhancement_SettingsHelper::savePluginUpdateState($state);
+        $this->pluginUpdateResponse(true, _t('当前已是最新版本：%s（远程仓库版本：%s）', $currentVersion, $remoteVersion), 200, array('update_state' => $state));
     }
 
     public function upgradePlugin()
     {
         $updateState = Enhancement_SettingsHelper::readPluginUpdateState();
         $stateVersion = isset($updateState['remote_version']) ? trim((string)$updateState['remote_version']) : '';
+        $stateHasUpdate = !empty($updateState['has_update']);
         $currentVersion = Enhancement_Plugin::getPluginVersion();
-        if ($stateVersion === '' || version_compare($this->normalizeUpdateVersion($stateVersion), $this->normalizeUpdateVersion($currentVersion)) <= 0) {
-            Enhancement_SettingsHelper::clearPluginUpdateState();
+        if (!$stateHasUpdate || $stateVersion === '' || version_compare($this->normalizeUpdateVersion($stateVersion), $this->normalizeUpdateVersion($currentVersion)) <= 0) {
             $this->pluginUpdateResponse(false, _t('请先检查更新，检测到新版本后才可以在线升级。'), 400);
             return;
         }

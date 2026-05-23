@@ -430,6 +430,69 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select{width:
         var showAll = false;
         var $searchInput = $search.find('input');
 
+        function escapeHtml(value) {
+            return $('<div></div>').text(value == null ? '' : String(value)).html();
+        }
+
+        function renderUpdateState(state, fallbackMessage) {
+            state = state || {};
+            var $box = $app.find('.enhancement-update-box').first();
+            if (!$box.length) {
+                return;
+            }
+
+            var remoteVersion = $.trim(state.remote_version || '');
+            var error = $.trim(state.error || '');
+            var hasUpdate = !!state.has_update;
+            var html = '';
+
+            if (error) {
+                html = '<p class="enhancement-action-note" style="margin:8px 0 0;color:#b42318;">上次检查失败：' + escapeHtml(error) + '</p>';
+            } else if (remoteVersion) {
+                html = '<p class="enhancement-action-note" style="margin:8px 0 0;">远程版本：<strong>' + escapeHtml(remoteVersion) + '</strong></p>';
+                html += '<p class="enhancement-action-note" style="margin:6px 0 0;color:' + (hasUpdate ? '#1a7f37' : '#64748b') + ';">'
+                    + (hasUpdate ? '检测结果：发现新版本，可在线升级。' : '检测结果：当前已是最新版本。')
+                    + '</p>';
+            } else {
+                html = '<p class="enhancement-action-note" style="margin:8px 0 0;">' + escapeHtml(fallbackMessage || '检查更新失败，请稍后重试。') + '</p>';
+            }
+
+            $box.find('.enhancement-update-status').html(html);
+            $box.find('.enhancement-update-upgrade').toggle(hasUpdate);
+        }
+
+        $app.on('click', '.enhancement-update-check', function (event) {
+            event.preventDefault();
+
+            var $button = $(this);
+            var url = $button.attr('href') || '';
+            if (!url || $button.data('loading')) {
+                return;
+            }
+
+            var originalText = $button.text();
+            $button.data('loading', '1').text('检查中...');
+            $.ajax({
+                url: url,
+                type: 'GET',
+                dataType: 'json',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            }).done(function (response) {
+                renderUpdateState(response && response.update_state ? response.update_state : {}, response && response.message ? response.message : '');
+            }).fail(function (xhr) {
+                var response = xhr && xhr.responseJSON ? xhr.responseJSON : null;
+                if (response && response.update_state) {
+                    renderUpdateState(response.update_state, response.message || '');
+                } else {
+                    renderUpdateState({ error: response && response.message ? response.message : '检查更新失败，请稍后重试。' });
+                }
+            }).always(function () {
+                $button.data('loading', '').text(originalText);
+            });
+        });
+
         function updateLayout() {
             var keyword = $.trim(($searchInput.val() || '').toLowerCase());
             var isSearching = keyword !== '';
@@ -681,24 +744,36 @@ HTML
         }
 
         $remoteVersion = isset($updateState['remote_version']) ? trim((string)$updateState['remote_version']) : '';
+        $checkedAt = isset($updateState['checked_at']) ? intval($updateState['checked_at']) : 0;
+        $checkError = isset($updateState['error']) ? trim((string)$updateState['error']) : '';
         $hasUpdate = $remoteVersion !== ''
             && $currentVersion !== _t('未知')
+            && !empty($updateState['has_update'])
             && version_compare(preg_replace('/^[vV]\s*/', '', $remoteVersion), preg_replace('/^[vV]\s*/', '', $currentVersion), '>');
-        $updateHint = $hasUpdate
-            ? '<p class="enhancement-action-note" style="margin:8px 0 0;color:#1a7f37;">' . _t('已检测到新版本：%s', '<strong>' . htmlspecialchars($remoteVersion, ENT_QUOTES, 'UTF-8') . '</strong>') . '</p>'
-            : '<p class="enhancement-action-note" style="margin:8px 0 0;">' . _t('点击“检查更新”后，如有新版本才会显示在线升级按钮。') . '</p>';
+        if ($checkError !== '') {
+            $updateHint = '<p class="enhancement-action-note" style="margin:8px 0 0;color:#b42318;">' . _t('上次检查失败：%s', htmlspecialchars($checkError, ENT_QUOTES, 'UTF-8')) . '</p>';
+        } elseif ($checkedAt > 0 && $remoteVersion !== '') {
+            $resultText = $hasUpdate
+                ? _t('检测结果：发现新版本，可在线升级。')
+                : _t('检测结果：当前已是最新版本。');
+            $resultColor = $hasUpdate ? '#1a7f37' : '#64748b';
+            $updateHint = '<p class="enhancement-action-note" style="margin:8px 0 0;">' . _t('远程版本：%s', '<strong>' . htmlspecialchars($remoteVersion, ENT_QUOTES, 'UTF-8') . '</strong>') . '</p>'
+                . '<p class="enhancement-action-note" style="margin:6px 0 0;color:' . $resultColor . ';">' . $resultText . '</p>';
+        } else {
+            $updateHint = '<p class="enhancement-action-note" style="margin:8px 0 0;">' . _t('点击“检查更新”后，会在这里显示远程版本和检测结果。') . '</p>';
+        }
         $upgradeButton = $hasUpdate
-            ? '<a class="btn enhancement-action-btn primary" href="' . htmlspecialchars($upgradeUrl, ENT_QUOTES, 'UTF-8') . '" onclick="return window.confirm(\'确定要从远程仓库下载并覆盖当前 Enhancement 插件目录吗？建议先备份插件文件。\');">' . _t('在线升级') . '</a>'
-            : '';
+            ? '<a class="btn enhancement-action-btn primary enhancement-update-upgrade" href="' . htmlspecialchars($upgradeUrl, ENT_QUOTES, 'UTF-8') . '" onclick="return window.confirm(\'确定要从远程仓库下载并覆盖当前 Enhancement 插件目录吗？建议先备份插件文件。\');">' . _t('在线升级') . '</a>'
+            : '<a class="btn enhancement-action-btn primary enhancement-update-upgrade" href="' . htmlspecialchars($upgradeUrl, ENT_QUOTES, 'UTF-8') . '" style="display:none;" onclick="return window.confirm(\'确定要从远程仓库下载并覆盖当前 Enhancement 插件目录吗？建议先备份插件文件。\');">' . _t('在线升级') . '</a>';
 
         echo '<div class="typecho-option">'
             . '<h3 class="enhancement-title">版本更新</h3>'
             . '<div class="enhancement-update-box">'
             . '<p style="margin:0;">' . _t('当前版本：%s', '<strong>' . htmlspecialchars($currentVersion, ENT_QUOTES, 'UTF-8') . '</strong>') . '</p>'
             . '<p class="enhancement-action-note" style="margin:8px 0 0;">' . _t('远程仓库：%s', '<code>github.com/jkjoy/Enhancement</code>') . '</p>'
-            . $updateHint
+            . '<div class="enhancement-update-status">' . $updateHint . '</div>'
             . '<div class="enhancement-backup-actions">'
-            . '<a class="btn enhancement-action-btn" href="' . htmlspecialchars($checkUrl, ENT_QUOTES, 'UTF-8') . '">' . _t('检查更新') . '</a>'
+            . '<a class="btn enhancement-action-btn enhancement-update-check" href="' . htmlspecialchars($checkUrl, ENT_QUOTES, 'UTF-8') . '">' . _t('检查更新') . '</a>'
             . $upgradeButton
             . '</div>'
             . '</div>'
