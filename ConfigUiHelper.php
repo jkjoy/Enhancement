@@ -148,38 +148,45 @@ class Enhancement_ConfigUiHelper
 
         echo str_replace('__ENHANCEMENT_PLUGIN_VERSION_JSON__', $pluginVersionJson, <<<'HTML'
 <style type="text/css">
-.enhancement-settings-app{margin-top:18px;background:#f6f8fc;border:1px solid #e5ebf5;border-radius:20px;overflow:hidden;box-shadow:0 12px 32px rgba(15,23,42,.06);}
-.enhancement-settings-header{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:22px 24px;background:#fff;border-bottom:1px solid #e8eef6;}
+.enhancement-settings-app{max-width:100%;margin-top:14px;background:transparent;border:0;border-radius:0;overflow:visible;box-shadow:none;box-sizing:border-box;}
+.enhancement-settings-header{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:0 0 12px;padding:0 0 12px;border-bottom:1px solid #e2e8f0;background:transparent;}
 .enhancement-settings-brand{min-width:0;}
-.enhancement-settings-brand h2{margin:0;font-size:18px;line-height:1.4;color:#0f172a;font-weight:700;}
-.enhancement-settings-brand p{margin:6px 0 0;font-size:13px;line-height:1.7;color:#64748b;}
+.enhancement-settings-brand h2{margin:0;font-size:18px;line-height:1.35;color:#0f172a;font-weight:700;}
+.enhancement-settings-brand p{margin:5px 0 0;font-size:13px;line-height:1.6;color:#64748b;}
 .enhancement-settings-version{color:#2563eb;font-weight:700;}
-.enhancement-settings-tools{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap;}
-.enhancement-settings-search{display:inline-flex;align-items:center;gap:8px;height:40px;min-width:260px;padding:0 12px;border:1px solid #d9e2ef;border-radius:12px;background:#f8fafc;box-sizing:border-box;}
+.enhancement-settings-tools{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;}
+.enhancement-settings-search{display:inline-flex;align-items:center;gap:8px;height:34px;min-width:240px;padding:0 10px;border:1px solid #cfd8e3;border-radius:6px;background:#fff;box-sizing:border-box;}
 .enhancement-settings-search:focus-within{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(59,130,246,.12);background:#fff;}
 .enhancement-settings-search-icon{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;color:#94a3b8;font-size:14px;line-height:1;}
 .enhancement-settings-search input{width:100%;border:0;background:transparent;outline:0;box-shadow:none;padding:0;color:#0f172a;font-size:13px;}
-.enhancement-settings-toolbar-btn{display:inline-flex;align-items:center;justify-content:center;height:40px;padding:0 14px;border-radius:12px;border:1px solid #d6dfef;background:#fff;color:#334155;cursor:pointer;box-sizing:border-box;font-size:13px;line-height:1;}
-.enhancement-settings-toolbar-btn:hover,.enhancement-settings-toolbar-btn:focus{background:#f8fafc;text-decoration:none;}
+.enhancement-settings-toolbar-btn{display:inline-flex;align-items:center;justify-content:center;height:34px;padding:0 12px;border-radius:6px;border:1px solid #cfd8e3;background:#fff;color:#334155;cursor:pointer;box-sizing:border-box;font-size:13px;line-height:1;transition:background .15s ease,color .15s ease,border-color .15s ease,box-shadow .15s ease;}
+.enhancement-settings-toolbar-btn:hover,.enhancement-settings-toolbar-btn:focus{background:#f8fafc;text-decoration:none;border-color:#b8c4d3;}
 .enhancement-settings-toolbar-btn.primary{background:#2563eb;border-color:#2563eb;color:#fff;}
-.enhancement-settings-toolbar-btn.primary:hover,.enhancement-settings-toolbar-btn.primary:focus{background:#1d4ed8;}
-.enhancement-settings-body{display:flex;align-items:stretch;min-height:760px;}
-.enhancement-settings-sidebar{width:240px;flex:0 0 240px;background:#f8fafc;border-right:1px solid #e8eef6;padding:18px;box-sizing:border-box;}
-.enhancement-settings-nav-title{margin:0 0 10px;padding:0 10px;font-size:12px;font-weight:700;letter-spacing:.08em;color:#94a3b8;text-transform:uppercase;}
-.enhancement-settings-nav{display:flex;flex-direction:column;gap:8px;}
-.enhancement-settings-nav-item{display:flex;align-items:center;gap:10px;width:100%;padding:11px 12px;border:1px solid transparent;border-radius:12px;background:transparent;color:#334155;cursor:pointer;text-align:left;box-sizing:border-box;transition:all .2s ease;}
-.enhancement-settings-nav-item:hover,.enhancement-settings-nav-item:focus{background:#eef4ff;border-color:#dbe7ff;color:#1d4ed8;}
-.enhancement-settings-nav-item.is-active{background:#2563eb;border-color:#2563eb;color:#fff;box-shadow:0 10px 24px rgba(37,99,235,.18);}
-.enhancement-settings-nav-dot{display:inline-block;width:8px;height:8px;border-radius:999px;background:currentColor;opacity:.85;flex:0 0 auto;}
-.enhancement-settings-nav-label{display:inline-block;min-width:0;font-size:14px;line-height:1.5;}
-.enhancement-settings-content-wrap{flex:1;min-width:0;padding:20px;box-sizing:border-box;}
+.enhancement-settings-toolbar-btn.primary:hover,.enhancement-settings-toolbar-btn.primary:focus{background:#1d4ed8;border-color:#1d4ed8;}
+.enhancement-settings-body{display:block;min-width:0;max-width:100%;min-height:0;}
+.enhancement-settings-tabs{position:sticky;top:0;z-index:20;max-width:100%;margin:0 0 14px;background:#f6f8fb;border-bottom:1px solid #d7dee8;padding:10px 0 0;box-sizing:border-box;}
+.enhancement-settings-tabs-row{display:flex;align-items:flex-end;gap:8px;max-width:100%;}
+.enhancement-settings-nav{display:flex;gap:6px;overflow-x:auto;padding:0 2px;scrollbar-width:none;}
+.enhancement-settings-nav::-webkit-scrollbar{display:none;}
+.enhancement-settings-nav-title,.enhancement-settings-nav-dot{display:none!important;}
+.enhancement-settings-nav-item{appearance:none;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;border:1px solid #cfd8e3;border-bottom:none;border-radius:8px 8px 0 0;background:#ecf1f7;color:#475569;padding:8px 13px;font-size:13px;line-height:1;white-space:nowrap;cursor:pointer;text-align:center;box-sizing:border-box;transition:background .15s ease,color .15s ease,border-color .15s ease,box-shadow .15s ease;}
+.enhancement-settings-nav-item:hover,.enhancement-settings-nav-item:focus{background:#e6edf6;text-decoration:none;outline:none;}
+.enhancement-settings-nav-item:focus-visible{box-shadow:0 0 0 3px rgba(59,130,246,.16);}
+.enhancement-settings-nav-item.is-active{background:#fff;color:#111827;border-color:#b8c4d3;box-shadow:0 -2px 0 #3b82f6 inset;}
+.enhancement-settings-nav-label{display:inline-block;min-width:0;font-size:13px;line-height:1;}
+.enhancement-settings-content-wrap{min-width:0;padding:0 0 72px;box-sizing:border-box;}
 form.enhancement-settings-form{margin:0;}
-form.enhancement-settings-form.enhancement-settings-form--enhanced .typecho-option-submit{display:none;}
+form.enhancement-settings-form.enhancement-settings-form--enhanced .typecho-option-submit{display:none!important;}
+.enhancement-settings-submit-bar{position:fixed!important;right:24px!important;bottom:24px!important;z-index:2147483000!important;display:flex!important;justify-content:flex-end!important;visibility:visible!important;opacity:1!important;pointer-events:none!important;}
+.enhancement-settings-submit-btn{appearance:none!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;width:auto!important;height:42px!important;min-width:104px!important;padding:0 18px!important;border:1px solid #2563eb!important;border-radius:8px!important;background:#2563eb!important;color:#fff!important;box-sizing:border-box!important;font-size:13px!important;font-weight:600!important;line-height:1!important;text-decoration:none!important;cursor:pointer!important;box-shadow:0 12px 28px rgba(37,99,235,.28)!important;pointer-events:auto!important;}
+.enhancement-settings-submit-btn:hover,.enhancement-settings-submit-btn:focus{background:#1d4ed8!important;border-color:#1d4ed8!important;box-shadow:0 14px 32px rgba(37,99,235,.34)!important;outline:none!important;}
+.enhancement-settings-tab-save-btn{display:none;appearance:none;border:1px solid #2563eb;border-bottom:none;border-radius:8px 8px 0 0;background:#2563eb;color:#fff;padding:8px 13px;font-size:13px;font-weight:600;line-height:1;white-space:nowrap;cursor:pointer;box-sizing:border-box;box-shadow:0 -2px 0 rgba(255,255,255,.2) inset;}
+.enhancement-settings-tab-save-btn:hover,.enhancement-settings-tab-save-btn:focus{background:#1d4ed8;border-color:#1d4ed8;outline:none;text-decoration:none;}
 .enhancement-settings-main{display:block;}
-.enhancement-settings-panel{display:none;background:#fff;border:1px solid #e7edf6;border-radius:18px;padding:24px 24px 8px;box-shadow:0 8px 24px rgba(15,23,42,.04);}
+.enhancement-settings-panel{display:none;background:transparent;border:0;border-radius:0;padding:0;box-shadow:none;}
 .enhancement-settings-panel.is-active{display:block;}
-.enhancement-settings-panel + .enhancement-settings-panel{margin-top:18px;}
-form.enhancement-settings-form.enhancement-settings-form--enhanced .typecho-option{margin:0 0 18px;padding:0 0 18px;border-bottom:1px solid #edf2f7;background:transparent;box-shadow:none;width:auto;}
+.enhancement-settings-panel + .enhancement-settings-panel{margin-top:14px;}
+form.enhancement-settings-form.enhancement-settings-form--enhanced .typecho-option{margin:0 0 16px;padding:0 0 16px;border-bottom:1px solid #edf2f7;background:transparent;box-shadow:none;width:auto;}
 form.enhancement-settings-form.enhancement-settings-form--enhanced .typecho-option:last-child{margin-bottom:0;padding-bottom:0;border-bottom:0;}
 form.enhancement-settings-form.enhancement-settings-form--enhanced .typecho-option li{list-style:none;}
 form.enhancement-settings-form.enhancement-settings-form--enhanced .typecho-label{display:block;margin:0 0 10px;color:#0f172a;font-weight:600;}
@@ -188,31 +195,37 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced input[type="t
 form.enhancement-settings-form.enhancement-settings-form--enhanced input[type="password"],
 form.enhancement-settings-form.enhancement-settings-form--enhanced textarea,
 form.enhancement-settings-form.enhancement-settings-form--enhanced select{width:100%;max-width:100%;box-sizing:border-box;}
-.enhancement-settings-app .enhancement-title{margin:0 0 10px;font-size:26px;line-height:1.25;font-weight:700;color:#0f172a;}
+.enhancement-settings-app table{width:100%;max-width:100%;box-sizing:border-box;}
+.enhancement-settings-app th,.enhancement-settings-app td,.enhancement-settings-app p,.enhancement-settings-app code{overflow-wrap:anywhere;word-break:break-word;}
+.enhancement-settings-app code{white-space:normal;}
+.enhancement-settings-app .enhancement-title{margin:0 0 8px;font-size:18px;line-height:1.35;font-weight:700;color:#0f172a;}
 .enhancement-settings-app .enhancement-title::before{content:none !important;display:none !important;}
-.enhancement-settings-app .enhancement-subtitle{margin:8px 0 10px;font-size:18px;line-height:1.35;font-weight:700;color:#1e293b;}
+.enhancement-settings-app .enhancement-subtitle{margin:8px 0 10px;font-size:16px;line-height:1.35;font-weight:700;color:#1e293b;}
 .enhancement-settings-app .enhancement-subtitle::before{content:none !important;display:none !important;}
-.enhancement-settings-app .enhancement-backup-box{margin-top:0;border-color:#dce6f5;border-radius:14px;background:#f8fbff;}
+.enhancement-settings-app .enhancement-backup-box{margin-top:0;border-color:#dce6f5;border-radius:8px;background:#f8fbff;}
 .enhancement-settings-app .enhancement-action-note{color:#64748b;}
-.enhancement-settings-empty{display:none;padding:40px 18px;text-align:center;font-size:14px;line-height:1.8;color:#64748b;background:#fff;border:1px dashed #d8e2f0;border-radius:16px;}
+.enhancement-settings-empty{display:none;padding:32px 16px;text-align:center;font-size:14px;line-height:1.8;color:#64748b;background:#fff;border:1px dashed #d8e2f0;border-radius:8px;}
 .enhancement-settings-app.is-searching .enhancement-settings-empty.is-visible{display:block;}
 @media (max-width: 1024px){
     .enhancement-settings-header{flex-direction:column;align-items:flex-start;}
     .enhancement-settings-tools{width:100%;justify-content:flex-start;}
     .enhancement-settings-search{min-width:0;width:100%;}
-    .enhancement-settings-body{flex-direction:column;min-height:0;}
-    .enhancement-settings-sidebar{width:auto;flex:0 0 auto;border-right:0;border-bottom:1px solid #e8eef6;}
-    .enhancement-settings-nav{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));}
 }
 @media (max-width: 640px){
-    .enhancement-settings-header{padding:18px;}
-    .enhancement-settings-content-wrap{padding:14px;}
-    .enhancement-settings-panel{padding:18px 16px 6px;}
-    .enhancement-settings-nav{grid-template-columns:1fr;}
+    .enhancement-settings-header{margin-bottom:10px;}
     .enhancement-settings-toolbar-btn{width:100%;}
+    .enhancement-settings-tabs{top:46px;z-index:60;padding-top:8px;}
+    .enhancement-settings-tabs-row{align-items:flex-end;}
+    .enhancement-settings-nav{flex:1 1 auto;min-width:0;}
+    .enhancement-settings-tab-save-btn{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;}
+    .enhancement-settings-submit-bar{left:12px!important;right:12px!important;bottom:12px!important;justify-content:stretch!important;}
+    .enhancement-settings-submit-btn{width:100%!important;height:42px!important;min-width:0!important;padding:0 16px!important;}
     .enhancement-settings-tools{align-items:stretch;}
 }
 </style>
+<div id="enhancement-settings-submit-bar" class="enhancement-settings-submit-bar">
+    <button type="button" class="enhancement-settings-submit-btn">保存设置</button>
+</div>
 <script>
 (function () {
     var booted = false;
@@ -259,22 +272,28 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select{width:
 
         var $app = $('<div class="enhancement-settings-app"></div>');
         var $header = $('<div class="enhancement-settings-header"></div>');
-        var $brand = $('<div class="enhancement-settings-brand"><h2>Enhancement <span class="enhancement-settings-version"></span></h2><p>按功能分组管理插件设置，支持搜索、分栏浏览和快捷保存。</p></div>');
+        var $brand = $('<div class="enhancement-settings-brand"><h2>Enhancement <span class="enhancement-settings-version"></span></h2><p>按功能分组管理插件设置，支持搜索、标签切换和快捷保存。</p></div>');
         var $tools = $('<div class="enhancement-settings-tools"></div>');
         var $search = $('<label class="enhancement-settings-search"><span class="enhancement-settings-search-icon" aria-hidden="true">⌕</span><input type="search" id="enhancement-settings-search-input" placeholder="搜索设置项"></label>');
-        var $saveBtn = $('<button type="button" class="enhancement-settings-toolbar-btn primary">保存设置</button>');
+        var $saveBar = $('#enhancement-settings-submit-bar');
+        if (!$saveBar.length) {
+            $saveBar = $('<div id="enhancement-settings-submit-bar" class="enhancement-settings-submit-bar"><button type="button" class="enhancement-settings-submit-btn">保存设置</button></div>');
+            $page.append($saveBar);
+        }
+        var $saveBtn = $saveBar.find('.enhancement-settings-submit-btn');
         var $toggleBtn = $('<button type="button" class="enhancement-settings-toolbar-btn">展开全部</button>');
         var $body = $('<div class="enhancement-settings-body"></div>');
-        var $sidebar = $('<aside class="enhancement-settings-sidebar"><p class="enhancement-settings-nav-title">功能分组</p><div class="enhancement-settings-nav"></div></aside>');
-        var $nav = $sidebar.find('.enhancement-settings-nav');
+        var $tabs = $('<div class="enhancement-settings-tabs"><div class="enhancement-settings-tabs-row"><div class="enhancement-settings-nav" role="tablist" aria-label="插件设置分组"></div><button type="button" class="enhancement-settings-tab-save-btn">保存</button></div></div>');
+        var $nav = $tabs.find('.enhancement-settings-nav');
+        var $tabSaveBtn = $tabs.find('.enhancement-settings-tab-save-btn');
         var $contentWrap = $('<div class="enhancement-settings-content-wrap"></div>');
         var $main = $('<div class="enhancement-settings-main"></div>');
         var $empty = $('<div class="enhancement-settings-empty">没有找到匹配的设置项，请换个关键词试试。</div>');
 
         $brand.find('.enhancement-settings-version').text('v' + pluginVersion);
-        $tools.append($search).append($saveBtn).append($toggleBtn);
+        $tools.append($search).append($toggleBtn);
         $header.append($brand).append($tools);
-        $body.append($sidebar).append($contentWrap);
+        $body.append($tabs).append($contentWrap);
         $app.append($header).append($body);
         $page.append($app);
 
@@ -287,12 +306,53 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select{width:
         }
 
         var sections = [];
+        function compactSectionTitle(title) {
+            var value = $.trim(title || '').replace(/\s+/g, '');
+            if (!value) {
+                return '其他';
+            }
+            if (value.indexOf('备份') >= 0) {
+                return '备份';
+            }
+            if (value.indexOf('友链') >= 0) {
+                return '友链';
+            }
+            if (value.indexOf('瞬间') >= 0) {
+                return '瞬间';
+            }
+            if (value.indexOf('功能') >= 0 || value.indexOf('开关') >= 0) {
+                return '开关';
+            }
+            if (value.indexOf('安全') >= 0 || value.indexOf('Turnstile') >= 0) {
+                return '安全';
+            }
+            if (value.indexOf('AI') >= 0 || value.indexOf('摘要') >= 0) {
+                return 'AI';
+            }
+            if (value.indexOf('QQ') >= 0) {
+                return 'QQ';
+            }
+            if (value.indexOf('邮件') >= 0 || value.indexOf('SMTP') >= 0) {
+                return '邮件';
+            }
+            if (value.indexOf('附件') >= 0 || value.indexOf('上传') >= 0 || value.indexOf('S3') >= 0) {
+                return '上传';
+            }
+            if (value.indexOf('维护') >= 0) {
+                return '维护';
+            }
+            if (value.length <= 2) {
+                return value;
+            }
+            return value.slice(0, 2);
+        }
+
         function pushSection(title, nodes) {
             if (!nodes || !nodes.length) {
                 return;
             }
             sections.push({
-                title: title || '未分类',
+                title: compactSectionTitle(title),
                 nodes: nodes
             });
         }
@@ -302,7 +362,7 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select{width:
         }
 
         if ($backupBlocks.length) {
-            pushSection('备份插件数据', $.makeArray($backupBlocks));
+            pushSection('备份', $.makeArray($backupBlocks));
         }
 
         var currentTitle = '';
@@ -330,12 +390,15 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select{width:
         var panels = [];
         $.each(sections, function (index, section) {
             var sectionId = 'enhancement-settings-section-' + index;
-            var $navItem = $('<button type="button" class="enhancement-settings-nav-item"></button>').attr('data-section', sectionId);
-            $navItem.append('<span class="enhancement-settings-nav-dot" aria-hidden="true"></span>');
+            var $navItem = $('<button type="button" class="enhancement-settings-nav-item" role="tab" aria-selected="false"></button>')
+                .attr('data-section', sectionId)
+                .attr('aria-controls', sectionId);
             $navItem.append($('<span class="enhancement-settings-nav-label"></span>').text(section.title));
             $nav.append($navItem);
 
-            var $panel = $('<section class="enhancement-settings-panel"></section>').attr('data-section', sectionId);
+            var $panel = $('<section class="enhancement-settings-panel" role="tabpanel"></section>')
+                .attr('data-section', sectionId)
+                .attr('id', sectionId);
             $.each(section.nodes, function (_, node) {
                 $panel.append(node);
             });
@@ -376,8 +439,10 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select{width:
 
                 var shouldShow = isSearching ? hasMatch : (showAll || item.id === currentSectionId);
                 item.panel.toggle(shouldShow);
+                item.panel.prop('hidden', !shouldShow);
                 item.panel.toggleClass('is-active', !isSearching && item.id === currentSectionId);
                 item.nav.toggleClass('is-active', !isSearching && item.id === currentSectionId);
+                item.nav.attr('aria-selected', (!isSearching && item.id === currentSectionId) ? 'true' : 'false');
 
                 if (shouldShow) {
                     visibleCount++;
@@ -411,11 +476,25 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select{width:
             updateLayout();
         });
 
-        $saveBtn.on('click', function () {
-            var $submitTarget = $submit.find('input[type="submit"], button[type="submit"]').first();
-            if ($submitTarget.length) {
-                $submitTarget.trigger('click');
+        function saveSettings() {
+            var formNode = $configForm.get(0);
+            var submitNode = $submit.find('input[type="submit"], button[type="submit"]').filter(':enabled').first().get(0);
+            if (submitNode && submitNode.click) {
+                submitNode.click();
+                return;
             }
+            if (formNode && formNode.requestSubmit) {
+                formNode.requestSubmit();
+                return;
+            }
+            if (formNode && formNode.submit) {
+                formNode.submit();
+            }
+        }
+
+        $saveBtn.on('click', saveSettings);
+        $tabSaveBtn.on('click', function () {
+            saveSettings();
         });
 
         $toggleBtn.on('click', function () {
