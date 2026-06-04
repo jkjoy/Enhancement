@@ -36,7 +36,9 @@ class Enhancement_LifecycleHelper
         Typecho_Plugin::factory('Widget_Archive')->header = Enhancement_Plugin::callback('archiveHeader');
         Typecho_Plugin::factory('Widget_Archive')->footer = Enhancement_Plugin::callback('turnstileFooter');
         Typecho_Plugin::factory('Widget_Archive')->callEnhancement = Enhancement_Plugin::callback('output_str');
-        Enhancement_S3Helper::registerHooks();
+        if (Enhancement_S3Helper::enabled()) {
+            Enhancement_S3Helper::registerHooks();
+        }
 
         return _t($info);
     }
