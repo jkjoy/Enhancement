@@ -75,6 +75,11 @@ class Enhancement_CommentNotifierHelper
                 $recipients[] = self::getAuthor($edit);
             }
 
+            $adminRecipient = self::getAdminRecipient($plugin);
+            if (!empty($adminRecipient)) {
+                self::sendMail($edit, array($adminRecipient), 0);
+            }
+
             if (empty($recipients) || empty($recipients[0]['mail'])) {
                 return;
             }
@@ -117,6 +122,11 @@ class Enhancement_CommentNotifierHelper
                 }
             }
 
+            $adminRecipient = self::getAdminRecipient($plugin);
+            if (!empty($adminRecipient)) {
+                self::sendMail($comment, array($adminRecipient), 0);
+            }
+
             self::sendMail($comment, $recipients, $type);
         } else {
             if (!empty($from)) {
@@ -124,6 +134,24 @@ class Enhancement_CommentNotifierHelper
                 self::sendMail($comment, $recipients, 2);
             }
         }
+    }
+
+    private static function getAdminRecipient($plugin): array
+    {
+        if (isset($plugin->zznotice) && $plugin->zznotice == 1) {
+            return array();
+        }
+
+        $mail = isset($plugin->adminfrom) ? trim((string)$plugin->adminfrom) : '';
+        if ($mail === '') {
+            return array();
+        }
+
+        $name = isset($plugin->fromName) ? trim((string)$plugin->fromName) : '';
+        return array(
+            'name' => $name !== '' ? $name : $mail,
+            'mail' => $mail
+        );
     }
 
     private static function sendMail($comment, array $recipients, $type)
@@ -137,12 +165,13 @@ class Enhancement_CommentNotifierHelper
             return;
         }
 
+        $title = html_entity_decode($comment->title, ENT_QUOTES | ENT_HTML5, 'UTF-8');
         if ($type == 1) {
-            $subject = '你在[' . $comment->title . ']的评论有了新的回复';
+            $subject = '你在[' . $title . ']的评论有了新的回复';
         } elseif ($type == 2) {
-            $subject = '文章《' . $comment->title . '》有条待审评论';
+            $subject = '文章《' . $title . '》有条待审评论';
         } else {
-            $subject = '你的《' . $comment->title . '》文章有了新的评论';
+            $subject = '你的《' . $title . '》文章有了新的评论';
         }
 
         $options = Typecho_Widget::widget('Widget_Options');
@@ -165,10 +194,6 @@ class Enhancement_CommentNotifierHelper
     {
         $plugin = self::settings();
         if (!self::notifierEnabled($plugin)) {
-            return;
-        }
-
-        if (isset($plugin->zznotice) && $plugin->zznotice == 1 && $param['to'] == $plugin->adminfrom) {
             return;
         }
 

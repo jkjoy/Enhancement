@@ -5,7 +5,7 @@
  * 具体功能包含:插件/主题zip上传,友情链接,瞬间,网站地图,编辑器增强,站外链接跳转,评论邮件通知,QQ通知,常见视频链接 音乐链接 解析,AI摘要生成等
  * @package Enhancement
  * @author 老孙博客
- * @version 1.3.1
+ * @version 1.3.2
  * @link HTTPS://www.IMSUN.ORG
  * @dependence 14.10.10-*
  */

@@ -566,7 +566,7 @@ class Enhancement_ConfigFormHelper
             array('0' => _t('通知'), '1' => _t('不通知')),
             '0',
             _t('是否通知站长'),
-            _t('避免重复通知站长邮箱')
+            _t('开启“通知”后，新评论和待审评论会发送到站长收件邮箱')
         );
         $form->addInput($zznotice);
 
