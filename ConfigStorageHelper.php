@@ -90,7 +90,7 @@ class Enhancement_ConfigStorageHelper
         Enhancement_SettingsHelper::syncOptionCache($optionName, $storedValue, 'Enhancement');
         if (Enhancement_S3Helper::enabled()) {
             Enhancement_S3Helper::registerHooks();
-        } else {
+        } elseif (!$isInit) {
             Enhancement_S3Helper::unregisterHooks();
         }
     }

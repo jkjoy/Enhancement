@@ -169,8 +169,9 @@ class Enhancement_ConfigUiHelper
 .enhancement-settings-body{display:block;min-width:0;max-width:100%;min-height:0;}
 .enhancement-settings-tabs{position:sticky;top:0;z-index:20;max-width:100%;margin:0 0 14px;background:#f6f8fb;border-bottom:1px solid #d7dee8;padding:10px 0 0;box-sizing:border-box;}
 .enhancement-settings-tabs-row{display:flex;align-items:flex-end;gap:8px;max-width:100%;}
-.enhancement-settings-nav{display:flex;gap:6px;overflow-x:auto;padding:0 2px;scrollbar-width:none;}
+.enhancement-settings-nav{display:flex;gap:6px;overflow-x:auto;padding:0 2px;scrollbar-width:none;-webkit-overflow-scrolling:touch;cursor:grab;user-select:none;}
 .enhancement-settings-nav::-webkit-scrollbar{display:none;}
+.enhancement-settings-nav.is-dragging{cursor:grabbing;}
 .enhancement-settings-nav-title,.enhancement-settings-nav-dot{display:none!important;}
 .enhancement-settings-nav-item{appearance:none;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;border:1px solid #cfd8e3;border-bottom:none;border-radius:8px 8px 0 0;background:#ecf1f7;color:#475569;padding:8px 13px;font-size:13px;line-height:1;white-space:nowrap;cursor:pointer;text-align:center;box-sizing:border-box;transition:background .15s ease,color .15s ease,border-color .15s ease,box-shadow .15s ease;}
 .enhancement-settings-nav-item:hover,.enhancement-settings-nav-item:focus{background:#e6edf6;text-decoration:none;outline:none;}
@@ -285,7 +286,7 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select{width:
         var $search = $('<label class="enhancement-settings-search"><span class="enhancement-settings-search-icon" aria-hidden="true">⌕</span><input type="search" id="enhancement-settings-search-input" placeholder="搜索设置项"></label>');
         var $toggleBtn = $('<button type="button" class="enhancement-settings-toolbar-btn">展开全部</button>');
         var $body = $('<div class="enhancement-settings-body"></div>');
-        var $tabs = $('<div class="enhancement-settings-tabs"><div class="enhancement-settings-tabs-row"><div class="enhancement-settings-nav" role="tablist" aria-label="插件设置分组"></div></div></div>');
+        var $tabs = $('<div class="enhancement-settings-tabs"><div class="enhancement-settings-tabs-row"><div class="enhancement-settings-nav" role="tablist" aria-label="插件设置分组" data-enhancement-drag-scroll></div></div></div>');
         var $nav = $tabs.find('.enhancement-settings-nav');
         var $contentWrap = $('<div class="enhancement-settings-content-wrap"></div>');
         var $main = $('<div class="enhancement-settings-main"></div>');
@@ -318,6 +319,73 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select{width:
         }
 
         var sections = [];
+
+        function enableDragScroll(scroller) {
+            if (!scroller || scroller.__enhancementDragScrollReady) {
+                return;
+            }
+            scroller.__enhancementDragScrollReady = true;
+
+            var dragging = false;
+            var moved = false;
+            var startX = 0;
+            var startLeft = 0;
+
+            scroller.addEventListener('pointerdown', function (event) {
+                if (event.button !== 0 || scroller.scrollWidth <= scroller.clientWidth) {
+                    return;
+                }
+                dragging = true;
+                moved = false;
+                startX = event.clientX;
+                startLeft = scroller.scrollLeft;
+                scroller.classList.add('is-dragging');
+                if (scroller.setPointerCapture) {
+                    scroller.setPointerCapture(event.pointerId);
+                }
+            });
+
+            scroller.addEventListener('pointermove', function (event) {
+                if (!dragging) {
+                    return;
+                }
+                var delta = event.clientX - startX;
+                if (Math.abs(delta) > 3) {
+                    moved = true;
+                    event.preventDefault();
+                }
+                scroller.scrollLeft = startLeft - delta;
+            });
+
+            function stopDrag(event) {
+                if (!dragging) {
+                    return;
+                }
+                dragging = false;
+                scroller.classList.remove('is-dragging');
+                if (scroller.releasePointerCapture && event && event.pointerId) {
+                    try {
+                        scroller.releasePointerCapture(event.pointerId);
+                    } catch (e) {}
+                }
+                window.setTimeout(function () {
+                    moved = false;
+                }, 0);
+            }
+
+            scroller.addEventListener('pointerup', stopDrag);
+            scroller.addEventListener('pointercancel', stopDrag);
+            scroller.addEventListener('mouseleave', stopDrag);
+            scroller.addEventListener('click', function (event) {
+                if (moved) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                }
+            }, true);
+        }
+
+        enableDragScroll($nav.get(0));
+
         function compactSectionTitle(title) {
             var value = $.trim(title || '').replace(/\s+/g, '');
             if (!value) {

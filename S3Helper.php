@@ -52,7 +52,11 @@ class Enhancement_S3Helper
             return;
         }
 
-        $plugins = Typecho_Plugin::export();
+        $plugins = self::exportPluginHandles();
+        if (!is_array($plugins)) {
+            return;
+        }
+
         $callbacks = array(
             array(__CLASS__, 'uploadHandle'),
             array(__CLASS__, 'modifyHandle'),
@@ -87,7 +91,7 @@ class Enhancement_S3Helper
             }
         }
 
-        Typecho_Plugin::init($plugins);
+        self::initPluginHandles($plugins);
         self::persistPluginHandles($plugins);
     }
 
@@ -168,14 +172,59 @@ class Enhancement_S3Helper
         }
     }
 
+    private static function exportPluginHandles()
+    {
+        if (!class_exists('Typecho_Plugin') || !method_exists('Typecho_Plugin', 'export')) {
+            return null;
+        }
+
+        try {
+            $plugins = Typecho_Plugin::export();
+        } catch (Exception $e) {
+            return null;
+        }
+
+        if (!is_array($plugins)) {
+            return null;
+        }
+
+        if (!isset($plugins['activated']) || !is_array($plugins['activated'])) {
+            $plugins['activated'] = array();
+        }
+        if (!isset($plugins['handles']) || !is_array($plugins['handles'])) {
+            $plugins['handles'] = array();
+        }
+
+        return $plugins;
+    }
+
+    private static function initPluginHandles(array $plugins)
+    {
+        if (!class_exists('Typecho_Plugin') || !method_exists('Typecho_Plugin', 'init')) {
+            return;
+        }
+
+        try {
+            Typecho_Plugin::init($plugins);
+        } catch (Exception $e) {
+            // Keep the persisted plugin table untouched if runtime re-init fails.
+        }
+    }
+
     private static function persistPluginHandles(array $plugins)
     {
+        $value = json_encode($plugins);
+        if (!is_string($value) || $value === '') {
+            return;
+        }
+
         try {
             $db = Typecho_Db::get();
             $db->query(
                 $db->update('table.options')
-                    ->rows(array('value' => json_encode($plugins)))
+                    ->rows(array('value' => $value))
                     ->where('name = ?', 'plugins')
+                    ->where('user = ?', 0)
             );
         } catch (Exception $e) {
             // Ignore persistence errors; the in-memory handles are already cleaned for this request.
@@ -188,7 +237,11 @@ class Enhancement_S3Helper
             return;
         }
 
-        $plugins = Typecho_Plugin::export();
+        $plugins = self::exportPluginHandles();
+        if (!is_array($plugins)) {
+            return;
+        }
+
         if (!isset($plugins['activated']['Enhancement']) || !is_array($plugins['activated']['Enhancement'])) {
             $plugins['activated']['Enhancement'] = array();
         }
@@ -224,7 +277,7 @@ class Enhancement_S3Helper
             }
         }
 
-        Typecho_Plugin::init($plugins);
+        self::initPluginHandles($plugins);
         self::persistPluginHandles($plugins);
     }
 
