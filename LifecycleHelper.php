@@ -4,6 +4,7 @@ class Enhancement_LifecycleHelper
 {
     public static function activate($commentNotifierPanel)
     {
+        self::repairCorePluginsOption();
         Enhancement_SettingsHelper::ensurePluginConfigOptionExists();
         self::ensurePanelFiles($commentNotifierPanel);
 
@@ -41,6 +42,109 @@ class Enhancement_LifecycleHelper
         }
 
         return _t($info);
+    }
+
+    private static function repairCorePluginsOption()
+    {
+        $defaultPlugins = array(
+            'activated' => array(),
+            'handles' => array()
+        );
+
+        try {
+            $db = Typecho_Db::get();
+            $rows = $db->fetchAll(
+                $db->select('user', 'value')
+                    ->from('table.options')
+                    ->where('name = ?', 'plugins')
+            );
+
+            if (!is_array($rows) || empty($rows)) {
+                $db->query(
+                    $db->insert('table.options')->rows(array(
+                        'name' => 'plugins',
+                        'user' => 0,
+                        'value' => self::encodeCorePluginsOption($defaultPlugins)
+                    ))
+                );
+                return;
+            }
+
+            $hasGlobalRow = false;
+            foreach ($rows as $row) {
+                $userId = isset($row['user']) ? intval($row['user']) : 0;
+                $plugins = self::decodeCorePluginsOption(isset($row['value']) ? (string)$row['value'] : '');
+
+                if (!is_array($plugins)) {
+                    $plugins = $defaultPlugins;
+                }
+
+                if (!isset($plugins['activated']) || !is_array($plugins['activated'])) {
+                    $plugins['activated'] = array();
+                }
+
+                if (!isset($plugins['handles']) || !is_array($plugins['handles'])) {
+                    $plugins['handles'] = array();
+                }
+
+                if ($userId === 0) {
+                    $hasGlobalRow = true;
+                }
+
+                $encoded = self::encodeCorePluginsOption($plugins);
+                if (!isset($row['value']) || (string)$row['value'] !== $encoded) {
+                    $db->query(
+                        $db->update('table.options')
+                            ->rows(array('value' => $encoded))
+                            ->where('name = ?', 'plugins')
+                            ->where('user = ?', $userId)
+                    );
+                }
+            }
+
+            if (!$hasGlobalRow) {
+                $db->query(
+                    $db->insert('table.options')->rows(array(
+                        'name' => 'plugins',
+                        'user' => 0,
+                        'value' => self::encodeCorePluginsOption($defaultPlugins)
+                    ))
+                );
+            }
+        } catch (Exception $e) {
+            // Typecho itself will report plugin option errors if repair is not possible.
+        }
+    }
+
+    private static function decodeCorePluginsOption($value)
+    {
+        $value = trim((string)$value);
+        if ($value === '') {
+            return null;
+        }
+
+        $decoded = json_decode($value, true);
+        if (is_array($decoded)) {
+            return $decoded;
+        }
+
+        $unserialized = @unserialize($value);
+        if (is_array($unserialized)) {
+            return $unserialized;
+        }
+
+        return null;
+    }
+
+    private static function encodeCorePluginsOption(array $plugins)
+    {
+        if (class_exists('\\Typecho\\Plugin', false)) {
+            $encoded = json_encode($plugins);
+            return is_string($encoded) && $encoded !== '' ? $encoded : '{"activated":[],"handles":[]}';
+        }
+
+        $encoded = @serialize($plugins);
+        return is_string($encoded) && $encoded !== '' ? $encoded : 'a:2:{s:9:"activated";a:0:{}s:7:"handles";a:0:{}}';
     }
 
     private static function ensurePanelFiles($commentNotifierPanel)
