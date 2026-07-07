@@ -80,15 +80,20 @@ if (empty($enhancementTabs)) {
 
         var dragging = false;
         var moved = false;
+        var suppressClick = false;
         var startX = 0;
         var startLeft = 0;
 
         scroller.addEventListener('pointerdown', function (event) {
+            if (event.pointerType && event.pointerType !== 'mouse') {
+                return;
+            }
             if (event.button !== 0 || scroller.scrollWidth <= scroller.clientWidth) {
                 return;
             }
             dragging = true;
             moved = false;
+            suppressClick = false;
             startX = event.clientX;
             startLeft = scroller.scrollLeft;
             scroller.classList.add('is-dragging');
@@ -102,11 +107,11 @@ if (empty($enhancementTabs)) {
                 return;
             }
             var delta = event.clientX - startX;
-            if (Math.abs(delta) > 3) {
+            if (Math.abs(delta) > 6) {
                 moved = true;
                 event.preventDefault();
+                scroller.scrollLeft = startLeft - delta;
             }
-            scroller.scrollLeft = startLeft - delta;
         });
 
         function stopDrag(event) {
@@ -114,6 +119,7 @@ if (empty($enhancementTabs)) {
                 return;
             }
             dragging = false;
+            suppressClick = moved;
             scroller.classList.remove('is-dragging');
             if (scroller.releasePointerCapture && event && event.pointerId) {
                 try {
@@ -122,6 +128,7 @@ if (empty($enhancementTabs)) {
             }
             window.setTimeout(function () {
                 moved = false;
+                suppressClick = false;
             }, 0);
         }
 
@@ -129,7 +136,7 @@ if (empty($enhancementTabs)) {
         scroller.addEventListener('pointercancel', stopDrag);
         scroller.addEventListener('mouseleave', stopDrag);
         scroller.addEventListener('click', function (event) {
-            if (moved) {
+            if (suppressClick) {
                 event.preventDefault();
                 event.stopPropagation();
             }
