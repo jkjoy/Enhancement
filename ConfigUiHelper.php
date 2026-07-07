@@ -169,8 +169,11 @@ class Enhancement_ConfigUiHelper
 .enhancement-settings-body{display:block;min-width:0;max-width:100%;min-height:0;}
 .enhancement-settings-tabs{position:sticky;top:0;z-index:20;max-width:100%;margin:0 0 14px;background:#f6f8fb;border-bottom:1px solid #d7dee8;padding:10px 0 0;box-sizing:border-box;}
 .enhancement-settings-tabs-row{display:flex;align-items:flex-end;gap:8px;max-width:100%;}
-.enhancement-settings-nav{display:flex;gap:6px;overflow-x:auto;padding:0 2px;scrollbar-width:none;-webkit-overflow-scrolling:touch;touch-action:pan-x;}
-.enhancement-settings-nav::-webkit-scrollbar{display:none;}
+.enhancement-settings-nav{display:flex;gap:6px;overflow-x:scroll;padding:0 2px 8px;scrollbar-width:thin;scrollbar-color:#94a3b8 #e2e8f0;-webkit-overflow-scrolling:touch;touch-action:pan-x;}
+.enhancement-settings-nav::-webkit-scrollbar{height:8px;}
+.enhancement-settings-nav::-webkit-scrollbar-track{background:#e2e8f0;border-radius:999px;}
+.enhancement-settings-nav::-webkit-scrollbar-thumb{background:#94a3b8;border-radius:999px;}
+.enhancement-settings-nav::-webkit-scrollbar-thumb:hover{background:#64748b;}
 .enhancement-settings-nav-title,.enhancement-settings-nav-dot{display:none!important;}
 .enhancement-settings-nav-item{appearance:none;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;border:1px solid #cfd8e3;border-bottom:none;border-radius:8px 8px 0 0;background:#ecf1f7;color:#475569;padding:8px 13px;font-size:13px;line-height:1;white-space:nowrap;cursor:pointer;text-align:center;box-sizing:border-box;transition:background .15s ease,color .15s ease,border-color .15s ease,box-shadow .15s ease;}
 .enhancement-settings-nav-item:hover,.enhancement-settings-nav-item:focus{background:#e6edf6;text-decoration:none;outline:none;}

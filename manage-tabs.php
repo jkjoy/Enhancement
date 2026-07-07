@@ -28,14 +28,27 @@ if (empty($enhancementTabs)) {
         display:flex;
         flex-wrap:nowrap;
         gap:6px;
-        overflow-x:auto;
+        overflow-x:scroll;
         overflow-y:hidden;
+        padding-bottom:8px;
         -webkit-overflow-scrolling:touch;
-        scrollbar-width:none;
+        scrollbar-width:thin;
+        scrollbar-color:#94a3b8 #e2e8f0;
         touch-action:pan-x;
     }
     .enhancement-manage-tabs::-webkit-scrollbar{
-        display:none;
+        height:8px;
+    }
+    .enhancement-manage-tabs::-webkit-scrollbar-track{
+        background:#e2e8f0;
+        border-radius:999px;
+    }
+    .enhancement-manage-tabs::-webkit-scrollbar-thumb{
+        background:#94a3b8;
+        border-radius:999px;
+    }
+    .enhancement-manage-tabs::-webkit-scrollbar-thumb:hover{
+        background:#64748b;
     }
     .enhancement-manage-tabs li{
         float:none!important;
