@@ -587,6 +587,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             throw new Typecho_Widget_Exception(_t('没有可保存的配置项'));
         }
 
+        Enhancement_CommentGuardHelper::validateSettings($settings);
         $storedValue = $this->encodeStoredPluginSettingsValue($settings);
 
         $row = $this->db->fetchRow(
@@ -613,6 +614,9 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
                 ))
             );
         }
+
+        Enhancement_SettingsHelper::syncOptionCache('plugin:Enhancement', $storedValue, 'Enhancement');
+        Enhancement_RestApiHelper::syncRoutes((object)$settings);
     }
 
     private function settingsBackupNamePrefix()

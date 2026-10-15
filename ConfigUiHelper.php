@@ -344,6 +344,12 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select{width:
             if (value.indexOf('瞬间') >= 0) {
                 return '瞬间';
             }
+            if (value.indexOf('REST') >= 0) {
+                return 'API';
+            }
+            if (value.indexOf('评论防御') >= 0) {
+                return '防御';
+            }
             if (value.indexOf('功能') >= 0 || value.indexOf('开关') >= 0) {
                 return '开关';
             }

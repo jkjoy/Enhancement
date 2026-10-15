@@ -55,6 +55,7 @@ class Enhancement_ConfigStorageHelper
         $current = self::normalizeSettingsForStorage($current);
 
         $merged = array_merge($current, $incoming);
+        Enhancement_CommentGuardHelper::validateSettings($merged);
         $storedValue = Enhancement_SettingsHelper::encodePluginConfigValue($merged);
 
         try {
@@ -88,6 +89,7 @@ class Enhancement_ConfigStorageHelper
         }
 
         Enhancement_SettingsHelper::syncOptionCache($optionName, $storedValue, 'Enhancement');
+        Enhancement_RestApiHelper::syncRoutes((object)$merged);
         if (Enhancement_S3Helper::enabled()) {
             Enhancement_S3Helper::registerHooks();
         } elseif (!$isInit) {

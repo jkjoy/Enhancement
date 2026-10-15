@@ -185,6 +185,45 @@ class Enhancement_ConfigFormHelper
         );
         $form->addInput($avatarMirrorUrl->addRule('maxLength', _t('地址最多200个字符'), 200));
 
+        $enableRestApi = new Typecho_Widget_Helper_Form_Element_Radio(
+            'enable_rest_api',
+            array('1' => _t('启用'), '0' => _t('禁用')),
+            '0',
+            _t('<h3 class="enhancement-title">REST API 设置</h3><hr/>启用 REST API'),
+            _t('提供兼容 WordPress 的 /wp-json/wp/v2 接口，支持文章、页面、分类、标签、友链、评论与用户。默认关闭，保存后生效；请勿与独立 RestAPI 插件同时启用。')
+        );
+        $form->addInput($enableRestApi);
+
+        $restApiTitle = new Typecho_Widget_Helper_Form_Element_Text(
+            'rest_api_site_title', null, '', _t('API 网站标题'),
+            _t('仅用于 REST API 返回值，留空使用站点标题')
+        );
+        $form->addInput($restApiTitle);
+
+        $restApiDescription = new Typecho_Widget_Helper_Form_Element_Textarea(
+            'rest_api_site_description', null, '', _t('API 网站描述'),
+            _t('仅用于 REST API 返回值，留空使用站点描述')
+        );
+        $form->addInput($restApiDescription);
+
+        $restApiHead = new Typecho_Widget_Helper_Form_Element_Textarea(
+            'rest_api_head_html', null, '', _t('API 头部 HTML'),
+            _t('通过 settings 接口的 head_html 字段返回，供客户端使用')
+        );
+        $form->addInput($restApiHead);
+
+        $restApiFooter = new Typecho_Widget_Helper_Form_Element_Textarea(
+            'rest_api_site_footer_text', null, '', _t('API 页脚文本'),
+            _t('通过 settings 接口的 site_footer_text 字段返回')
+        );
+        $form->addInput($restApiFooter);
+
+        $restApiIcp = new Typecho_Widget_Helper_Form_Element_Text(
+            'rest_api_site_icp', null, '', _t('API 备案号'),
+            _t('通过 settings 接口的 site_icp 字段返回')
+        );
+        $form->addInput($restApiIcp);
+
         $enableTurnstile = new Typecho_Widget_Helper_Form_Element_Radio(
             'enable_turnstile',
             array('1' => _t('启用'), '0' => _t('禁用')),
@@ -221,6 +260,90 @@ class Enhancement_ConfigFormHelper
         );
         $turnstileSecretKey->input->setAttribute('autocomplete', 'off');
         $form->addInput($turnstileSecretKey->addRule('maxLength', _t('Secret Key 最多200个字符'), 200));
+
+        $enableCommentGuard = new Typecho_Widget_Helper_Form_Element_Radio(
+            'enable_comment_guard',
+            array('1' => _t('启用'), '0' => _t('禁用')),
+            '0',
+            _t('<h3 class="enhancement-title">评论防御</h3><hr/>启用评论防御'),
+            _t('统一检查普通评论与 REST API 评论，适用于游客和登录用户。默认关闭；命中规则直接拒绝，超频时提示稍后重试。')
+        );
+        $form->addInput($enableCommentGuard);
+
+        $commentGuardXss = new Typecho_Widget_Helper_Form_Element_Radio(
+            'comment_guard_block_xss', array('1' => _t('启用'), '0' => _t('禁用')), '1',
+            _t('拦截 XSS 特征'), _t('拒绝危险 HTML 标签、事件属性和可执行链接协议，识别常见实体与编码混淆；保留 Typecho 原有的输出过滤。')
+        );
+        $form->addInput($commentGuardXss);
+
+        $commentGuardHtml = new Typecho_Widget_Helper_Form_Element_Radio(
+            'comment_guard_block_html', array('1' => _t('禁止'), '0' => _t('允许安全 HTML')), '0',
+            _t('禁止评论包含 HTML'), _t('开启后拒绝所有 HTML 标签（包括安全标签），普通文字和 Markdown 仍可提交。')
+        );
+        $form->addInput($commentGuardHtml);
+
+        $commentGuardChinese = new Typecho_Widget_Helper_Form_Element_Radio(
+            'comment_guard_require_chinese', array('1' => _t('必须包含中文'), '0' => _t('不限制')), '0',
+            _t('中文要求'), _t('开启后评论正文至少包含一个汉字，HTML 标签属性中的中文不计入。')
+        );
+        $form->addInput($commentGuardChinese);
+
+        $commentGuardBlockedWords = new Typecho_Widget_Helper_Form_Element_Textarea(
+            'comment_guard_blocked_keywords', null, '', _t('禁止字符或关键词'),
+            _t('一行一条，正文包含任意一条即拒绝；按字面匹配，不区分大小写，支持单个字符，留空不限制。')
+        );
+        $form->addInput($commentGuardBlockedWords->addRule('maxLength', _t('关键词最多10000个字符'), 10000));
+
+        $commentGuardRequiredWords = new Typecho_Widget_Helper_Form_Element_Textarea(
+            'comment_guard_required_keywords', null, '', _t('必须包含的字符或关键词'),
+            _t('一行一条，正文至少包含其中一条才允许提交；按字面匹配，不区分大小写，留空不限制。')
+        );
+        $form->addInput($commentGuardRequiredWords->addRule('maxLength', _t('关键词最多10000个字符'), 10000));
+
+        $commentGuardBlockedIps = new Typecho_Widget_Helper_Form_Element_Textarea(
+            'comment_guard_blocked_ips', null, '', _t('IP / IP 段黑名单'),
+            _t('一行一条，支持单个 IPv4 / IPv6、CIDR 或 IPv4 尾部 *，如 192.0.2.10、192.0.2.0/24、2001:db8::/32、192.0.2.*；留空不限制。')
+        );
+        $form->addInput($commentGuardBlockedIps
+            ->addRule('maxLength', _t('IP 规则最多10000个字符'), 10000)
+            ->addRule(array('Enhancement_CommentGuardHelper', 'validIpRules'), _t('IP 黑名单格式错误，请检查每一行')));
+
+        $commentGuardTrustedProxies = new Typecho_Widget_Helper_Form_Element_Textarea(
+            'comment_guard_trusted_proxies', null, '', _t('可信代理 IP / IP 段'),
+            _t('默认使用服务器连接来源 IP，不信任客户端自行填写的转发头。经 CDN 或反向代理访问时，在此填写代理服务器 IP / 网段，才读取转发头中的访客 IP；格式同黑名单，一行一条。')
+        );
+        $form->addInput($commentGuardTrustedProxies
+            ->addRule('maxLength', _t('IP 规则最多10000个字符'), 10000)
+            ->addRule(array('Enhancement_CommentGuardHelper', 'validIpRules'), _t('可信代理格式错误，请检查每一行')));
+
+        $commentGuardRate = new Typecho_Widget_Helper_Form_Element_Radio(
+            'comment_guard_rate_limit', array('1' => _t('启用'), '0' => _t('禁用')), '1',
+            _t('IP 与同网段限频'), _t('对所有文章累计提交次数，同时限制单 IP 和 IPv4 /24、IPv6 /64 网段，防止同段轮换 IP 刷评论；被内容规则拦截的提交也会计数。')
+        );
+        $form->addInput($commentGuardRate);
+
+        $commentGuardWindow = new Typecho_Widget_Helper_Form_Element_Text(
+            'comment_guard_window', null, '300', _t('防刷时间窗口（秒）'),
+            _t('范围 10–86400 秒，限频与重复评论共同使用，默认 300 秒')
+        );
+        $form->addInput($commentGuardWindow->addRule(array('Enhancement_CommentGuardHelper', 'validLimit'), _t('请填写10–86400的整数'), 10, 86400));
+
+        $commentGuardIpLimit = new Typecho_Widget_Helper_Form_Element_Text(
+            'comment_guard_ip_limit', null, '5', _t('单个 IP 在窗口内最多提交次数'), _t('范围 1–1000，默认 5 次')
+        );
+        $form->addInput($commentGuardIpLimit->addRule(array('Enhancement_CommentGuardHelper', 'validLimit'), _t('请填写1–1000的整数'), 1, 1000));
+
+        $commentGuardSubnetLimit = new Typecho_Widget_Helper_Form_Element_Text(
+            'comment_guard_subnet_limit', null, '20', _t('同网段在窗口内最多提交次数'),
+            _t('范围 1–10000，默认 20 次；同一公司、校园或运营商的访客可能共用网段，请按访问量调整')
+        );
+        $form->addInput($commentGuardSubnetLimit->addRule(array('Enhancement_CommentGuardHelper', 'validLimit'), _t('请填写1–10000的整数'), 1, 10000));
+
+        $commentGuardDuplicates = new Typecho_Widget_Helper_Form_Element_Radio(
+            'comment_guard_block_duplicates', array('1' => _t('启用'), '0' => _t('禁用')), '1',
+            _t('拦截重复评论'), _t('同一 IP 在时间窗口内重复提交相同正文时拒绝；此规则可独立于限频开关使用。')
+        );
+        $form->addInput($commentGuardDuplicates);
 
         $enableAiSummary = new Typecho_Widget_Helper_Form_Element_Radio(
             'enable_ai_summary',

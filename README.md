@@ -1,6 +1,6 @@
 # Enhancement 插件
 
-融合怪插件 —— 友链增强 + 瞬间 + AI摘要 + 标签助手 + 站点地图 + 评论增强 + 外链跳转 + 视频链接解析 + QQ通知 + 邮件提醒 + 主题插件在线上传/删除等多功能于一体的 Typecho 插件。
+融合怪插件 —— 友链增强 + 瞬间 + REST API + AI摘要 + 标签助手 + 站点地图 + 评论增强 + 外链跳转 + 视频链接解析 + QQ通知 + 邮件提醒 + 主题插件在线上传/删除等多功能于一体的 Typecho 插件。
 
 ### 简介
 
@@ -37,6 +37,8 @@
 27. 瞬间定位地址解析改为浏览器端 JS 直连腾讯地图 API（无需服务端转发）
 28. AI 生成slug
 29. 申请链接时可选择是否通知管理员(可选择QQ通知/邮件通知/均不通知)
+30. 可选 REST API：集成 Typecho-RestAPI 的 WordPress `wp/v2` 兼容接口，支持公开内容读取与评论提交，默认关闭
+31. 可选评论防御：XSS 特征、HTML、中文、关键词、IP/IP 段黑名单、同网段限频及重复评论拦截
 
 ### 安装
 1. 上传到 `usr/plugins/Enhancement`
@@ -56,6 +58,7 @@
 - 评论表情（评论框表情面板 + 评论短代码解析）
 - 标签助手
 - Sitemap
+- REST API（默认关闭，含独立的网站标题、描述、头部 HTML、页脚文本及备案号设置）
 - 视频链接解析
 - 音乐链接解析（APlayer + Meting）
 - 附件预览增强（后台附件预览与批量插入，默认关闭）
@@ -75,6 +78,7 @@
 - 外链跳转白名单（白名单域名不走 go）
 - Turnstile 人机验证（评论/友链提交）
 - 仅游客评论启用 Turnstile（登录用户评论可免验证）
+- 评论防御（默认关闭，普通评论和 REST API 共用规则，含单独的内容/IP/限频开关）
 - 禁用插件时是否删除友情链接表（links，默认否）
 - 禁用插件时是否删除说说表（moments，默认否）
 - 禁用插件时是否删除 QQ 通知队列表（qq_notify_queue，默认否）
@@ -176,6 +180,88 @@
 `content`（必填，支持 Markdown）、`tags`（可选）、`media`（可选，若不填则从内容自动解析）、`created`（可选，时间戳或时间字符串）
 `status`（可选，`public` 或 `private`）、`latitude` / `longitude`（可选，经纬度；也支持 `lat` / `lng`）
 
+### 评论防御
+
+在插件设置的「防御」分组开启「启用评论防御」并保存。已有安装直接保存即可生效，无需重新启用插件。规则适用于游客和登录用户的新评论，覆盖普通评论表单与 REST API；后台编辑已有评论不触发提交拦截。总开关关闭时，其下所有规则停止检查。
+
+| 设置 | 行为与默认值 |
+| --- | --- |
+| 拦截 XSS 特征 | 默认启用；拒绝危险标签、HTML 事件属性、可执行链接等，检查常见实体/编码混淆；Typecho 原有的输出过滤继续生效 |
+| 禁止评论包含 HTML | 默认关闭；开启后安全标签也会被拒绝，允许普通文字和 Markdown |
+| 中文要求 | 默认不限制；开启后正文可见文字至少包含一个汉字，标签属性中的中文不计入 |
+| 禁止字符或关键词 | 一行一条，包含任意一条即拒绝；按字面匹配，不执行正则表达式，不区分大小写 |
+| 必须包含的字符或关键词 | 一行一条，正文可见文字至少包含其中一条；留空不限制，请在主题评论区说明填写要求 |
+| IP / IP 段黑名单 | 一行一条，支持 IPv4、IPv6、CIDR 与 IPv4 尾部 `*` 通配；留空不限制 |
+| IP 与同网段限频 | 默认启用；默认 300 秒内单 IP 最多 5 次、同 IPv4 `/24` 或 IPv6 `/64` 网段最多 20 次，跨文章累计 |
+| 拦截重复评论 | 默认启用；同 IP 在时间窗口内重复提交相同正文时拒绝，忽略首尾/重复空白与常见零宽字符；可单独关闭 |
+
+以上「默认启用」的子规则只在评论防御总开关开启后生效。内容命中规则返回 403；超频或重复提交返回 429 并提供 `Retry-After`，对于尚未支持 429 状态码的 Typecho 版本兼容返回 403。被内容规则拦截的有效提交尝试也会消耗频率额度。被拦截的评论不会入库、增加评论数或触发完成通知。Turnstile 与 Typecho 原有评论验证仍按各自设置执行。
+
+IP 规则示例（请替换为需要限制的实际地址）：
+
+```text
+192.0.2.10
+192.0.2.0/24
+198.51.100.*
+2001:db8::/32
+```
+
+防御默认以服务器连接来源 `REMOTE_ADDR` 识别 IP，避免任意伪造 `X-Forwarded-For` 绕过黑名单或限流。使用 CDN / 反向代理时，将实际代理的 IP / 网段填入「可信代理 IP / IP 段」；仅当连接来源可信时才解析转发链，并从右向左选择首个非可信来源。如 Typecho 已配置 `__TYPECHO_IP_SOURCE__`，则读取该配置指定的转发头。请仅填写实际代理范围。
+
+防刷计数使用服务器临时目录中的站点独立文件，记录 IP/内容的 HMAC 摘要，文件锁保护并发计数，过期记录自动清理。服务器临时目录必须可写；记录损坏、写入失败或容量耗尽时返回 503，不会跳过限流。计数属于临时状态，系统清理临时文件后会重新计数。
+
+开发验证：`php tests/comment-guard/run.php`；原 REST API 验证仍为 `php tests/rest-api/run.php`。验证使用临时 SQLite 与隔离的本地服务器。
+
+### REST API（兼容 WordPress）
+
+在插件设置的「API」分组中开启「启用 REST API」并保存即可使用；升级已有安装时也只需保存设置，无需重新启用整个插件。关闭后移除本插件注册的 REST 路由，接口内部也会检查开关。请先禁用独立的 RestAPI 插件，避免相同路径冲突。
+
+接口前缀为 `/wp-json/wp/v2`，支持结尾 `/`；未启用地址重写时可使用 `/index.php/wp-json/wp/v2`。子目录安装需在前面加上站点目录。
+
+| 接口 | 功能 |
+| --- | --- |
+| `GET /wp-json`、`GET /wp-json/wp/v2` | 站点与接口发现 |
+| `GET /wp-json/wp/v2/posts`、`posts/{cid}` | 文章列表与单篇文章 |
+| `GET /wp-json/wp/v2/posts/slug/{slug}`、`posts/tag/{slug}` | 按文章 slug 或标签 slug 查询 |
+| `GET /wp-json/wp/v2/pages`、`pages/{cid}`、`pages/slug/{slug}` | 页面列表与单页 |
+| `GET /wp-json/wp/v2/categories`、`categories/{mid}` | 分类列表与详情 |
+| `GET /wp-json/wp/v2/tags`、`tags/{mid}` | 标签列表与详情 |
+| `GET /wp-json/wp/v2/settings` | 站点标题、描述、地址及 API 自定义设置 |
+| `GET /wp-json/wp/v2/links`、`link-categories` | 已审核友链与友链分类 |
+| `GET /wp-json/wp/v2/comments` | 已审核的公开评论 |
+| `POST /wp-json/wp/v2/comments` | 提交评论 |
+| `GET /wp-json/wp/v2/users`、`users/{uid}` | 用户公开资料 |
+
+列表通过 `page`、`per_page` 分页（每页最多 100 条），响应头 `X-WP-Total` 与 `X-WP-TotalPages` 提供总数和总页数。支持跨域读取、`OPTIONS` 预检与 `HEAD`；文章、页面等资源仅供读取。
+
+文章/页面支持 `search`、`slug`、`author`、`include`、`exclude`、`categories`、`tags`、`tag`、`orderby`、`order`、`_embed`；摘要取自 `summary` 自定义字段，正文沿用原 RestAPI 的输出方式并移除 `<!--markdown-->` 标记。分类/标签支持 `search`、`slug`、`include`、`exclude`、`hide_empty`、`post` 等筛选。
+
+示例：
+
+```text
+GET /wp-json/wp/v2/posts?page=1&per_page=10&_embed=1
+GET /wp-json/wp/v2/links?sort=friend&per_page=50
+GET /wp-json/wp/v2/comments?post=4&orderby=date&order=asc
+```
+
+`settings` 返回 `site_title`、`site_description`、`siteurl`、`head_html`、`site_footer_text`、`site_icp`，对应「API」分组中的设置，标题与描述留空时使用站点配置。这里的 HTML 与页脚内容供 API 客户端使用。
+
+接口仅公开已到发布时间、无密码的已发布文章/页面，以及其已审核评论和审核通过的友链。`comments?status=any/hold/spam` 不提供未审核内容。
+
+评论提交支持 JSON 或表单，字段为 `post`、`author_name`、`author_email`、`author_url`（可选）、`content`、`parent`（可选）。评论沿用 Typecho 的评论开关、校验、审核、频率限制及插件通知流程；启用 Turnstile 时还需传入 `cf-turnstile-response`。开启评论来源检查时，请携带文章页面的 `Referer`；携带登录 Cookie 提交时，还需传入文章评论表单中的 `_` 安全令牌。匿名评论无需额外的 API Token。
+
+```json
+{
+  "post": 4,
+  "author_name": "Alice",
+  "author_email": "alice@example.com",
+  "content": "文章很有帮助",
+  "parent": 0
+}
+```
+
+开发验证：在插件目录运行 `php tests/rest-api/run.php`（需要 PHP 8 和 PDO SQLite），使用临时数据库与本地测试服务器，不读取站点数据库；也可将 Typecho 根目录作为第一个参数传入。
+
 ### Sitemap
 访问：`/sitemap.xml`
 
@@ -201,3 +287,4 @@
 - [Comment Mail 插件](https://github.com)
 - [Tag Helper 插件](https://github.com)
 - [Upload Plugin 插件](https://github.com)
+- Typecho-RestAPI（jkjoy，原项目版本 1.0.3，提供 WordPress REST API 兼容功能）

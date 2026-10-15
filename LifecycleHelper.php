@@ -18,6 +18,7 @@ class Enhancement_LifecycleHelper
         Helper::addRoute('memos_api', '/api/v1/memos', 'Enhancement_Memos_Action', 'action');
         Helper::addRoute('zemail', '/zemail', 'Enhancement_CommentNotifier_Action', 'action');
         Helper::addRoute('go', '/go/[target]', 'Enhancement_Action', 'goRedirect');
+        Enhancement_RestApiHelper::syncRoutes();
         Helper::addAction('enhancement-edit', 'Enhancement_Action');
         Helper::addAction('enhancement-submit', 'Enhancement_Action');
         Helper::addAction('enhancement-moments-edit', 'Enhancement_Action');
@@ -194,6 +195,7 @@ class Enhancement_LifecycleHelper
         Helper::removeRoute('memos_api');
         Helper::removeRoute('zemail');
         Helper::removeRoute('go');
+        Enhancement_RestApiHelper::removeRoutes();
         Helper::removeAction('enhancement-edit');
         Helper::removeAction('enhancement-submit');
         Helper::removeAction('enhancement-moments-edit');

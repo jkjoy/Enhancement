@@ -1,11 +1,11 @@
-﻿<?php
+<?php
 
 /**
  * Enhancement 插件
- * 具体功能包含:插件/主题zip上传,友情链接,瞬间,网站地图,编辑器增强,站外链接跳转,评论邮件通知,QQ通知,常见视频链接 音乐链接 解析,AI摘要生成等
+ * 具体功能包含:插件/主题zip上传,友情链接,瞬间,REST API,网站地图,编辑器增强,站外链接跳转,评论邮件通知,QQ通知,常见视频链接 音乐链接 解析,AI摘要生成等
  * @package Enhancement
  * @author 老孙博客
- * @version 1.3.7
+ * @version 1.3.8
  * @link HTTPS://www.IMSUN.ORG
  * @dependence 14.10.10-*
  */
@@ -19,6 +19,7 @@ require_once __DIR__ . '/ShortcodeHelper.php';
 require_once __DIR__ . '/CommentSmileyHelper.php';
 require_once __DIR__ . '/S3Helper.php';
 require_once __DIR__ . '/TurnstileHelper.php';
+require_once __DIR__ . '/CommentGuardHelper.php';
 require_once __DIR__ . '/CommentUiHelper.php';
 require_once __DIR__ . '/QqNotifyHelper.php';
 require_once __DIR__ . '/EditorUiHelper.php';
@@ -33,6 +34,7 @@ require_once __DIR__ . '/LifecycleHelper.php';
 require_once __DIR__ . '/ConfigStorageHelper.php';
 require_once __DIR__ . '/CommentWorkflowHelper.php';
 require_once __DIR__ . '/ContentParseHelper.php';
+require_once __DIR__ . '/RestApiHelper.php';
 
 class Enhancement_Plugin implements Typecho_Plugin_Interface
 {
@@ -454,7 +456,9 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
 
     public static function turnstileFilterComment($comment, $post, $last)
     {
-        return Enhancement_TurnstileHelper::filterComment($comment, $post, $last);
+        // A failed challenge must not reserve the duplicate-comment fingerprint.
+        $current = Enhancement_TurnstileHelper::filterComment($comment, $post, $last);
+        return Enhancement_CommentGuardHelper::filterComment($current, $post, $current);
     }
 
     public static function finishComment($comment)
