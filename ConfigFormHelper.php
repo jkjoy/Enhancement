@@ -493,6 +493,47 @@ class Enhancement_ConfigFormHelper
         );
         $form->addInput($enableLinkSubmitByQQ);
 
+        $qqNotifyProvider = new Typecho_Widget_Helper_Form_Element_Radio(
+            'qq_notify_provider',
+            array('legacy' => _t('现有机器人接口'), 'official' => _t('官方 QQ Bot 服务（私聊 / 群聊）')),
+            'legacy',
+            _t('QQ 通知方式'),
+            _t('官方模式通过独立 Bot 服务发送主动消息；接收方需按服务说明绑定并允许主动消息，实际发送受 QQ 官方权限和额度限制。频道暂不支持。')
+        );
+        $form->addInput($qqNotifyProvider);
+
+        $qqOfficialUrl = new Typecho_Widget_Helper_Form_Element_Text(
+            'qq_official_url', null, '', _t('官方 Bot 服务地址'),
+            _t('填写独立 Bot 服务根地址，例如 http://127.0.0.1:8080；公网部署请使用 HTTPS。AppID 与 AppSecret 仅在 Bot 服务中配置。')
+        );
+        $form->addInput($qqOfficialUrl);
+
+        $qqOfficialToken = new class(
+            'qq_official_token', null, '', _t('官方 Bot 服务访问令牌'),
+            _t('与 Bot 服务 BOT_API_TOKEN 一致，至少 32 位非空白 ASCII 字符。保存后不显示，留空保留已保存令牌。')
+        ) extends Typecho_Widget_Helper_Form_Element_Password {
+            protected function inputValue($value)
+            {
+                $this->value = '';
+                $this->input->removeAttribute('value');
+            }
+        };
+        $qqOfficialToken->input->setAttribute('autocomplete', 'new-password');
+        $form->addInput($qqOfficialToken);
+
+        $qqOfficialTargets = new Typecho_Widget_Helper_Form_Element_Textarea(
+            'qq_official_targets', null, '', _t('官方 Bot 接收别名'),
+            _t('每行一个已在 Bot 服务绑定的别名，可同时填写私聊与群聊目标；最多 20 个。仅支持 1 至 64 位英文字母、数字、下划线和连字符，不能直接填写 QQ 号或群号。')
+        );
+        $form->addInput($qqOfficialTargets);
+
+        $qqOfficialIncludeLinks = new Typecho_Widget_Helper_Form_Element_Radio(
+            'qq_official_include_links', array('1' => _t('包含链接'), '0' => _t('省略链接')), '1',
+            _t('官方 Bot 通知中的链接'),
+            _t('未在 QQ 开放平台报备消息域名时可选择省略链接，文章、友链和审核地址等 URL 将被移除。官方消息会按 UTF-8 安全截短到 1800 字节。')
+        );
+        $form->addInput($qqOfficialIncludeLinks);
+
         $defaultQqApi = defined('__TYPECHO_COMMENT_BY_QQ_API_URL__')
             ? __TYPECHO_COMMENT_BY_QQ_API_URL__
             : 'https://bot.asbid.cn';
@@ -501,7 +542,7 @@ class Enhancement_ConfigFormHelper
             null,
             '',
             _t('接收通知的QQ号'),
-            _t('需要接收通知的QQ号码')
+            _t('仅现有机器人接口使用；官方模式请填写接收别名')
         );
         $form->addInput($qq);
 
@@ -519,7 +560,7 @@ class Enhancement_ConfigFormHelper
             array('1' => _t('启用（推荐）'), '0' => _t('禁用')),
             '1',
             _t('QQ异步队列发送'),
-            _t('启用后先写入数据库队列，再由后续页面请求自动异步投递，避免评论提交因网络超时变慢')
+            _t('仅控制现有机器人接口：由后续页面请求投递。官方模式始终立即提交到 Bot 服务持久队列，失败时留在本地队列等待后续请求重试。')
         );
         $form->addInput($qqAsyncQueue);
 
@@ -530,7 +571,7 @@ class Enhancement_ConfigFormHelper
         $qqActionRow->description(
             '<div class="enhancement-action-row">'
             . '<a class="btn enhancement-action-btn" href="' . htmlspecialchars($qqTestNotifyUrl, ENT_QUOTES, 'UTF-8') . '">' . _t('发送QQ通知测试') . '</a>'
-            . '<span class="enhancement-action-note">' . _t('先保存好 QQ 号与机器人 API 设置后,再点击测试') . '</span>'
+            . '<span class="enhancement-action-note">' . _t('先保存对应通知方式的配置，再点击测试；官方模式成功仅表示 Bot 服务已接受通知') . '</span>'
             . '</div>'
         );
         if (isset($qqActionRow->container)) {
@@ -549,7 +590,7 @@ class Enhancement_ConfigFormHelper
             . '<a class="btn enhancement-action-btn" href="' . htmlspecialchars($qqQueueRetryUrl, ENT_QUOTES, 'UTF-8') . '">' . _t('重试失败队列') . '</a>'
             . '<a class="btn enhancement-action-btn" href="' . htmlspecialchars($qqQueueClearUrl, ENT_QUOTES, 'UTF-8') . '" onclick="return window.confirm(\'确定要清空QQ通知队列吗？\');">' . _t('清空QQ队列') . '</a>'
             . '<span class="enhancement-action-note">' . _t(
-                '队列状态：待发送 %d / 失败 %d / 已发送 %d / 总计 %d',
+                '本地队列：待投递 %d / 失败 %d / 已投递 %d / 总计 %d（官方模式已投递表示服务已接受）',
                 intval($qqQueueStats['pending']),
                 intval($qqQueueStats['failed']),
                 intval($qqQueueStats['success']),

@@ -588,6 +588,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         }
 
         Enhancement_CommentGuardHelper::validateSettings($settings);
+        Enhancement_QqNotifyHelper::validateSettings($settings);
         $storedValue = $this->encodeStoredPluginSettingsValue($settings);
 
         $row = $this->db->fetchRow(
@@ -1741,6 +1742,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
                 $this->db->update($table)
                     ->rows(array(
                         'status' => 0,
+                        'retries' => 0,
                         'updated' => time()
                     ))
                     ->where('status = ?', 2)
@@ -1766,19 +1768,6 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
     public function sendQqTestNotify()
     {
         $settings = $this->collectPluginSettings();
-        $apiUrl = isset($settings['qqboturl']) ? trim((string)$settings['qqboturl']) : '';
-        $qqNum = isset($settings['qq']) ? trim((string)$settings['qq']) : '';
-
-        if ($apiUrl === '' || $qqNum === '') {
-            $this->testActionResponse(false, _t('QQ通知测试失败：请先填写 QQ 号 与 机器人 API 地址'), 400);
-            return;
-        }
-
-        if (!function_exists('curl_init')) {
-            $this->testActionResponse(false, _t('QQ通知测试失败：当前环境缺少 cURL 扩展'), 500);
-            return;
-        }
-
         $siteUrl = isset($this->options->siteUrl) ? trim((string)$this->options->siteUrl) : '';
         $message = sprintf(
             "【QQ通知测试】\n"
@@ -1788,70 +1777,16 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             $siteUrl !== '' ? $siteUrl : 'unknown',
             date('Y-m-d H:i:s')
         );
-
-        $payload = array(
-            'user_id' => (int)$qqNum,
-            'message' => $message
-        );
-
-        $endpoint = rtrim($apiUrl, '/') . '/send_msg';
-        $ch = curl_init();
-        $curlOptions = array(
-            CURLOPT_URL => $endpoint,
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_UNICODE),
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CONNECTTIMEOUT => 3,
-            CURLOPT_TIMEOUT => 5,
-            CURLOPT_HTTPHEADER => array(
-                'Content-Type: application/json; charset=UTF-8',
-                'Accept: application/json'
-            ),
-            CURLOPT_SSL_VERIFYPEER => false
-        );
-
-        if (defined('CURLOPT_IPRESOLVE') && defined('CURL_IPRESOLVE_V4')) {
-            $curlOptions[CURLOPT_IPRESOLVE] = CURL_IPRESOLVE_V4;
-        }
-        if (defined('CURLOPT_NOSIGNAL')) {
-            $curlOptions[CURLOPT_NOSIGNAL] = true;
-        }
-
-        curl_setopt_array($ch, $curlOptions);
-
-        $response = curl_exec($ch);
-        $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-
-        if (curl_errno($ch)) {
-            $error = curl_error($ch);
-            curl_close($ch);
-            $this->testActionResponse(false, _t('QQ通知测试失败：%s', $error), 500);
+        $result = Enhancement_QqNotifyHelper::sendTestMessage($message, $settings);
+        if (!empty($result['success'])) {
+            $message = isset($result['provider']) && $result['provider'] === 'official'
+                ? _t('测试通知已进入 Bot 服务队列，通知 ID：%s。可在服务中查询投递结果；接收方需允许主动消息且满足 QQ 官方额度。', $result['id'])
+                : _t('QQ通知测试发送成功，请检查 QQ 是否收到消息。');
+            $this->testActionResponse(true, $message, 200);
             return;
         }
-
-        curl_close($ch);
-
-        $decoded = json_decode((string)$response, true);
-        $isOk = ($httpCode >= 200 && $httpCode < 300);
-        if (is_array($decoded)) {
-            if (isset($decoded['status'])) {
-                $isOk = $isOk && strtolower((string)$decoded['status']) === 'ok';
-            }
-            if (isset($decoded['retcode'])) {
-                $isOk = $isOk && intval($decoded['retcode']) === 0;
-            }
-        }
-
-        if ($isOk) {
-            $this->testActionResponse(true, _t('QQ通知测试发送成功，请检查 QQ 是否收到消息。'), 200);
-            return;
-        }
-
-        $bodyPreview = substr(trim((string)$response), 0, 300);
-        if ($bodyPreview === '') {
-            $bodyPreview = _t('empty response');
-        }
-        $this->testActionResponse(false, _t('QQ通知测试失败（HTTP %d）：%s', $httpCode, $bodyPreview), 500);
+        $error = isset($result['error']) && $result['error'] !== '' ? $result['error'] : _t('发送失败');
+        $this->testActionResponse(false, _t('QQ通知测试失败：%s', $error), 500);
     }
 
     public function sendSmtpTestMail()

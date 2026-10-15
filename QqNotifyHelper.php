@@ -2,12 +2,88 @@
 
 class Enhancement_QqNotifyHelper
 {
+    private const OFFICIAL_QUEUE_PREFIX = '__ENHANCEMENT_QQ_OFFICIAL_V1__:';
     private static $queueProcessed = false;
     private static $queueEnsured = false;
 
     private static function runtimeSettings()
     {
         return Enhancement_Plugin::runtimeSettings();
+    }
+
+    public static function validateSettings(array $settings)
+    {
+        foreach (array('qq_notify_provider', 'qq_official_url', 'qq_official_token', 'qq_official_targets', 'qq_official_include_links') as $key) {
+            if (isset($settings[$key]) && !is_scalar($settings[$key])) {
+                throw new Typecho_Widget_Exception(_t('QQ Bot 配置项必须是文本或开关值'), 400);
+            }
+        }
+        $provider = isset($settings['qq_notify_provider']) ? (string)$settings['qq_notify_provider'] : 'legacy';
+        if (!in_array($provider, array('legacy', 'official'), true)) {
+            throw new Typecho_Widget_Exception(_t('QQ 通知方式无效'), 400);
+        }
+        if ($provider !== 'official') {
+            return;
+        }
+        $error = self::officialConfigurationError((object)$settings);
+        if ($error !== '') {
+            throw new Typecho_Widget_Exception($error, 400);
+        }
+    }
+
+    private static function provider($settings): string
+    {
+        return isset($settings->qq_notify_provider) && $settings->qq_notify_provider === 'official' ? 'official' : 'legacy';
+    }
+
+    private static function officialUrl($settings): string
+    {
+        return isset($settings->qq_official_url) && is_scalar($settings->qq_official_url)
+            ? rtrim(trim((string)$settings->qq_official_url), '/') : '';
+    }
+
+    private static function officialTargets($settings): array
+    {
+        $value = isset($settings->qq_official_targets) && is_scalar($settings->qq_official_targets) ? trim((string)$settings->qq_official_targets) : '';
+        return $value === '' ? array() : array_values(array_unique(array_map('trim', preg_split('/\r\n|\r|\n/', $value))));
+    }
+
+    private static function officialConfigurationError($settings): string
+    {
+        $url = self::officialUrl($settings);
+        $parts = parse_url($url);
+        if ($url === '' || filter_var($url, FILTER_VALIDATE_URL) === false || !is_array($parts)
+            || !isset($parts['scheme'], $parts['host']) || !in_array(strtolower($parts['scheme']), array('http', 'https'), true)
+            || isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment'])) {
+            return _t('请填写有效的官方 QQ Bot 服务地址（http/https，不含用户名、密码、查询参数或片段）');
+        }
+        $token = isset($settings->qq_official_token) && is_scalar($settings->qq_official_token) ? (string)$settings->qq_official_token : '';
+        if (!preg_match('/\A[\x21-\x7e]{32,1024}\z/D', $token)) {
+            return _t('官方 QQ Bot 服务访问令牌须为 32 至 1024 位非空白 ASCII 字符');
+        }
+        $targets = self::officialTargets($settings);
+        if (count($targets) < 1 || count($targets) > 20) {
+            return _t('请填写 1 至 20 个已绑定的 QQ Bot 接收别名，每行一个');
+        }
+        foreach ($targets as $target) {
+            if (!preg_match('/\A[A-Za-z0-9_-]{1,64}\z/D', $target)) {
+                return _t('QQ Bot 接收别名仅支持 1 至 64 位英文字母、数字、下划线和连字符');
+            }
+        }
+        return '';
+    }
+
+    public static function sendTestMessage(string $message, $settings = null): array
+    {
+        $settings = $settings === null ? self::runtimeSettings() : (object)$settings;
+        if (self::provider($settings) === 'official') {
+            $error = self::officialConfigurationError($settings);
+            if ($error !== '') {
+                return array('success' => false, 'error' => $error);
+            }
+            return self::sendOfficial(self::officialEnvelope($message, $settings), $settings);
+        }
+        return self::sendLegacyMessage($message, true, $settings);
     }
 
     public static function mark($comment, $edit, $status)
@@ -71,6 +147,9 @@ class Enhancement_QqNotifyHelper
     public static function comment($comment, $statusOverride = null)
     {
         $settings = self::runtimeSettings();
+        if (!isset($settings->enable_comment_by_qq) || $settings->enable_comment_by_qq != '1') {
+            return;
+        }
 
         $status = $statusOverride !== null
             ? trim((string)$statusOverride)
@@ -117,23 +196,21 @@ class Enhancement_QqNotifyHelper
         if (!self::featureEnabled($settings)) {
             return;
         }
-        if (!self::asyncQueueEnabled($settings)) {
-            return;
-        }
-
         self::ensureQueueTable();
 
         try {
             $db = Typecho_Db::get();
             $table = $db->getPrefix() . 'qq_notify_queue';
-            $row = $db->fetchRow(
-                $db->select()
-                    ->from($table)
-                    ->where('status = ?', 0)
-                    ->where('retries < ?', 5)
-                    ->order('qid', Typecho_Db::SORT_ASC)
-                    ->limit(1)
-            );
+            $query = $db->select()
+                ->from($table)
+                ->where('status = ?', 0)
+                ->where('retries < ?', 5)
+                ->order('qid', Typecho_Db::SORT_ASC)
+                ->limit(1);
+            if (!self::asyncQueueEnabled($settings)) {
+                $query->where('message LIKE ?', self::OFFICIAL_QUEUE_PREFIX . '%');
+            }
+            $row = $db->fetchRow($query);
 
             if (!is_array($row) || empty($row)) {
                 return;
@@ -146,7 +223,14 @@ class Enhancement_QqNotifyHelper
                 return;
             }
 
-            $result = self::sendMessage($message, true);
+            // Unversioned rows always belong to the original send_msg provider.
+            $official = strpos($message, self::OFFICIAL_QUEUE_PREFIX) === 0;
+            if (!$official && !self::asyncQueueEnabled($settings)) {
+                return;
+            }
+            $result = $official
+                ? self::sendOfficial(json_decode(substr($message, strlen(self::OFFICIAL_QUEUE_PREFIX)), true), $settings)
+                : self::sendLegacyMessage($message, true, $settings);
             if (!empty($result['success'])) {
                 $db->query(
                     $db->update($table)
@@ -238,6 +322,9 @@ class Enhancement_QqNotifyHelper
             $settings = self::runtimeSettings();
         }
 
+        if (self::provider($settings) === 'official') {
+            return self::officialConfigurationError($settings) === '';
+        }
         $apiUrl = isset($settings->qqboturl) ? trim((string)$settings->qqboturl) : '';
         $qqNum = isset($settings->qq) ? trim((string)$settings->qq) : '';
 
@@ -259,12 +346,29 @@ class Enhancement_QqNotifyHelper
             return;
         }
 
+        if (self::provider($settings) === 'official') {
+            $envelope = self::officialEnvelope($message, $settings);
+            $encoded = json_encode($envelope, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if ($encoded === false) {
+                return;
+            }
+            // Persist the idempotency key before contacting the service, then hand off now.
+            $qid = self::enqueue(self::OFFICIAL_QUEUE_PREFIX . $encoded, false);
+            $result = self::sendOfficial($envelope, $settings);
+            if ($qid > 0) {
+                self::recordOfficialResult($qid, $result);
+            } elseif (empty($result['success'])) {
+                error_log('[Enhancement][QQBot] 服务投递和本地重试队列均失败，请检查数据库及 Bot 服务。');
+            }
+            return;
+        }
+
         if (self::asyncQueueEnabled($settings)) {
             self::enqueue($message);
             return;
         }
 
-        self::sendMessage($message, false);
+        self::sendLegacyMessage($message, false, $settings);
     }
 
     private static function asyncQueueEnabled($settings = null): bool
@@ -280,11 +384,11 @@ class Enhancement_QqNotifyHelper
         return $settings->qq_async_queue == '1';
     }
 
-    private static function enqueue(string $message)
+    private static function enqueue(string $message, bool $legacyFallback = true): int
     {
         $message = trim($message);
         if ($message === '') {
-            return;
+            return 0;
         }
 
         self::ensureQueueTable();
@@ -292,7 +396,7 @@ class Enhancement_QqNotifyHelper
         try {
             $db = Typecho_Db::get();
             $table = $db->getPrefix() . 'qq_notify_queue';
-            $db->query(
+            return (int)$db->query(
                 $db->insert($table)->rows(array(
                     'message' => $message,
                     'status' => 0,
@@ -303,7 +407,10 @@ class Enhancement_QqNotifyHelper
                 ))
             );
         } catch (Exception $e) {
-            self::sendMessage($message, false);
+            if ($legacyFallback) {
+                self::sendLegacyMessage($message, false);
+            }
+            return 0;
         }
     }
 
@@ -372,11 +479,153 @@ class Enhancement_QqNotifyHelper
         }
     }
 
-    private static function sendMessage(string $message, bool $returnResult = false)
+    private static function officialEnvelope(string $message, $settings): array
+    {
+        if (!preg_match('//u', $message)) {
+            $message = (string)json_decode(json_encode($message, JSON_INVALID_UTF8_SUBSTITUTE), true);
+        }
+        $message = html_entity_decode(strip_tags($message), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $message = preg_replace('/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/', '', $message);
+        if (isset($settings->qq_official_include_links) && $settings->qq_official_include_links != '1') {
+            $message = preg_replace('~(?:[a-z][a-z0-9+.-]*://|www\.)[^\s<>\x{3000}]+|\bmailto:[^\s<>]+~iu', '[链接已省略]', $message);
+        }
+        if (strlen($message) > 1800) {
+            $message = substr($message, 0, 1797);
+            while ($message !== '' && !preg_match('//u', $message)) {
+                $message = substr($message, 0, -1);
+            }
+            $message .= '…';
+        }
+        return array(
+            'provider' => 'official',
+            'message' => trim($message),
+            'targets' => self::officialTargets($settings),
+            'serviceURL' => self::officialUrl($settings),
+            'requestId' => bin2hex(random_bytes(20))
+        );
+    }
+
+    private static function recordOfficialResult(int $qid, array $result)
+    {
+        try {
+            $db = Typecho_Db::get();
+            $db->query($db->update($db->getPrefix() . 'qq_notify_queue')
+                ->rows(array(
+                    'status' => !empty($result['success']) ? 1 : 0,
+                    'last_error' => !empty($result['success']) ? null : Typecho_Common::subStr((string)$result['error'], 0, 250, ''),
+                    'updated' => time()
+                ))
+                ->where('qid = ?', $qid));
+        } catch (Exception $e) {
+            // A later retry uses the same service idempotency key.
+        }
+    }
+
+    private static function sendOfficial($envelope, $settings): array
+    {
+        $result = array('success' => false, 'error' => '', 'provider' => 'official');
+        $error = self::officialConfigurationError($settings);
+        if ($error !== '') {
+            $result['error'] = $error;
+            return $result;
+        }
+        if (!is_array($envelope) || !isset($envelope['provider'], $envelope['message'], $envelope['targets'], $envelope['serviceURL'], $envelope['requestId'])
+            || $envelope['provider'] !== 'official' || !is_string($envelope['message']) || !is_array($envelope['targets'])
+            || !is_string($envelope['serviceURL']) || !is_string($envelope['requestId'])
+            || !preg_match('/\A[a-f0-9]{40}\z/D', $envelope['requestId'])) {
+            $result['error'] = _t('官方 QQ Bot 本地队列记录无效');
+            return $result;
+        }
+        if ($envelope['serviceURL'] !== self::officialUrl($settings)) {
+            $result['error'] = _t('Bot 服务地址已更改，旧队列不会向原地址发送当前访问令牌；请恢复地址后重试或清空旧队列');
+            return $result;
+        }
+        if (count($envelope['targets']) < 1 || count($envelope['targets']) > 20) {
+            $result['error'] = _t('官方 QQ Bot 队列接收别名无效');
+            return $result;
+        }
+        foreach ($envelope['targets'] as $target) {
+            if (!is_string($target) || !preg_match('/\A[A-Za-z0-9_-]{1,64}\z/D', $target)) {
+                $result['error'] = _t('官方 QQ Bot 队列接收别名无效');
+                return $result;
+            }
+        }
+        if (!function_exists('curl_init')) {
+            $result['error'] = _t('当前环境缺少 cURL 扩展');
+            return $result;
+        }
+        $payload = json_encode(array(
+            'message' => $envelope['message'],
+            'targets' => $envelope['targets'],
+            'idempotency_key' => $envelope['requestId']
+        ), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($payload === false) {
+            $result['error'] = _t('QQ Bot 消息必须是有效的 UTF-8 文本');
+            return $result;
+        }
+
+        $ch = curl_init();
+        $response = '';
+        $curlOptions = array(
+            CURLOPT_URL => $envelope['serviceURL'] . '/api/notifications',
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $payload,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => 3,
+            CURLOPT_TIMEOUT => 5,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_MAXREDIRS => 0,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_HTTPHEADER => array(
+                'Content-Type: application/json; charset=UTF-8',
+                'Accept: application/json',
+                'Authorization: Bearer ' . $settings->qq_official_token
+            ),
+            CURLOPT_WRITEFUNCTION => static function ($handle, $chunk) use (&$response) {
+                if (strlen($response) + strlen($chunk) > 65536) {
+                    return 0;
+                }
+                $response .= $chunk;
+                return strlen($chunk);
+            }
+        );
+        if (defined('CURLOPT_PROTOCOLS_STR')) {
+            $curlOptions[CURLOPT_PROTOCOLS_STR] = 'http,https';
+        } elseif (defined('CURLOPT_PROTOCOLS')) {
+            $curlOptions[CURLOPT_PROTOCOLS] = CURLPROTO_HTTP | CURLPROTO_HTTPS;
+        }
+        if (defined('CURLOPT_NOSIGNAL')) {
+            $curlOptions[CURLOPT_NOSIGNAL] = true;
+        }
+        curl_setopt_array($ch, $curlOptions);
+        curl_exec($ch);
+        $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $errno = curl_errno($ch);
+        curl_close($ch);
+        if ($errno !== 0) {
+            $result['error'] = _t('Bot 服务连接失败（cURL %d），请检查服务地址和网络连接', $errno);
+            return $result;
+        }
+        $decoded = json_decode($response, true);
+        if ($httpCode >= 200 && $httpCode < 300 && is_array($decoded) && isset($decoded['ok'], $decoded['status'], $decoded['id'])
+            && $decoded['ok'] === true && in_array($decoded['status'], array('queued', 'sent'), true)
+            && is_string($decoded['id']) && preg_match('/\A[A-Za-z0-9_-]{1,128}\z/D', $decoded['id'])) {
+            $result['success'] = true;
+            $result['status'] = $decoded['status'];
+            $result['id'] = $decoded['id'];
+            return $result;
+        }
+        // Never echo or persist the service response body: it may contain secrets.
+        $result['error'] = _t('Bot 服务未接受通知（HTTP %d），请检查服务日志、接收别名和访问令牌', $httpCode);
+        return $result;
+    }
+
+    private static function sendLegacyMessage(string $message, bool $returnResult = false, $settings = null)
     {
         $result = array('success' => false, 'error' => '');
 
-        $settings = self::runtimeSettings();
+        $settings = $settings === null ? self::runtimeSettings() : $settings;
         $apiUrl = isset($settings->qqboturl) ? trim((string)$settings->qqboturl) : '';
         $qqNum = isset($settings->qq) ? trim((string)$settings->qq) : '';
 
