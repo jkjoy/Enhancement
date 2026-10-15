@@ -7,12 +7,16 @@ if (PHP_SAPI !== 'cli-server' || !$directory || !is_file($directory . '/fixture.
     exit;
 }
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$raw = file_get_contents('php://input');
 file_put_contents($directory . '/bot-requests.jsonl', json_encode([
     'path' => $path,
     'method' => $_SERVER['REQUEST_METHOD'],
     'authorization' => $_SERVER['HTTP_AUTHORIZATION'] ?? '',
     'content_type' => $_SERVER['CONTENT_TYPE'] ?? '',
-    'payload' => json_decode(file_get_contents('php://input'), true),
+    'payload' => json_decode($raw, true), 'raw' => $raw,
+    'timestamp' => $_SERVER['HTTP_X_WEBHOOK_TIMESTAMP'] ?? '',
+    'signature' => $_SERVER['HTTP_X_WEBHOOK_SIGNATURE_V2'] ?? '',
+    'request_id' => $_SERVER['HTTP_X_REQUEST_ID'] ?? '',
 ]) . "\n", FILE_APPEND | LOCK_EX);
 $config = json_decode(file_get_contents($directory . '/bot-response.json'), true);
 http_response_code((int)$config['status']);
@@ -20,4 +24,10 @@ header('Content-Type: application/json');
 if (isset($config['location'])) {
     header('Location: ' . $config['location']);
 }
-echo $config['body'];
+if ($config['body'] === '__AUTO_AGENT__') {
+    echo json_encode($path === '/tools/invoke'
+        ? ['ok' => true, 'result' => ['content' => [['type' => 'text', 'text' => '{"messageId":"fixture-message"}']]]]
+        : ['status' => 'delivered', 'delivery_id' => $_SERVER['HTTP_X_REQUEST_ID'] ?? '']);
+} else {
+    echo $config['body'];
+}

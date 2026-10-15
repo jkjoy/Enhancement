@@ -84,6 +84,8 @@ function qqEnvelope(array $row): array
 }
 function qqClearQueue(): void { global $pdo; $pdo->exec('DELETE FROM typecho_qq_notify_queue'); }
 
+if (defined('ENHANCEMENT_QQ_FIXTURE_LIBRARY') && ENHANCEMENT_QQ_FIXTURE_LIBRARY === true) { return; }
+
 try {
     $address = qqAddress();
     $base = 'http://' . $address;

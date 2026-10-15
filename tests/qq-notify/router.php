@@ -21,11 +21,23 @@ Typecho\Db::set($db);
 Typecho\Widget::widget('Widget_Init');
 require_once dirname(__DIR__, 2) . '/Plugin.php';
 Typecho\Plugin::init(['activated' => [], 'handles' => []]);
+if (getenv('ENHANCEMENT_QQ_AGENT_HOOKS') === '1') {
+    Typecho_Plugin::factory('Widget_Comments_Edit')->mark = static function ($comment, $editor, $status) use ($directory) {
+        file_put_contents($directory . '/hooks.jsonl', json_encode(['hook' => 'mark', 'id' => $comment['coid'], 'status' => $status]) . "\n", FILE_APPEND);
+    };
+    Typecho_Plugin::factory('Widget_Comments_Edit')->finishComment = static function ($comment) use ($directory) {
+        file_put_contents($directory . '/hooks.jsonl', json_encode(['hook' => 'finish', 'id' => $comment->coid]) . "\n", FILE_APPEND);
+    };
+}
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $body = json_decode(file_get_contents('php://input'), true) ?: [];
 try {
     header('Content-Type: application/json');
     switch ($path) {
+        case '/action/enhancement-edit':
+            require_once dirname(__DIR__, 2) . '/Action.php';
+            Typecho_Widget::widget('Enhancement_Action')->action();
+            break;
         case '/config':
             Enhancement_ConfigStorageHelper::configHandle($body, false);
             echo '{"ok":true}';

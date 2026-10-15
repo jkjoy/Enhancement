@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/QqAgentHelper.php';
+
 class Enhancement_QqNotifyHelper
 {
     private const OFFICIAL_QUEUE_PREFIX = '__ENHANCEMENT_QQ_OFFICIAL_V1__:';
@@ -19,9 +21,10 @@ class Enhancement_QqNotifyHelper
             }
         }
         $provider = isset($settings['qq_notify_provider']) ? (string)$settings['qq_notify_provider'] : 'legacy';
-        if (!in_array($provider, array('legacy', 'official'), true)) {
+        if (!in_array($provider, array('legacy', 'official', 'openclaw', 'hermes'), true)) {
             throw new Typecho_Widget_Exception(_t('QQ 通知方式无效'), 400);
         }
+        Enhancement_QqAgentHelper::validateSettings($settings);
         if ($provider !== 'official') {
             return;
         }
@@ -33,7 +36,8 @@ class Enhancement_QqNotifyHelper
 
     private static function provider($settings): string
     {
-        return isset($settings->qq_notify_provider) && $settings->qq_notify_provider === 'official' ? 'official' : 'legacy';
+        return isset($settings->qq_notify_provider) && in_array($settings->qq_notify_provider, array('official', 'openclaw', 'hermes'), true)
+            ? $settings->qq_notify_provider : 'legacy';
     }
 
     private static function officialUrl($settings): string
@@ -76,6 +80,9 @@ class Enhancement_QqNotifyHelper
     public static function sendTestMessage(string $message, $settings = null): array
     {
         $settings = $settings === null ? self::runtimeSettings() : (object)$settings;
+        if (Enhancement_QqAgentHelper::enabled($settings)) {
+            return Enhancement_QqAgentHelper::send(Enhancement_QqAgentHelper::envelope($message, $settings), $settings);
+        }
         if (self::provider($settings) === 'official') {
             $error = self::officialConfigurationError($settings);
             if ($error !== '') {
@@ -125,6 +132,7 @@ class Enhancement_QqNotifyHelper
 
         $message = sprintf(
             "【友情链接申请通知】\n"
+            . "编号：%s\n"
             . "🌐 站点：%s\n"
             . "🔖 友链名称：%s\n"
             . "🔗 友链地址：%s\n"
@@ -132,6 +140,7 @@ class Enhancement_QqNotifyHelper
             . "📝 网站描述：%s\n"
             . "🕒 提交时间：%s\n"
             . "🛠 审核地址：%s",
+            isset($link['lid']) ? (string)(int)$link['lid'] : '-',
             $siteTitle,
             $linkName !== '' ? $linkName : '-',
             $linkUrl !== '' ? $linkUrl : '-',
@@ -172,10 +181,12 @@ class Enhancement_QqNotifyHelper
 
         $message = sprintf(
             "【新评论通知】\n"
+            . "编号：%s\n"
             . "📝 评论者：%s\n"
             . "📖 文章标题：《%s》\n"
             . "💬 评论内容：%s\n"
             . "🔗 文章链接：%s",
+            isset($comment->coid) ? (string)(int)$comment->coid : '-',
             $comment->author,
             $comment->title,
             $commentText,
@@ -208,7 +219,7 @@ class Enhancement_QqNotifyHelper
                 ->order('qid', Typecho_Db::SORT_ASC)
                 ->limit(1);
             if (!self::asyncQueueEnabled($settings)) {
-                $query->where('message LIKE ?', self::OFFICIAL_QUEUE_PREFIX . '%');
+                $query->where('(message LIKE ? OR message LIKE ?)', self::OFFICIAL_QUEUE_PREFIX . '%', Enhancement_QqAgentHelper::QUEUE_PREFIX . '%');
             }
             $row = $db->fetchRow($query);
 
@@ -225,12 +236,17 @@ class Enhancement_QqNotifyHelper
 
             // Unversioned rows always belong to the original send_msg provider.
             $official = strpos($message, self::OFFICIAL_QUEUE_PREFIX) === 0;
-            if (!$official && !self::asyncQueueEnabled($settings)) {
+            $agent = strpos($message, Enhancement_QqAgentHelper::QUEUE_PREFIX) === 0;
+            if (!$official && !$agent && !self::asyncQueueEnabled($settings)) {
                 return;
             }
-            $result = $official
-                ? self::sendOfficial(json_decode(substr($message, strlen(self::OFFICIAL_QUEUE_PREFIX)), true), $settings)
-                : self::sendLegacyMessage($message, true, $settings);
+            if ($agent) {
+                $result = Enhancement_QqAgentHelper::send(json_decode(substr($message, strlen(Enhancement_QqAgentHelper::QUEUE_PREFIX)), true), $settings, $retries + 1);
+            } else {
+                $result = $official
+                    ? self::sendOfficial(json_decode(substr($message, strlen(self::OFFICIAL_QUEUE_PREFIX)), true), $settings)
+                    : self::sendLegacyMessage($message, true, $settings);
+            }
             if (!empty($result['success'])) {
                 $db->query(
                     $db->update($table)
@@ -322,6 +338,14 @@ class Enhancement_QqNotifyHelper
             $settings = self::runtimeSettings();
         }
 
+        if (Enhancement_QqAgentHelper::enabled($settings)) {
+            try {
+                Enhancement_QqAgentHelper::validateSettings(method_exists($settings, 'toArray') ? $settings->toArray() : (array)$settings);
+                return true;
+            } catch (Exception $e) {
+                return false;
+            }
+        }
         if (self::provider($settings) === 'official') {
             return self::officialConfigurationError($settings) === '';
         }
@@ -343,6 +367,22 @@ class Enhancement_QqNotifyHelper
         }
 
         if (!self::configured($settings)) {
+            return;
+        }
+
+        if (Enhancement_QqAgentHelper::enabled($settings)) {
+            $envelope = Enhancement_QqAgentHelper::envelope($message, $settings);
+            $encoded = json_encode($envelope, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if ($encoded === false) {
+                return;
+            }
+            $qid = self::enqueue(Enhancement_QqAgentHelper::QUEUE_PREFIX . $encoded, false);
+            $result = Enhancement_QqAgentHelper::send($envelope, $settings);
+            if ($qid > 0) {
+                self::recordOfficialResult($qid, $result);
+            } elseif (empty($result['success'])) {
+                error_log('[Enhancement][QQAgent] 通道投递和本地重试队列均失败。');
+            }
             return;
         }
 
@@ -479,14 +519,14 @@ class Enhancement_QqNotifyHelper
         }
     }
 
-    private static function officialEnvelope(string $message, $settings): array
+    public static function prepareMessage(string $message, bool $includeLinks = true): string
     {
         if (!preg_match('//u', $message)) {
             $message = (string)json_decode(json_encode($message, JSON_INVALID_UTF8_SUBSTITUTE), true);
         }
         $message = html_entity_decode(strip_tags($message), ENT_QUOTES | ENT_HTML5, 'UTF-8');
         $message = preg_replace('/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/', '', $message);
-        if (isset($settings->qq_official_include_links) && $settings->qq_official_include_links != '1') {
+        if (!$includeLinks) {
             $message = preg_replace('~(?:[a-z][a-z0-9+.-]*://|www\.)[^\s<>\x{3000}]+|\bmailto:[^\s<>]+~iu', '[链接已省略]', $message);
         }
         if (strlen($message) > 1800) {
@@ -496,9 +536,14 @@ class Enhancement_QqNotifyHelper
             }
             $message .= '…';
         }
+        return trim($message);
+    }
+
+    private static function officialEnvelope(string $message, $settings): array
+    {
         return array(
             'provider' => 'official',
-            'message' => trim($message),
+            'message' => self::prepareMessage($message, !isset($settings->qq_official_include_links) || $settings->qq_official_include_links == '1'),
             'targets' => self::officialTargets($settings),
             'serviceURL' => self::officialUrl($settings),
             'requestId' => bin2hex(random_bytes(20))

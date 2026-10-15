@@ -1782,6 +1782,9 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             $message = isset($result['provider']) && $result['provider'] === 'official'
                 ? _t('测试通知已进入 Bot 服务队列，通知 ID：%s。可在服务中查询投递结果；接收方需允许主动消息且满足 QQ 官方额度。', $result['id'])
                 : _t('QQ通知测试发送成功，请检查 QQ 是否收到消息。');
+            if (isset($result['provider']) && in_array($result['provider'], array('openclaw', 'hermes'), true)) {
+                $message = _t('Agent 已确认通知请求，编号：%s。请检查原有 QQ 通道的接收结果。', $result['id']);
+            }
             $this->testActionResponse(true, $message, 200);
             return;
         }
@@ -2589,7 +2592,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         if ($this->canSendLinkSubmitAdminMail($pluginSettings)) {
             $this->sendLinkSubmissionAdminMail($item, $pluginSettings);
         }
-        Enhancement_Plugin::notifyLinkSubmissionByQQ($item);
+        Enhancement_Plugin::notifyLinkSubmissionByQQ(array_merge($item, array('lid' => (int)$item_lid)));
 
         if ($this->request->isAjax()) {
             $this->response->throwJson(array(
@@ -2667,6 +2670,26 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 
         /** 转向原页 */
         $this->response->redirect(Typecho_Common::url('extending.php?panel=Enhancement%2Fmanage-enhancement.php', $this->options->adminUrl));
+    }
+
+    public function reviewAgentLink(int $lid, string $state): array
+    {
+        if (!in_array($state, array('0', '1'), true)) {
+            throw new Typecho_Widget_Exception('invalid_state', 400);
+        }
+        $link = $this->getLinkByLid($lid);
+        if (!$link) {
+            throw new Typecho_Widget_Exception('link_not_found', 404);
+        }
+        $changed = (string)$link['state'] !== $state;
+        if ($changed) {
+            $this->db->query($this->db->update($this->prefix . 'links')->rows(array('state' => $state))->where('lid = ?', $lid));
+            $settings = $this->collectPluginSettings();
+            if ($state === '1' && $this->canSendLinkApprovalMail($settings)) {
+                $this->sendLinkApprovalMail($link, $settings);
+            }
+        }
+        return array('id' => $lid, 'state' => $state, 'changed' => $changed);
     }
 
     public function approveEnhancement()
@@ -3139,6 +3162,11 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $this->db = Typecho_Db::get();
         $this->prefix = $this->db->getPrefix();
         $this->options = Typecho_Widget::widget('Widget_Options');
+
+        if ($this->request->is('do=qq-agent-command')) {
+            Enhancement_QqAgentCommandHelper::handle($this);
+            return;
+        }
 
         $action = $this->request->get('action');
         $pathInfo = $this->request->getPathInfo();
