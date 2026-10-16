@@ -42,7 +42,7 @@ curl http://127.0.0.1:8080/readyz
 ## 开启固定管理指令
 
 1. 向机器人发送 `我的ID`；群内需 @机器人，得到用户和群 OpenID。
-2. 服务 `.env` 填入 `ENHANCEMENT_COMMAND_URL`（从插件 QQ 设置复制完整“QQ 指令接口”）、另一个随机的 `ENHANCEMENT_COMMAND_SECRET`、允许的用户 `QQ_ALLOWED_USERS` 和允许的群 `QQ_ALLOWED_GROUPS`。多个值以逗号分隔；群名单留空时只允许私聊管理。
+2. 服务 `.env` 填入 `ENHANCEMENT_COMMAND_URL`（如 `https://blog.example.com/action/enhancement-edit?do=qq-agent-command`，未启用伪静态时保留 `/index.php/action/`，子目录安装保留完整路径）、另一个随机的 `ENHANCEMENT_COMMAND_SECRET`、允许的用户 `QQ_ALLOWED_USERS` 和允许的群 `QQ_ALLOWED_GROUPS`。多个值以逗号分隔；群名单留空时只允许私聊管理。
 3. 插件中开启“允许 QQ 侧管理博客”，填写同一指令密钥、每行一个的用户 OpenID 和 Typecho 管理员 UID。指令密钥必须与通知服务令牌不同。
 4. 执行 `docker compose up -d --force-recreate`，发送 `博客状态` 验证。
 

@@ -85,7 +85,7 @@ platforms:
    ENHANCEMENT_COMMAND_SECRET=与插件QQ指令回调密钥一致
    ```
 
-   `ENHANCEMENT_COMMAND_URL` 请直接复制插件设置中显示的「Agent 指令接口」。未开启伪静态的站点可能包含 `/index.php/action/`；子目录安装也必须保留完整路径。密钥只放在 Agent 进程环境中，不要粘贴到聊天消息、技能正文或提示词。
+   `ENHANCEMENT_COMMAND_URL` 使用站点入口地址加上 `action/enhancement-edit?do=qq-agent-command`，如上面的示例。未开启伪静态的站点需保留 `/index.php/action/`；子目录安装也必须保留完整路径。密钥只放在 Agent 进程环境中，不要粘贴到聊天消息、技能正文或提示词。
 5. 确认 Agent 能执行 Python 3 脚本，并能从 QQ 通道的**可信事件元数据**中获得用户 OpenID 和原始消息 ID。群消息需使用发起人的用户 OpenID。不能从用户正文或引用消息中提取身份来代替。如果 Agent 版本未暴露这些元数据，需要先在其通道适配器中暴露，技能会拒绝猜测身份。
 6. 在 Agent 的 QQ 通道也配置允许访问的站长用户和群。插件依赖持有指令密钥的 Agent 如实转述来源身份；HMAC 证明请求来自该 Agent，不代表插件直接验过 QQ 官方事件。
 

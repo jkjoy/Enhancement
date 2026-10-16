@@ -585,13 +585,6 @@ class Enhancement_ConfigFormHelper
             'qq_agent_admin_uid', null, '1', _t('QQ 指令执行身份 UID'),
             _t('填写 Typecho 管理员的数字 UID。每次指令都会检查该账号仍属于 administrator；回复以该账号署名。')
         ));
-        $qqAgentCommandUrl = Typecho_Common::url('action/enhancement-edit?do=qq-agent-command', Typecho_Widget::widget('Widget_Options')->index);
-        $qqAgentHelp = new Typecho_Widget_Helper_Form_Element_Fake('qq_agent_help', null);
-        $qqAgentHelp->input->setAttribute('type', 'hidden');
-        $qqAgentHelp->description(_t('QQ 指令接口：') . '<code>' . htmlspecialchars($qqAgentCommandUrl, ENT_QUOTES, 'UTF-8')
-            . '</code><br>' . _t('独立服务部署见 integrations/qq-channel/README.md；智能体接入见 integrations/qq-agent/README.md。只需通知时保持 QQ 侧管理关闭。'));
-        $form->addInput($qqAgentHelp);
-
         $qqTestNotifyUrl = Helper::security()->getIndex('/action/enhancement-edit?do=qq-test-notify');
         $qqActionRow = new Typecho_Widget_Helper_Form_Element_Fake('qq_action_row', null);
         $qqActionRow->setAttribute('class', 'typecho-option enhancement-option-no-bullet');
