@@ -87,13 +87,20 @@ try {
             break;
         case '/form':
             ob_start();
-            $form = new Typecho_Widget_Helper_Form();
-            Enhancement_ConfigFormHelper::build($form);
-            foreach (Enhancement_Plugin::runtimeSettings() as $key => $value) {
-                if (isset($form->getInputs()[$key])) {
-                    $form->getInput($key)->value($value);
-                }
+            // Exercise the real admin config/binding method, using only fixture state.
+            Typecho_Plugin::init(['activated' => ['Enhancement' => []], 'handles' => []]);
+            $config = new Widget\Plugins\Config(
+                new Typecho\Widget\Request(Typecho\Request::getInstance(), new Typecho\Config(['config' => 'Enhancement'])),
+                new Typecho\Widget\Response(Typecho\Request::getInstance(), Typecho\Response::getInstance())
+            );
+            $pluginFile = dirname(__DIR__, 2) . '/Plugin.php';
+            foreach (['pluginFileName' => $pluginFile, 'className' => 'Enhancement_Plugin'] as $name => $value) {
+                $property = new ReflectionProperty($config, $name);
+                $property->setAccessible(true);
+                $property->setValue($config, $value);
             }
+            $config->info = Typecho_Plugin::parseInfo($pluginFile);
+            $form = $config->config();
             $form->render();
             $html = ob_get_clean();
             header('Content-Type: text/html; charset=UTF-8');

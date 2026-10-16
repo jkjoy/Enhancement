@@ -983,5 +983,22 @@ class Enhancement_ConfigFormHelper
         );
         $auth->setAttribute('class', 'hidden');
         $form->addInput($auth);
+
+        // Typecho binds every saved key after config() returns, including removed fields.
+        $inputs = $form->getInputs();
+        foreach ($settings as $key => $value) {
+            if (isset($inputs[$key])) {
+                continue;
+            }
+            $placeholder = new class((string)$key, null) extends Typecho_Widget_Helper_Form_Element_Fake {
+                protected function inputValue($value)
+                {
+                    // Accept the binding without rendering or submitting obsolete values.
+                    $this->value = '';
+                }
+            };
+            $placeholder->input->setAttribute('type', 'hidden');
+            $form->addInput($placeholder);
+        }
     }
 }

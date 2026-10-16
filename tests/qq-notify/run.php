@@ -112,10 +112,26 @@ try {
         qqCall('/comment');
         qqCall('/process');
         qqCheck(count(qqRequests()) === 0 && qqQueue() === [], 'Old business switches cannot send or enqueue raw messages');
-        $form = fixtureRequest($base, '/form')['body'];
+        $beforeSettings = qqSettings();
+        $response = fixtureRequest($base, '/form');
+        $form = $response['body'];
+        qqCheck($response['status'] === 200 && strpos($form, 'name="qq_notify_provider"') !== false,
+            'Post-upgrade settings page binds every saved field without HTTP 500', $response['status']);
+        qqCheck(qqSettings() === $beforeSettings, 'Opening settings page preserves stored configuration');
+        qqCheck(strpos($form, $oldSettings['qqboturl']) === false && strpos($form, $oldSettings['qq']) === false
+            && strpos($form, 'name="qqboturl"') === false && strpos($form, 'name="qq_async_queue"') === false
+            && strpos($form, 'name="qq"') === false,
+            'Compatibility placeholders neither display nor submit obsolete QQ settings');
         qqCheck(preg_match('/<input[^>]*id="qq_notify_provider-none"[^>]*checked=/', $form) === 1,
             'Old installation form selects unconfigured provider');
     }
+    $beforeSettings = qqSettings();
+    $pdo->prepare("UPDATE typecho_options SET value=? WHERE name='plugin:Enhancement' AND user=0")
+        ->execute([serialize($beforeSettings + ['removed_fixture_option' => 'private-obsolete-option-value'])]);
+    $response = fixtureRequest($base, '/form');
+    qqCheck($response['status'] === 200 && strpos($response['body'], 'private-obsolete-option-value') === false
+        && strpos($response['body'], 'name="removed_fixture_option"') === false,
+        'Other historical saved keys cannot break backend binding or expose obsolete values');
     $response = qqConfig(['enable_comment_by_qq' => '0', 'enable_link_submit_by_qq' => '0']);
     $migrated = qqSettings();
     qqCheck($response['status'] === 200 && ($migrated['qq_notify_provider'] ?? '') === 'none'
