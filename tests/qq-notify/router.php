@@ -46,6 +46,24 @@ try {
             Enhancement_QqNotifyHelper::validateSettings($body);
             echo '{"ok":true}';
             break;
+        case '/restore':
+        case '/retry':
+            require_once dirname(__DIR__, 2) . '/Action.php';
+            $action = Typecho_Widget::widget('Enhancement_Action');
+            foreach (['db' => $db, 'prefix' => $db->getPrefix()] as $name => $value) {
+                $property = new ReflectionProperty('Enhancement_Action', $name);
+                $property->setAccessible(true);
+                $property->setValue($action, $value);
+            }
+            if ($path === '/retry') {
+                $action->retryQqNotifyQueue();
+            } else {
+                $method = new ReflectionMethod('Enhancement_Action', 'savePluginSettings');
+                $method->setAccessible(true);
+                $method->invoke($action, $body);
+                echo '{"ok":true}';
+            }
+            break;
         case '/test':
             echo json_encode(Enhancement_QqNotifyHelper::sendTestMessage((string)($body['message'] ?? '测试通知')));
             break;

@@ -60,7 +60,7 @@ class Enhancement_ConfigStorageHelper
                 unset($incoming[$secretKey]);
             }
         }
-        $merged = array_merge($current, $incoming);
+        $merged = Enhancement_QqNotifyHelper::normalizeSettings(array_merge($current, $incoming));
         Enhancement_CommentGuardHelper::validateSettings($merged);
         Enhancement_QqNotifyHelper::validateSettings($merged);
         $storedValue = Enhancement_SettingsHelper::encodePluginConfigValue($merged);

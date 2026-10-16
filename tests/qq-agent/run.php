@@ -73,7 +73,7 @@ try {
     }
 
     // Persist first, retry immediately via the existing queue, without redirecting old jobs.
-    qqConfig(['enable_comment_by_qq' => '1', 'qq_async_queue' => '0']);
+    qqConfig(['enable_comment_by_qq' => '1']);
     qqCall('/process');
     qqClearQueue();
     qqRespond(503, []);
@@ -87,7 +87,7 @@ try {
     qqConfig(['qq_agent_target' => 'qqbot:c2c:changed-user']);
     qqRespond(200, '__AUTO_AGENT__');
     qqCall('/process');
-    qqCheck((int)qqQueue()[0]['status'] === 1 && qqLastRequest()['payload']['chat_id'] === 'group-openid', 'Retry uses snapshotted target even when async switch off');
+    qqCheck((int)qqQueue()[0]['status'] === 1 && qqLastRequest()['payload']['chat_id'] === 'group-openid', 'Retry uses snapshotted target');
     qqCheck(qqLastRequest()['payload']['event_id'] === $envelope['requestId'] && qqLastRequest()['request_id'] !== $firstId,
         'Hermes retry retains event ID and changes attempt ID after rejected delivery');
     qqClearQueue();

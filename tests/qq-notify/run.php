@@ -99,13 +99,34 @@ try {
     qqStartServer($botAddress, __DIR__ . '/fake-bot.php', $env, $directory . '/bot.log');
     qqStartServer($address, __DIR__ . '/router.php', $env, $directory . '/typecho.log');
 
-    // No provider setting must preserve the original send_msg integration.
-    qqConfig(['qqboturl' => $botBase . '/legacy', 'qq' => '12345678', 'qq_async_queue' => '0', 'enable_comment_by_qq' => '0', 'enable_link_submit_by_qq' => '0']);
-    qqRespond(200, ['status' => 'ok', 'retcode' => 0]);
-    $response = qqCall('/test', ['message' => '旧版兼容测试']);
-    $request = qqLastRequest();
-    qqCheck(($response['json']['success'] ?? false) === true && $request['path'] === '/legacy/send_msg', 'Provider absent keeps legacy endpoint', $response);
-    qqCheck(($request['payload']['user_id'] ?? 0) === 12345678 && ($request['payload']['message'] ?? '') === '旧版兼容测试' && $request['authorization'] === '', 'Legacy payload and authentication remain compatible', $request);
+    // Exercise unsaved old installations, including those with no provider field.
+    $oldSettings = ['qqboturl' => $botBase . '/legacy', 'qq' => '12345678', 'qq_async_queue' => '1',
+        'enable_comment_by_qq' => '1', 'enable_link_submit_by_qq' => '1'];
+    foreach ([[], ['qq_notify_provider' => 'legacy']] as $provider) {
+        $pdo->prepare("UPDATE typecho_options SET value=? WHERE name='plugin:Enhancement' AND user=0")
+            ->execute([serialize(array_merge($oldSettings, $provider))]);
+        $response = qqCall('/test', ['message' => '已移除的通知方式']);
+        qqCheck(($response['json']['success'] ?? true) === false && count(qqRequests()) === 0,
+            'Missing or legacy provider never contacts old Bot API', $response);
+        qqCall('/dispatch');
+        qqCall('/comment');
+        qqCall('/process');
+        qqCheck(count(qqRequests()) === 0 && qqQueue() === [], 'Old business switches cannot send or enqueue raw messages');
+        $form = fixtureRequest($base, '/form')['body'];
+        qqCheck(preg_match('/<input[^>]*id="qq_notify_provider-none"[^>]*checked=/', $form) === 1,
+            'Old installation form selects unconfigured provider');
+    }
+    $response = qqConfig(['enable_comment_by_qq' => '0', 'enable_link_submit_by_qq' => '0']);
+    $migrated = qqSettings();
+    qqCheck($response['status'] === 200 && ($migrated['qq_notify_provider'] ?? '') === 'none'
+        && !isset($migrated['qq']) && !isset($migrated['qqboturl']) && !isset($migrated['qq_async_queue']),
+        'Unrelated save migrates old provider and removes obsolete settings without requiring new credentials', $migrated);
+    $response = qqCall('/restore', $oldSettings + ['qq_notify_provider' => 'legacy']);
+    $migrated = qqSettings();
+    qqCheck($response['status'] === 200 && ($migrated['qq_notify_provider'] ?? '') === 'none'
+        && !isset($migrated['qq']) && !isset($migrated['qqboturl']) && !isset($migrated['qq_async_queue']),
+        'Restoring old settings cannot revive obsolete transport', $response);
+    qqConfig(['enable_comment_by_qq' => '0', 'enable_link_submit_by_qq' => '0']);
     $before = count(qqRequests());
     qqCall('/comment');
     qqCheck(count(qqRequests()) === $before, 'Disabled comment switch suppresses business notifications');
@@ -154,7 +175,7 @@ try {
     $response = qqCall('/dispatch', ['message' => '立即交付持久服务']);
     $rows = qqQueue();
     $envelope = qqEnvelope(end($rows));
-    qqCheck($response['status'] === 200 && count(qqRequests()) === $before + 1 && (int)end($rows)['status'] === 1, 'Official dispatch reaches service immediately even with legacy async queue off', $response);
+    qqCheck($response['status'] === 200 && count(qqRequests()) === $before + 1 && (int)end($rows)['status'] === 1, 'Official dispatch reaches service immediately', $response);
     qqCheck(($envelope['provider'] ?? '') === 'official' && ($envelope['serviceURL'] ?? '') === $official['qq_official_url']
         && ($envelope['requestId'] ?? '') === qqLastRequest()['payload']['idempotency_key']
         && strpos(end($rows)['message'], $token) === false, 'Local official record contains service/target snapshot and stable key without token', $envelope);
@@ -186,15 +207,36 @@ try {
     qqCheck((int)qqQueue()[0]['status'] === 1, 'Restoring service URL permits safe retry');
     qqClearQueue();
 
-    // Existing raw records cannot change their provider when the mode changes.
-    qqConfig(['qq_notify_provider' => 'legacy', 'qq_async_queue' => '1']);
+    // Historical raw jobs remain visible, but cannot send or block modern jobs.
+    foreach (['模式切换之前的旧通知', '', '__ENHANCEMENT_QQ_OFFICIAL_V1X:invalid-prefix'] as $message) {
+        fixtureInsert($pdo, 'qq_notify_queue', ['message' => $message, 'status' => 0, 'retries' => 0]);
+    }
+    fixtureInsert($pdo, 'qq_notify_queue', ['message' => '旧版已发送记录', 'status' => 1, 'retries' => 0]);
+    qqRespond(503, ['ok' => false]);
+    qqCall('/dispatch', ['message' => '现代通道正常重试']);
     $before = count(qqRequests());
-    qqCall('/dispatch', ['message' => '模式切换之前的旧通知']);
-    qqCheck(count(qqRequests()) === $before && qqQueue()[0]['message'] === '模式切换之前的旧通知', 'Legacy async business record stays raw and waits for a request');
-    qqConfig(['qq_notify_provider' => 'official']);
-    qqRespond(200, ['status' => 'ok', 'retcode' => 0]);
+    qqRespond();
     qqCall('/process');
-    qqCheck(qqLastRequest()['path'] === '/legacy/send_msg' && (int)qqQueue()[0]['status'] === 1, 'Switch to official mode keeps old raw records on legacy destination');
+    $rows = qqQueue();
+    foreach (array_slice($rows, 0, 3) as $row) {
+        qqCheck((int)$row['status'] === 2 && (int)$row['retries'] === 5 && strpos($row['last_error'], '已移除') !== false,
+            'Obsolete raw record is retained as failed with an explicit reason', $row);
+    }
+    qqCheck((int)$rows[3]['status'] === 1 && $rows[3]['message'] === '旧版已发送记录', 'Old successful history remains intact');
+    qqCheck(count(qqRequests()) === $before + 1 && qqLastRequest()['path'] === '/official/api/notifications'
+        && (int)$rows[4]['status'] === 1, 'Old records never reach a transport or block modern queue in same request');
+    $pdo->exec('UPDATE typecho_qq_notify_queue SET status=2 WHERE qid=' . (int)$rows[4]['qid']);
+    $response = fixtureRequest($base, '/retry', 'POST', [], ['X-Requested-With: XMLHttpRequest']);
+    $rows = qqQueue();
+    qqCheck(($response['json']['success'] ?? false) === true && (int)$rows[0]['status'] === 2
+        && (int)$rows[4]['status'] === 0, 'Manual retry requeues modern jobs and skips retired transport records', $response);
+    qqConfig(['qq_notify_provider' => 'none']);
+    $before = count(qqRequests());
+    qqCall('/process');
+    qqCall('/dispatch');
+    qqCheck((qqCall('/test')['json']['success'] ?? true) === false && count(qqRequests()) === $before
+        && count(qqQueue()) === 5 && (int)qqQueue()[4]['status'] === 0, 'Unconfigured provider stops tests, business sends and modern queue delivery');
+    qqConfig(['qq_notify_provider' => 'official']);
     qqClearQueue();
 
     qqConfig(['qq_official_token' => '']);
@@ -209,9 +251,14 @@ try {
     qqCheck($response['status'] === 200 && strpos($response['body'], 'name="qq_official_token"') !== false
         && strpos($response['body'], $newToken) === false && strpos($response['body'], $token) === false,
         'Real Typecho settings form never renders saved token', ['status' => $response['status'], 'body' => substr($response['body'], 0, 200)]);
+    foreach (['qq', 'qqboturl', 'qq_async_queue'] as $name) {
+        qqCheck(strpos($response['body'], 'name="' . $name . '"') === false, 'Obsolete setting removed from actual form: ' . $name);
+    }
+    qqCheck(strpos($response['body'], 'value="legacy"') === false && strpos($response['body'], '153985848') === false,
+        'Obsolete provider option and bot contact removed from actual form');
 
     foreach ([
-        ['qq_notify_provider' => 'unknown'], ['qq_official_url' => 'ftp://127.0.0.1/bot'],
+        ['qq_notify_provider' => 'unknown'], ['qq_notify_provider' => ['official']], ['qq_official_url' => 'ftp://127.0.0.1/bot'],
         ['qq_official_url' => 'https://user:password@example.test'], ['qq_official_url' => 'https://example.test?token=x'],
         ['qq_official_token' => 'short'], ['qq_official_token' => str_repeat('x', 32) . "\r\nInjected: x"],
         ['qq_official_targets' => ''], ['qq_official_targets' => 'bad alias'],

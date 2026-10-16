@@ -493,14 +493,19 @@ class Enhancement_ConfigFormHelper
         );
         $form->addInput($enableLinkSubmitByQQ);
 
-        $qqNotifyProvider = new Typecho_Widget_Helper_Form_Element_Radio(
+        $qqNotifyProvider = new class(
             'qq_notify_provider',
-            array('legacy' => _t('现有机器人接口'), 'official' => _t('官方 QQ Bot 服务（私聊 / 群聊）'),
+            array('none' => _t('未配置 / 关闭通知'), 'official' => _t('官方 QQ Bot 服务（私聊 / 群聊）'),
                 'openclaw' => _t('复用 OpenClaw QQ 通道'), 'hermes' => _t('复用 Hermes QQ 通道')),
-            'legacy',
+            'none',
             _t('QQ 通知方式'),
-            _t('OpenClaw / Hermes 使用已有 Agent 的 QQ 通道收发消息，无需另建 Bot 服务。官方 Bot 服务模式使用独立服务。主动消息均受 QQ 平台权限和额度限制。')
-        );
+            _t('OpenClaw / Hermes 使用已有 Agent 的 QQ 通道收发消息，无需另建 Bot 服务。官方 Bot 服务模式使用独立服务。旧 go-cqhttp 接口已移除，原用户需重新选择和配置通道。主动消息均受 QQ 平台权限和额度限制。')
+        ) extends Typecho_Widget_Helper_Form_Element_Radio {
+            protected function inputValue($value)
+            {
+                parent::inputValue($value === 'legacy' || $value === null ? 'none' : $value);
+            }
+        };
         $form->addInput($qqNotifyProvider);
 
         $qqOfficialUrl = new Typecho_Widget_Helper_Form_Element_Text(
@@ -585,36 +590,6 @@ class Enhancement_ConfigFormHelper
         $qqAgentHelp->description(_t('Agent 指令接口：') . '<code>' . htmlspecialchars($qqAgentCommandUrl, ENT_QUOTES, 'UTF-8')
             . '</code><br>' . _t('配置与安装说明见插件 integrations/qq-agent/README.md；只需通知时保持 QQ 侧管理关闭。'));
         $form->addInput($qqAgentHelp);
-
-        $defaultQqApi = defined('__TYPECHO_COMMENT_BY_QQ_API_URL__')
-            ? __TYPECHO_COMMENT_BY_QQ_API_URL__
-            : 'https://bot.asbid.cn';
-        $qq = new Typecho_Widget_Helper_Form_Element_Text(
-            'qq',
-            null,
-            '',
-            _t('接收通知的QQ号'),
-            _t('仅现有机器人接口使用；官方模式请填写接收别名')
-        );
-        $form->addInput($qq);
-
-        $qqboturl = new Typecho_Widget_Helper_Form_Element_Text(
-            'qqboturl',
-            null,
-            $defaultQqApi,
-            _t('机器人API地址'),
-            _t('<p>使用默认API需添加QQ机器人 153985848 为好友</p>默认API：') . $defaultQqApi
-        );
-        $form->addInput($qqboturl);
-
-        $qqAsyncQueue = new Typecho_Widget_Helper_Form_Element_Radio(
-            'qq_async_queue',
-            array('1' => _t('启用（推荐）'), '0' => _t('禁用')),
-            '1',
-            _t('QQ异步队列发送'),
-            _t('仅控制现有机器人接口：由后续页面请求投递。官方服务和 Agent 通道立即发送，失败时留在本地队列等待后续请求重试。')
-        );
-        $form->addInput($qqAsyncQueue);
 
         $qqTestNotifyUrl = Helper::security()->getIndex('/action/enhancement-edit?do=qq-test-notify');
         $qqActionRow = new Typecho_Widget_Helper_Form_Element_Fake('qq_action_row', null);

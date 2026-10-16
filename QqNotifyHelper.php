@@ -4,7 +4,7 @@ require_once __DIR__ . '/QqAgentHelper.php';
 
 class Enhancement_QqNotifyHelper
 {
-    private const OFFICIAL_QUEUE_PREFIX = '__ENHANCEMENT_QQ_OFFICIAL_V1__:';
+    public const OFFICIAL_QUEUE_PREFIX = '__ENHANCEMENT_QQ_OFFICIAL_V1__:';
     private static $queueProcessed = false;
     private static $queueEnsured = false;
 
@@ -13,15 +13,26 @@ class Enhancement_QqNotifyHelper
         return Enhancement_Plugin::runtimeSettings();
     }
 
+    public static function normalizeSettings(array $settings): array
+    {
+        // Old installations and backups must never select a replacement transport automatically.
+        unset($settings['qq'], $settings['qqboturl'], $settings['qq_async_queue']);
+        if (!isset($settings['qq_notify_provider']) || $settings['qq_notify_provider'] === 'legacy') {
+            $settings['qq_notify_provider'] = 'none';
+        }
+        return $settings;
+    }
+
     public static function validateSettings(array $settings)
     {
+        $settings = self::normalizeSettings($settings);
         foreach (array('qq_notify_provider', 'qq_official_url', 'qq_official_token', 'qq_official_targets', 'qq_official_include_links') as $key) {
             if (isset($settings[$key]) && !is_scalar($settings[$key])) {
                 throw new Typecho_Widget_Exception(_t('QQ Bot 配置项必须是文本或开关值'), 400);
             }
         }
-        $provider = isset($settings['qq_notify_provider']) ? (string)$settings['qq_notify_provider'] : 'legacy';
-        if (!in_array($provider, array('legacy', 'official', 'openclaw', 'hermes'), true)) {
+        $provider = (string)$settings['qq_notify_provider'];
+        if (!in_array($provider, array('none', 'official', 'openclaw', 'hermes'), true)) {
             throw new Typecho_Widget_Exception(_t('QQ 通知方式无效'), 400);
         }
         Enhancement_QqAgentHelper::validateSettings($settings);
@@ -37,7 +48,7 @@ class Enhancement_QqNotifyHelper
     private static function provider($settings): string
     {
         return isset($settings->qq_notify_provider) && in_array($settings->qq_notify_provider, array('official', 'openclaw', 'hermes'), true)
-            ? $settings->qq_notify_provider : 'legacy';
+            ? $settings->qq_notify_provider : 'none';
     }
 
     private static function officialUrl($settings): string
@@ -90,7 +101,7 @@ class Enhancement_QqNotifyHelper
             }
             return self::sendOfficial(self::officialEnvelope($message, $settings), $settings);
         }
-        return self::sendLegacyMessage($message, true, $settings);
+        return array('success' => false, 'error' => _t('请先选择并配置官方 QQ Bot、OpenClaw 或 Hermes 通知通道'));
     }
 
     public static function mark($comment, $edit, $status)
@@ -212,15 +223,16 @@ class Enhancement_QqNotifyHelper
         try {
             $db = Typecho_Db::get();
             $table = $db->getPrefix() . 'qq_notify_queue';
+            self::retireObsoleteQueue($db, $table);
+            if (self::provider($settings) === 'none') {
+                return;
+            }
             $query = $db->select()
                 ->from($table)
                 ->where('status = ?', 0)
                 ->where('retries < ?', 5)
                 ->order('qid', Typecho_Db::SORT_ASC)
                 ->limit(1);
-            if (!self::asyncQueueEnabled($settings)) {
-                $query->where('(message LIKE ? OR message LIKE ?)', self::OFFICIAL_QUEUE_PREFIX . '%', Enhancement_QqAgentHelper::QUEUE_PREFIX . '%');
-            }
             $row = $db->fetchRow($query);
 
             if (!is_array($row) || empty($row)) {
@@ -234,18 +246,15 @@ class Enhancement_QqNotifyHelper
                 return;
             }
 
-            // Unversioned rows always belong to the original send_msg provider.
             $official = strpos($message, self::OFFICIAL_QUEUE_PREFIX) === 0;
             $agent = strpos($message, Enhancement_QqAgentHelper::QUEUE_PREFIX) === 0;
-            if (!$official && !$agent && !self::asyncQueueEnabled($settings)) {
+            if (!$official && !$agent) {
                 return;
             }
             if ($agent) {
                 $result = Enhancement_QqAgentHelper::send(json_decode(substr($message, strlen(Enhancement_QqAgentHelper::QUEUE_PREFIX)), true), $settings, $retries + 1);
             } else {
-                $result = $official
-                    ? self::sendOfficial(json_decode(substr($message, strlen(self::OFFICIAL_QUEUE_PREFIX)), true), $settings)
-                    : self::sendLegacyMessage($message, true, $settings);
+                $result = self::sendOfficial(json_decode(substr($message, strlen(self::OFFICIAL_QUEUE_PREFIX)), true), $settings);
             }
             if (!empty($result['success'])) {
                 $db->query(
@@ -281,6 +290,20 @@ class Enhancement_QqNotifyHelper
         }
     }
 
+    private static function retireObsoleteQueue($db, string $table)
+    {
+        $db->query($db->update($table)
+            ->rows(array(
+                'status' => 2,
+                'retries' => 5,
+                'updated' => time(),
+                'last_error' => _t('旧 QQ 机器人推送方式已移除，此通知停止投递')
+            ))
+            ->where('status = ?', 0)
+            ->where('SUBSTR(message, 1, ?) <> ?', strlen(self::OFFICIAL_QUEUE_PREFIX), self::OFFICIAL_QUEUE_PREFIX)
+            ->where('SUBSTR(message, 1, ?) <> ?', strlen(Enhancement_QqAgentHelper::QUEUE_PREFIX), Enhancement_QqAgentHelper::QUEUE_PREFIX));
+    }
+
     public static function getQueueStats(): array
     {
         self::ensureQueueTable();
@@ -295,6 +318,7 @@ class Enhancement_QqNotifyHelper
         try {
             $db = Typecho_Db::get();
             $table = $db->getPrefix() . 'qq_notify_queue';
+            self::retireObsoleteQueue($db, $table);
             $rows = $db->fetchAll(
                 $db->select('status', array('COUNT(qid)' => 'num'))
                     ->from($table)
@@ -349,10 +373,7 @@ class Enhancement_QqNotifyHelper
         if (self::provider($settings) === 'official') {
             return self::officialConfigurationError($settings) === '';
         }
-        $apiUrl = isset($settings->qqboturl) ? trim((string)$settings->qqboturl) : '';
-        $qqNum = isset($settings->qq) ? trim((string)$settings->qq) : '';
-
-        return $apiUrl !== '' && $qqNum !== '';
+        return false;
     }
 
     private static function dispatchMessage(string $message, $settings = null)
@@ -376,7 +397,7 @@ class Enhancement_QqNotifyHelper
             if ($encoded === false) {
                 return;
             }
-            $qid = self::enqueue(Enhancement_QqAgentHelper::QUEUE_PREFIX . $encoded, false);
+            $qid = self::enqueue(Enhancement_QqAgentHelper::QUEUE_PREFIX . $encoded);
             $result = Enhancement_QqAgentHelper::send($envelope, $settings);
             if ($qid > 0) {
                 self::recordOfficialResult($qid, $result);
@@ -393,7 +414,7 @@ class Enhancement_QqNotifyHelper
                 return;
             }
             // Persist the idempotency key before contacting the service, then hand off now.
-            $qid = self::enqueue(self::OFFICIAL_QUEUE_PREFIX . $encoded, false);
+            $qid = self::enqueue(self::OFFICIAL_QUEUE_PREFIX . $encoded);
             $result = self::sendOfficial($envelope, $settings);
             if ($qid > 0) {
                 self::recordOfficialResult($qid, $result);
@@ -402,29 +423,9 @@ class Enhancement_QqNotifyHelper
             }
             return;
         }
-
-        if (self::asyncQueueEnabled($settings)) {
-            self::enqueue($message);
-            return;
-        }
-
-        self::sendLegacyMessage($message, false, $settings);
     }
 
-    private static function asyncQueueEnabled($settings = null): bool
-    {
-        if ($settings === null) {
-            $settings = self::runtimeSettings();
-        }
-
-        if (!isset($settings->qq_async_queue)) {
-            return true;
-        }
-
-        return $settings->qq_async_queue == '1';
-    }
-
-    private static function enqueue(string $message, bool $legacyFallback = true): int
+    private static function enqueue(string $message): int
     {
         $message = trim($message);
         if ($message === '') {
@@ -447,9 +448,6 @@ class Enhancement_QqNotifyHelper
                 ))
             );
         } catch (Exception $e) {
-            if ($legacyFallback) {
-                self::sendLegacyMessage($message, false);
-            }
             return 0;
         }
     }
@@ -664,125 +662,5 @@ class Enhancement_QqNotifyHelper
         // Never echo or persist the service response body: it may contain secrets.
         $result['error'] = _t('Bot 服务未接受通知（HTTP %d），请检查服务日志、接收别名和访问令牌', $httpCode);
         return $result;
-    }
-
-    private static function sendLegacyMessage(string $message, bool $returnResult = false, $settings = null)
-    {
-        $result = array('success' => false, 'error' => '');
-
-        $settings = $settings === null ? self::runtimeSettings() : $settings;
-        $apiUrl = isset($settings->qqboturl) ? trim((string)$settings->qqboturl) : '';
-        $qqNum = isset($settings->qq) ? trim((string)$settings->qq) : '';
-
-        if ($apiUrl === '' || $qqNum === '') {
-            $result['error'] = 'qq settings missing';
-            return $returnResult ? $result : false;
-        }
-
-        $payload = array(
-            'user_id' => (int)$qqNum,
-            'message' => (string)$message
-        );
-
-        if (!function_exists('curl_init')) {
-            $result['error'] = 'curl extension missing';
-            return $returnResult ? $result : false;
-        }
-
-        $jsonPayload = json_encode($payload, JSON_UNESCAPED_UNICODE);
-        if ($jsonPayload === false) {
-            $result['error'] = 'payload json encode failed';
-            return $returnResult ? $result : false;
-        }
-
-        $endpoint = rtrim($apiUrl, '/') . '/send_msg';
-        $lastErrorNo = 0;
-        $lastError = '';
-        $lastHttpCode = 0;
-        $lastResponse = '';
-
-        for ($attempt = 1; $attempt <= 2; $attempt++) {
-            $ch = curl_init();
-            $curlOptions = array(
-                CURLOPT_URL => $endpoint,
-                CURLOPT_POST => true,
-                CURLOPT_POSTFIELDS => $jsonPayload,
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_CONNECTTIMEOUT => 3,
-                CURLOPT_TIMEOUT => 5,
-                CURLOPT_HTTPHEADER => array(
-                    'Content-Type: application/json; charset=UTF-8',
-                    'Accept: application/json'
-                ),
-                CURLOPT_SSL_VERIFYPEER => false
-            );
-
-            if (defined('CURLOPT_IPRESOLVE') && defined('CURL_IPRESOLVE_V4')) {
-                $curlOptions[CURLOPT_IPRESOLVE] = CURL_IPRESOLVE_V4;
-            }
-            if (defined('CURLOPT_NOSIGNAL')) {
-                $curlOptions[CURLOPT_NOSIGNAL] = true;
-            }
-
-            curl_setopt_array($ch, $curlOptions);
-
-            $response = curl_exec($ch);
-            $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            $errno = curl_errno($ch);
-            $error = $errno ? curl_error($ch) : '';
-            curl_close($ch);
-
-            if ($errno === 0 && $httpCode >= 200 && $httpCode < 300) {
-                $decoded = json_decode((string)$response, true);
-                if (is_array($decoded)) {
-                    if (isset($decoded['retcode']) && intval($decoded['retcode']) !== 0) {
-                        $lastErrorNo = 0;
-                        $lastError = 'retcode=' . intval($decoded['retcode']);
-                        $lastHttpCode = $httpCode;
-                        $lastResponse = substr((string)$response, 0, 200);
-                        break;
-                    }
-                    if (isset($decoded['status']) && strtolower((string)$decoded['status']) !== 'ok') {
-                        $lastErrorNo = 0;
-                        $lastError = 'status=' . strtolower((string)$decoded['status']);
-                        $lastHttpCode = $httpCode;
-                        $lastResponse = substr((string)$response, 0, 200);
-                        break;
-                    }
-                }
-
-                $result['success'] = true;
-                return $returnResult ? $result : true;
-            }
-
-            $lastErrorNo = $errno;
-            $lastError = $error;
-            $lastHttpCode = $httpCode;
-            $lastResponse = substr((string)$response, 0, 200);
-
-            if ($errno === CURLE_OPERATION_TIMEDOUT && $attempt < 2) {
-                usleep(150000);
-                continue;
-            }
-            break;
-        }
-
-        if ($lastErrorNo !== 0) {
-            if ($lastErrorNo !== CURLE_OPERATION_TIMEDOUT) {
-                error_log('[Enhancement][CommentsByQQ] CURL错误: ' . $lastError);
-            }
-            $result['error'] = $lastError !== '' ? $lastError : ('curl errno=' . $lastErrorNo);
-            return $returnResult ? $result : false;
-        }
-
-        if ($lastHttpCode >= 400) {
-            error_log(sprintf('[Enhancement][CommentsByQQ] 响应异常 [HTTP %d]: %s', $lastHttpCode, $lastResponse));
-        }
-
-        $result['error'] = $lastError !== ''
-            ? $lastError
-            : ($lastResponse !== '' ? $lastResponse : ('http=' . $lastHttpCode));
-
-        return $returnResult ? $result : false;
     }
 }

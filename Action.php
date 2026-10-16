@@ -587,6 +587,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             throw new Typecho_Widget_Exception(_t('没有可保存的配置项'));
         }
 
+        $settings = Enhancement_QqNotifyHelper::normalizeSettings($settings);
         Enhancement_CommentGuardHelper::validateSettings($settings);
         Enhancement_QqNotifyHelper::validateSettings($settings);
         $storedValue = $this->encodeStoredPluginSettingsValue($settings);
@@ -1746,6 +1747,9 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
                         'updated' => time()
                     ))
                     ->where('status = ?', 2)
+                    ->where('(SUBSTR(message, 1, ?) = ? OR SUBSTR(message, 1, ?) = ?)',
+                        strlen(Enhancement_QqNotifyHelper::OFFICIAL_QUEUE_PREFIX), Enhancement_QqNotifyHelper::OFFICIAL_QUEUE_PREFIX,
+                        strlen(Enhancement_QqAgentHelper::QUEUE_PREFIX), Enhancement_QqAgentHelper::QUEUE_PREFIX)
             );
 
             $this->qqQueueResponse(true, _t('已将 %d 条失败记录标记为待重试', intval($affected)), 200);
@@ -2168,7 +2172,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         return is_array($row) ? $row : null;
     }
 
-    private function canUseLinkNotificationMail(array $settings = null): bool
+    private function canUseLinkNotificationMail(?array $settings = null): bool
     {
         if ($settings === null) {
             $settings = $this->collectPluginSettings();
@@ -2189,7 +2193,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         return true;
     }
 
-    private function getLinkAdminMailRecipient(array $settings = null)
+    private function getLinkAdminMailRecipient(?array $settings = null)
     {
         if ($settings === null) {
             $settings = $this->collectPluginSettings();
@@ -2222,7 +2226,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         );
     }
 
-    private function canSendLinkSubmitAdminMail(array $settings = null): bool
+    private function canSendLinkSubmitAdminMail(?array $settings = null): bool
     {
         if ($settings === null) {
             $settings = $this->collectPluginSettings();
@@ -2246,7 +2250,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         return is_array($this->getLinkAdminMailRecipient($settings));
     }
 
-    private function sendLinkNotificationMail($email, $toName, $subject, $html, array $settings = null): bool
+    private function sendLinkNotificationMail($email, $toName, $subject, $html, ?array $settings = null): bool
     {
         $email = trim((string)$email);
         if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
@@ -2310,7 +2314,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         }
     }
 
-    private function sendLinkSubmissionAdminMail(array $link, array $settings = null): bool
+    private function sendLinkSubmissionAdminMail(array $link, ?array $settings = null): bool
     {
         if ($settings === null) {
             $settings = $this->collectPluginSettings();
@@ -2370,7 +2374,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         );
     }
 
-    private function canSendLinkApprovalMail(array $settings = null): bool
+    private function canSendLinkApprovalMail(?array $settings = null): bool
     {
         if ($settings === null) {
             $settings = $this->collectPluginSettings();
@@ -2398,7 +2402,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         return true;
     }
 
-    private function sendLinkApprovalMail(array $link, array $settings = null): bool
+    private function sendLinkApprovalMail(array $link, ?array $settings = null): bool
     {
         $email = isset($link['email']) ? trim((string)$link['email']) : '';
         if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
