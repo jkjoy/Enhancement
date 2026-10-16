@@ -495,11 +495,12 @@ class Enhancement_ConfigFormHelper
 
         $qqNotifyProvider = new class(
             'qq_notify_provider',
-            array('none' => _t('未配置 / 关闭通知'), 'official' => _t('官方 QQ Bot 服务（私聊 / 群聊）'),
+            array('none' => _t('未配置 / 关闭通知'), 'standalone' => _t('独立 QQ 通道（无需智能体，推荐）'),
+                'official' => _t('官方 QQ Bot 服务（Webhook）'),
                 'openclaw' => _t('复用 OpenClaw QQ 通道'), 'hermes' => _t('复用 Hermes QQ 通道')),
             'none',
             _t('QQ 通知方式'),
-            _t('OpenClaw / Hermes 使用已有 Agent 的 QQ 通道收发消息，无需另建 Bot 服务。官方 Bot 服务模式使用独立服务。旧 go-cqhttp 接口已移除，原用户需重新选择和配置通道。主动消息均受 QQ 平台权限和额度限制。')
+            _t('独立 QQ 通道使用 qq-channel Docker 服务，通过腾讯 SDK 收发消息及执行固定博客管理指令，无需 OpenClaw、Hermes 或模型。官方 Webhook 模式使用 qq-official-bot 服务；OpenClaw / Hermes 使用已部署的智能体通道。主动消息受 QQ 平台权限和额度限制。')
         ) extends Typecho_Widget_Helper_Form_Element_Radio {
             protected function inputValue($value)
             {
@@ -509,13 +510,13 @@ class Enhancement_ConfigFormHelper
         $form->addInput($qqNotifyProvider);
 
         $qqOfficialUrl = new Typecho_Widget_Helper_Form_Element_Text(
-            'qq_official_url', null, '', _t('官方 Bot 服务地址'),
-            _t('填写独立 Bot 服务根地址，例如 http://127.0.0.1:8080；公网部署请使用 HTTPS。AppID 与 AppSecret 仅在 Bot 服务中配置。')
+            'qq_official_url', null, '', _t('独立 QQ / 官方 Bot 服务地址'),
+            _t('独立 QQ 通道和官方 Webhook 模式共用此项。填写服务根地址，例如 http://127.0.0.1:8080；公网部署使用 HTTPS。AppID 与 AppSecret 仅在服务中配置。')
         );
         $form->addInput($qqOfficialUrl);
 
         $qqOfficialToken = new class(
-            'qq_official_token', null, '', _t('官方 Bot 服务访问令牌'),
+            'qq_official_token', null, '', _t('独立 QQ / 官方 Bot 服务访问令牌'),
             _t('与 Bot 服务 BOT_API_TOKEN 一致，至少 32 位非空白 ASCII 字符。保存后不显示，留空保留已保存令牌。')
         ) extends Typecho_Widget_Helper_Form_Element_Password {
             protected function inputValue($value)
@@ -528,14 +529,14 @@ class Enhancement_ConfigFormHelper
         $form->addInput($qqOfficialToken);
 
         $qqOfficialTargets = new Typecho_Widget_Helper_Form_Element_Textarea(
-            'qq_official_targets', null, '', _t('官方 Bot 接收别名'),
+            'qq_official_targets', null, '', _t('独立 QQ / 官方 Bot 接收别名'),
             _t('每行一个已在 Bot 服务绑定的别名，可同时填写私聊与群聊目标；最多 20 个。仅支持 1 至 64 位英文字母、数字、下划线和连字符，不能直接填写 QQ 号或群号。')
         );
         $form->addInput($qqOfficialTargets);
 
         $qqOfficialIncludeLinks = new Typecho_Widget_Helper_Form_Element_Radio(
             'qq_official_include_links', array('1' => _t('包含链接'), '0' => _t('省略链接')), '1',
-            _t('官方 Bot 通知中的链接'),
+            _t('独立 QQ / 官方 Bot 通知中的链接'),
             _t('未在 QQ 开放平台报备消息域名时可选择省略链接，文章、友链和审核地址等 URL 将被移除。官方消息会按 UTF-8 安全截短到 1800 字节。')
         );
         $form->addInput($qqOfficialIncludeLinks);
@@ -547,7 +548,7 @@ class Enhancement_ConfigFormHelper
         $form->addInput($qqAgentUrl);
         foreach (array(
             'qq_agent_token' => array(_t('Agent 通知凭据'), _t('OpenClaw 填 Gateway Token；Hermes 填 enhancement Webhook 路由密钥。至少 32 位，保存后不回显，留空保留。OpenClaw 凭据具有网关操作权限，仅通过可信内网或 HTTPS 连接。')),
-            'qq_agent_command_secret' => array(_t('QQ 指令回调密钥'), _t('与 Agent 通知凭据使用不同的随机密钥，至少 32 位。在 Agent 端配置同一值；保存后不回显，留空保留。'))
+            'qq_agent_command_secret' => array(_t('QQ 指令回调密钥'), _t('与通知凭据使用不同的随机密钥，至少 32 位。独立服务填入 ENHANCEMENT_COMMAND_SECRET；Agent 模式在智能体端配置同一值。保存后不回显，留空保留。'))
         ) as $name => $labels) {
             $secret = new class($name, null, '', $labels[0], $labels[1]) extends Typecho_Widget_Helper_Form_Element_Password {
                 protected function inputValue($value)
@@ -574,11 +575,11 @@ class Enhancement_ConfigFormHelper
         $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
             'qq_agent_commands', array('1' => _t('启用'), '0' => _t('关闭')), '0',
             _t('允许 QQ 侧管理博客'),
-            _t('需选择 OpenClaw / Hermes 通道，并在 Agent 安装插件提供的 enhancement-qq 技能。支持评论查询、审核、回复和友链审核；只接受签名且来自白名单用户的指令。')
+            _t('独立 QQ 通道使用固定指令，无需技能或模型；OpenClaw / Hermes 需安装 enhancement-qq 技能。支持评论查询、审核、回复和友链审核；只接受签名且来自白名单用户的指令。')
         ));
         $form->addInput(new Typecho_Widget_Helper_Form_Element_Textarea(
             'qq_agent_allowed_senders', null, '', _t('允许 QQ 指令的用户 OpenID'),
-            _t('每行一个站长 QQ 用户 OpenID，最多 20 个，不支持通配符。插件信任 Agent 对消息来源身份的转述；Agent 端也应限制允许交互的用户和群。')
+            _t('每行一个站长 QQ 用户 OpenID，最多 20 个，不支持通配符。独立服务还需配置 QQ_ALLOWED_USERS，群指令另配 QQ_ALLOWED_GROUPS；Agent 模式也需限制允许交互的用户和群。')
         ));
         $form->addInput(new Typecho_Widget_Helper_Form_Element_Text(
             'qq_agent_admin_uid', null, '1', _t('QQ 指令执行身份 UID'),
@@ -587,8 +588,8 @@ class Enhancement_ConfigFormHelper
         $qqAgentCommandUrl = Typecho_Common::url('action/enhancement-edit?do=qq-agent-command', Typecho_Widget::widget('Widget_Options')->index);
         $qqAgentHelp = new Typecho_Widget_Helper_Form_Element_Fake('qq_agent_help', null);
         $qqAgentHelp->input->setAttribute('type', 'hidden');
-        $qqAgentHelp->description(_t('Agent 指令接口：') . '<code>' . htmlspecialchars($qqAgentCommandUrl, ENT_QUOTES, 'UTF-8')
-            . '</code><br>' . _t('配置与安装说明见插件 integrations/qq-agent/README.md；只需通知时保持 QQ 侧管理关闭。'));
+        $qqAgentHelp->description(_t('QQ 指令接口：') . '<code>' . htmlspecialchars($qqAgentCommandUrl, ENT_QUOTES, 'UTF-8')
+            . '</code><br>' . _t('独立服务部署见 integrations/qq-channel/README.md；智能体接入见 integrations/qq-agent/README.md。只需通知时保持 QQ 侧管理关闭。'));
         $form->addInput($qqAgentHelp);
 
         $qqTestNotifyUrl = Helper::security()->getIndex('/action/enhancement-edit?do=qq-test-notify');

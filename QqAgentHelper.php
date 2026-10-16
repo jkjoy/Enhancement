@@ -1,6 +1,6 @@
 <?php
 
-/** Reuse the QQ channel owned by an existing OpenClaw or Hermes gateway. */
+/** Agent notification transports and shared signed QQ management configuration. */
 class Enhancement_QqAgentHelper
 {
     public const QUEUE_PREFIX = '__ENHANCEMENT_QQ_AGENT_V1__:';
@@ -8,6 +8,11 @@ class Enhancement_QqAgentHelper
     public static function enabled($settings): bool
     {
         return isset($settings->qq_notify_provider) && in_array($settings->qq_notify_provider, array('openclaw', 'hermes'), true);
+    }
+
+    public static function commandsSupported($settings): bool
+    {
+        return self::enabled($settings) || ($settings->qq_notify_provider ?? '') === 'standalone';
     }
 
     public static function validateSettings(array $settings)
@@ -34,12 +39,14 @@ class Enhancement_QqAgentHelper
             }
         }
         if (($settings['qq_agent_commands'] ?? '0') === '1') {
-            if (!self::enabled((object)$settings)) {
-                throw new Typecho_Widget_Exception(_t('启用 QQ 侧指令时请选择 OpenClaw 或 Hermes 通道'), 400);
+            if (!self::commandsSupported((object)$settings)) {
+                throw new Typecho_Widget_Exception(_t('启用 QQ 侧指令时请选择独立 QQ 通道、OpenClaw 或 Hermes'), 400);
             }
             self::validateSecret($settings['qq_agent_command_secret'] ?? '');
-            if (hash_equals((string)($settings['qq_agent_token'] ?? ''), (string)$settings['qq_agent_command_secret'])) {
-                throw new Typecho_Widget_Exception(_t('指令密钥必须与 Agent 通知凭据不同'), 400);
+            $notificationToken = ($settings['qq_notify_provider'] ?? '') === 'standalone'
+                ? ($settings['qq_official_token'] ?? '') : ($settings['qq_agent_token'] ?? '');
+            if (hash_equals((string)$notificationToken, (string)$settings['qq_agent_command_secret'])) {
+                throw new Typecho_Widget_Exception(_t('指令密钥必须与通知凭据不同'), 400);
             }
             $senders = self::allowedSenders((object)$settings);
             if (count($senders) < 1 || count($senders) > 20) {
@@ -59,7 +66,7 @@ class Enhancement_QqAgentHelper
     private static function validateSecret($secret)
     {
         if (!is_string($secret) || !preg_match('/\A[\x21-\x7e]{32,1024}\z/D', $secret)) {
-            throw new Typecho_Widget_Exception(_t('Agent 凭据和指令密钥须为 32 至 1024 位非空白 ASCII 字符'), 400);
+            throw new Typecho_Widget_Exception(_t('QQ 通知凭据和指令密钥须为 32 至 1024 位非空白 ASCII 字符'), 400);
         }
     }
 

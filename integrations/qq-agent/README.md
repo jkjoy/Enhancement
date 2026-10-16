@@ -1,5 +1,7 @@
 # Enhancement 复用 Agent QQ 双向通道
 
+未部署 OpenClaw/Hermes、只需要 QQ 通道时，可选用 [独立 QQ 双向通道](../qq-channel/README.md)，通过腾讯 SDK 和固定指令管理博客，无需智能体或模型。以下说明适用于复用已有智能体的方式。
+
 Enhancement 可以使用 **OpenClaw 或 Hermes 已经连接的官方 QQ Bot** 发送评论、友链通知。QQ 中的站长指令由 Agent 调用插件的签名接口，插件执行评论查询、审核、回复和友链审核，再由 Agent 在原会话中回复结果。此模式不需要 `qq-official-bot` 独立服务，也不需要在插件保存 QQ AppSecret。
 
 ```mermaid

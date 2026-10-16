@@ -17,7 +17,7 @@
 7. 评论同步：游客/登录用户评论时自动同步历史评论中的网址/昵称/邮箱
 8. 标签助手：后台写文章时显示标签快捷选择列表
 9. 站点地图：提供 `/sitemap.xml`
-10. QQ评论通知：支持官方 Bot，以及复用 OpenClaw / Hermes QQ 双向通道
+10. QQ评论通知：支持无需智能体的独立 QQ 双向通道、官方 Webhook Bot，以及复用 OpenClaw / Hermes
 11. 评论邮件提醒：支持 SMTP 推送，支持模板管理
 12. 可选`Gravatar`头像镜像加速
 13. 可选视频链接解析：自动将 YouTube / Bilibili / 优酷链接替换为播放器
@@ -79,7 +79,7 @@
 - Turnstile 人机验证（评论/友链提交）
 - 仅游客评论启用 Turnstile（登录用户评论可免验证）
 - 评论防御（默认关闭，普通评论和 REST API 共用规则，含单独的内容/IP/限频开关）
-- QQ 通知方式（官方 QQ Bot / OpenClaw / Hermes），支持私聊和群聊，以及独立的 QQ 侧管理开关
+- QQ 通知方式（独立 QQ 通道 / 官方 Webhook Bot / OpenClaw / Hermes），支持私聊和群聊，以及独立的 QQ 侧管理开关
 - 禁用插件时是否删除友情链接表（links，默认否）
 - 禁用插件时是否删除说说表（moments，默认否）
 - 禁用插件时是否删除 QQ 通知队列表（qq_notify_queue，默认否）
@@ -181,11 +181,13 @@
 `content`（必填，支持 Markdown）、`tags`（可选）、`media`（可选，若不填则从内容自动解析）、`created`（可选，时间戳或时间字符串）
 `status`（可选，`public` 或 `private`）、`latitude` / `longitude`（可选，经纬度；也支持 `lat` / `lng`）
 
-### 官方 QQ Bot 通知
+### QQ 双向通道与通知
+
+**1.5.0 新增独立 QQ 通道，适合没有部署智能体的服务器。** 配套服务位于 [dockerfile/qq-channel](https://github.com/jkjoy/dockerfile/tree/main/qq-channel)，使用腾讯 SDK 通过 WebSocket 接收 QQ 私聊及群聊消息，提供通知推送和固定的评论查询、审核、回复与友链审核指令。无需 OpenClaw、Hermes、模型或公网事件回调地址，Docker 部署及插件配置见 [独立 QQ 通道说明](integrations/qq-channel/README.md)。
 
 也可直接复用已部署的 OpenClaw / Hermes QQ 通道，发送通知并接收站长的评论查询、审核、回复与友链审核指令。无需另建 Bot 服务，配置与 Agent 技能见 [QQ 双向通道接入说明](integrations/qq-agent/README.md)。QQ 侧管理具有独立开关，默认关闭。
 
-「QQ」设置中的「通知方式」可选择官方 QQ Bot、OpenClaw 或 Hermes；默认「未配置 / 关闭通知」，评论通过通知与友链申请通知仍使用各自开关。选择关闭通知时，本地待发记录也暂停投递。
+「QQ」设置中的「通知方式」可选择独立 QQ 通道、官方 QQ Bot 服务（Webhook）、OpenClaw 或 Hermes；默认「未配置 / 关闭通知」，评论通过通知与友链申请通知仍使用各自开关。选择关闭通知时，本地待发记录也暂停投递。
 
 从 1.4.1 起移除旧 go-cqhttp / OneBot 推送接口、接收 QQ 号和旧异步发送开关。原用户升级后需重新选择并配置上述通道；保存设置或恢复旧备份时会清理废弃配置。旧接口的待发队列保留为失败记录并注明停止投递原因，手动重试仅处理现代通道记录。
 

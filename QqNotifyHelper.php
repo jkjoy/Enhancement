@@ -32,11 +32,11 @@ class Enhancement_QqNotifyHelper
             }
         }
         $provider = (string)$settings['qq_notify_provider'];
-        if (!in_array($provider, array('none', 'official', 'openclaw', 'hermes'), true)) {
+        if (!in_array($provider, array('none', 'official', 'standalone', 'openclaw', 'hermes'), true)) {
             throw new Typecho_Widget_Exception(_t('QQ 通知方式无效'), 400);
         }
         Enhancement_QqAgentHelper::validateSettings($settings);
-        if ($provider !== 'official') {
+        if (!in_array($provider, array('official', 'standalone'), true)) {
             return;
         }
         $error = self::officialConfigurationError((object)$settings);
@@ -47,7 +47,7 @@ class Enhancement_QqNotifyHelper
 
     private static function provider($settings): string
     {
-        return isset($settings->qq_notify_provider) && in_array($settings->qq_notify_provider, array('official', 'openclaw', 'hermes'), true)
+        return isset($settings->qq_notify_provider) && in_array($settings->qq_notify_provider, array('official', 'standalone', 'openclaw', 'hermes'), true)
             ? $settings->qq_notify_provider : 'none';
     }
 
@@ -94,14 +94,14 @@ class Enhancement_QqNotifyHelper
         if (Enhancement_QqAgentHelper::enabled($settings)) {
             return Enhancement_QqAgentHelper::send(Enhancement_QqAgentHelper::envelope($message, $settings), $settings);
         }
-        if (self::provider($settings) === 'official') {
+        if (in_array(self::provider($settings), array('official', 'standalone'), true)) {
             $error = self::officialConfigurationError($settings);
             if ($error !== '') {
                 return array('success' => false, 'error' => $error);
             }
             return self::sendOfficial(self::officialEnvelope($message, $settings), $settings);
         }
-        return array('success' => false, 'error' => _t('请先选择并配置官方 QQ Bot、OpenClaw 或 Hermes 通知通道'));
+        return array('success' => false, 'error' => _t('请先选择并配置独立 QQ 通道、官方 QQ Bot、OpenClaw 或 Hermes'));
     }
 
     public static function mark($comment, $edit, $status)
@@ -370,7 +370,7 @@ class Enhancement_QqNotifyHelper
                 return false;
             }
         }
-        if (self::provider($settings) === 'official') {
+        if (in_array(self::provider($settings), array('official', 'standalone'), true)) {
             return self::officialConfigurationError($settings) === '';
         }
         return false;
@@ -407,7 +407,7 @@ class Enhancement_QqNotifyHelper
             return;
         }
 
-        if (self::provider($settings) === 'official') {
+        if (in_array(self::provider($settings), array('official', 'standalone'), true)) {
             $envelope = self::officialEnvelope($message, $settings);
             $encoded = json_encode($envelope, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             if ($encoded === false) {
@@ -540,7 +540,7 @@ class Enhancement_QqNotifyHelper
     private static function officialEnvelope(string $message, $settings): array
     {
         return array(
-            'provider' => 'official',
+            'provider' => self::provider($settings),
             'message' => self::prepareMessage($message, !isset($settings->qq_official_include_links) || $settings->qq_official_include_links == '1'),
             'targets' => self::officialTargets($settings),
             'serviceURL' => self::officialUrl($settings),
@@ -566,17 +566,21 @@ class Enhancement_QqNotifyHelper
 
     private static function sendOfficial($envelope, $settings): array
     {
-        $result = array('success' => false, 'error' => '', 'provider' => 'official');
+        $result = array('success' => false, 'error' => '', 'provider' => self::provider($settings));
         $error = self::officialConfigurationError($settings);
         if ($error !== '') {
             $result['error'] = $error;
             return $result;
         }
         if (!is_array($envelope) || !isset($envelope['provider'], $envelope['message'], $envelope['targets'], $envelope['serviceURL'], $envelope['requestId'])
-            || $envelope['provider'] !== 'official' || !is_string($envelope['message']) || !is_array($envelope['targets'])
+            || !in_array($envelope['provider'], array('official', 'standalone'), true) || !is_string($envelope['message']) || !is_array($envelope['targets'])
             || !is_string($envelope['serviceURL']) || !is_string($envelope['requestId'])
             || !preg_match('/\A[a-f0-9]{40}\z/D', $envelope['requestId'])) {
             $result['error'] = _t('官方 QQ Bot 本地队列记录无效');
+            return $result;
+        }
+        if ($envelope['provider'] !== self::provider($settings)) {
+            $result['error'] = _t('QQ 服务类型已更改，请恢复原类型后重试或清空旧队列');
             return $result;
         }
         if ($envelope['serviceURL'] !== self::officialUrl($settings)) {

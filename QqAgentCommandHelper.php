@@ -1,6 +1,6 @@
 <?php
 
-/** Finite blog operations invoked by the trusted QQ Agent adapter. */
+/** Finite blog operations invoked by a trusted independent QQ service or Agent. */
 class Enhancement_QqAgentCommandHelper
 {
     public static function handle($action)
@@ -9,7 +9,7 @@ class Enhancement_QqAgentCommandHelper
         $status = 200;
         $body = array();
         try {
-            if (!Enhancement_QqAgentHelper::enabled($settings) || ($settings->qq_agent_commands ?? '0') !== '1') {
+            if (!Enhancement_QqAgentHelper::commandsSupported($settings) || ($settings->qq_agent_commands ?? '0') !== '1') {
                 throw new Typecho_Widget_Exception('commands_disabled', 404);
             }
             if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
