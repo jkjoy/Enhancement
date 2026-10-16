@@ -142,6 +142,51 @@ try {
     qqCheck($response['status'] === 200 && ($migrated['qq_notify_provider'] ?? '') === 'none'
         && !isset($migrated['qq']) && !isset($migrated['qqboturl']) && !isset($migrated['qq_async_queue']),
         'Restoring old settings cannot revive obsolete transport', $response);
+
+    // Upgrade both retired providers with their complete historical configuration.
+    $retiredSettings = ['qq_agent_url' => $botBase . '/retired-api', 'qq_agent_token' => 'retired-secret-' . str_repeat('z', 32),
+        'qq_agent_target' => 'qqbot:c2c:retired-owner', 'qq_agent_account' => 'retired-account', 'qq_agent_include_links' => '1',
+        'qq_agent_commands' => '1', 'qq_agent_command_secret' => 'retained-command-secret-' . str_repeat('y', 32),
+        'qq_agent_allowed_senders' => 'retired-owner', 'qq_agent_admin_uid' => '1', 'enable_comment_by_qq' => '1'];
+    $retiredKeys = ['qq_agent_url', 'qq_agent_token', 'qq_agent_target', 'qq_agent_account', 'qq_agent_include_links'];
+    foreach (['openclaw', 'hermes'] as $provider) {
+        $historical = $retiredSettings + ['qq_notify_provider' => $provider];
+        $pdo->prepare("UPDATE typecho_options SET value=? WHERE name='plugin:Enhancement' AND user=0")
+            ->execute([serialize($historical)]);
+        $before = count(qqRequests());
+        $response = qqCall('/test');
+        qqCall('/dispatch');
+        qqCall('/comment');
+        qqCall('/process');
+        qqCheck(($response['json']['success'] ?? true) === false && count(qqRequests()) === $before && qqQueue() === [],
+            'Unsaved retired provider cannot test, enqueue or send: ' . $provider);
+        $response = fixtureRequest($base, '/form');
+        $form = $response['body'];
+        qqCheck($response['status'] === 200 && qqSettings() === $historical,
+            'Historical provider fields bind safely without changing stored settings: ' . $provider, $response['status']);
+        qqCheck(preg_match('/<input[^>]*id="qq_notify_provider-none"[^>]*checked=/', $form) === 1
+            && preg_match('/<input[^>]*id="qq_agent_commands-0"[^>]*checked=/', $form) === 1,
+            'Retired provider form selects disabled notification and management: ' . $provider);
+        qqCheck(strpos($form, 'value="openclaw"') === false && strpos($form, 'value="hermes"') === false,
+            'Real settings form no longer offers either retired provider');
+        foreach ($retiredKeys as $key) {
+            qqCheck(strpos($form, 'name="' . $key . '"') === false, 'Removed transport field cannot render or submit: ' . $key);
+        }
+        qqCheck(strpos($form, $historical['qq_agent_url']) === false && strpos($form, $historical['qq_agent_token']) === false
+            && strpos($form, $historical['qq_agent_target']) === false && strpos($form, $historical['qq_agent_account']) === false
+            && strpos($form, $historical['qq_agent_command_secret']) === false, 'Historical transport values and secrets never appear in HTML');
+        $response = qqConfig(['enable_link_submit_by_qq' => '0']);
+        $migrated = qqSettings();
+        qqCheck($response['status'] === 200 && $migrated['qq_notify_provider'] === 'none' && $migrated['qq_agent_commands'] === '0'
+            && array_intersect($retiredKeys, array_keys($migrated)) === []
+            && $migrated['qq_agent_command_secret'] === $historical['qq_agent_command_secret'],
+            'Unrelated save disables retired provider and drops only obsolete transport settings: ' . $provider, $response);
+        $response = qqCall('/restore', $historical);
+        $migrated = qqSettings();
+        qqCheck($response['status'] === 200 && $migrated['qq_notify_provider'] === 'none' && $migrated['qq_agent_commands'] === '0'
+            && array_intersect($retiredKeys, array_keys($migrated)) === [],
+            'Restoring old provider backup cannot revive transport or management: ' . $provider, $response);
+    }
     qqConfig(['enable_comment_by_qq' => '0', 'enable_link_submit_by_qq' => '0']);
     $before = count(qqRequests());
     qqCall('/comment');
@@ -221,6 +266,30 @@ try {
     qqConfig(['qq_official_url' => $official['qq_official_url']]);
     qqCall('/process');
     qqCheck((int)qqQueue()[0]['status'] === 1, 'Restoring service URL permits safe retry');
+    qqClearQueue();
+
+    // Retired Agent envelopes cannot use any credentials or block supported jobs.
+    foreach (['openclaw', 'hermes'] as $provider) {
+        fixtureInsert($pdo, 'qq_notify_queue', ['message' => '__ENHANCEMENT_QQ_AGENT_V1__:' . json_encode([
+            'provider' => $provider, 'url' => $botBase . '/retired-api', 'message' => 'Retired notification',
+            'target' => 'qqbot:c2c:retired-owner', 'requestId' => str_repeat('a', 40),
+        ]), 'status' => 0, 'retries' => 0]);
+    }
+    qqRespond(503, ['ok' => false]);
+    qqCall('/dispatch', ['message' => 'Supported notification after retired records']);
+    $before = count(qqRequests());
+    qqRespond();
+    qqCall('/process');
+    $rows = qqQueue();
+    qqCheck(count($rows) === 3 && (int)$rows[0]['status'] === 2 && (int)$rows[1]['status'] === 2
+        && (int)$rows[0]['retries'] === 5 && (int)$rows[1]['retries'] === 5
+        && strpos($rows[0]['last_error'], '已移除') !== false && strpos($rows[1]['last_error'], '已移除') !== false,
+        'Both retired provider queue records are retained with a terminal removal reason', $rows);
+    qqCheck(count(qqRequests()) === $before + 1 && qqLastRequest()['path'] === '/official/api/notifications'
+        && (int)$rows[2]['status'] === 1, 'Retired records never send or block supported notification in the same request');
+    $response = fixtureRequest($base, '/retry', 'POST', [], ['X-Requested-With: XMLHttpRequest']);
+    qqCheck(($response['json']['success'] ?? false) === true && (int)qqQueue()[0]['status'] === 2
+        && (int)qqQueue()[1]['status'] === 2, 'Manual retry cannot revive retired Agent records');
     qqClearQueue();
 
     // Historical raw jobs remain visible, but cannot send or block modern jobs.

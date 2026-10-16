@@ -1,6 +1,6 @@
 <?php
 
-require_once __DIR__ . '/QqAgentHelper.php';
+require_once __DIR__ . '/QqCommandSettingsHelper.php';
 
 class Enhancement_QqNotifyHelper
 {
@@ -16,9 +16,12 @@ class Enhancement_QqNotifyHelper
     public static function normalizeSettings(array $settings): array
     {
         // Old installations and backups must never select a replacement transport automatically.
-        unset($settings['qq'], $settings['qqboturl'], $settings['qq_async_queue']);
-        if (!isset($settings['qq_notify_provider']) || $settings['qq_notify_provider'] === 'legacy') {
+        unset($settings['qq'], $settings['qqboturl'], $settings['qq_async_queue'],
+            $settings['qq_agent_url'], $settings['qq_agent_token'], $settings['qq_agent_target'],
+            $settings['qq_agent_account'], $settings['qq_agent_include_links']);
+        if (!isset($settings['qq_notify_provider']) || in_array($settings['qq_notify_provider'], array('legacy', 'openclaw', 'hermes'), true)) {
             $settings['qq_notify_provider'] = 'none';
+            $settings['qq_agent_commands'] = '0';
         }
         return $settings;
     }
@@ -32,10 +35,10 @@ class Enhancement_QqNotifyHelper
             }
         }
         $provider = (string)$settings['qq_notify_provider'];
-        if (!in_array($provider, array('none', 'official', 'standalone', 'openclaw', 'hermes'), true)) {
+        if (!in_array($provider, array('none', 'official', 'standalone'), true)) {
             throw new Typecho_Widget_Exception(_t('QQ 通知方式无效'), 400);
         }
-        Enhancement_QqAgentHelper::validateSettings($settings);
+        Enhancement_QqCommandSettingsHelper::validateSettings($settings);
         if (!in_array($provider, array('official', 'standalone'), true)) {
             return;
         }
@@ -47,7 +50,7 @@ class Enhancement_QqNotifyHelper
 
     private static function provider($settings): string
     {
-        return isset($settings->qq_notify_provider) && in_array($settings->qq_notify_provider, array('official', 'standalone', 'openclaw', 'hermes'), true)
+        return isset($settings->qq_notify_provider) && in_array($settings->qq_notify_provider, array('official', 'standalone'), true)
             ? $settings->qq_notify_provider : 'none';
     }
 
@@ -91,9 +94,6 @@ class Enhancement_QqNotifyHelper
     public static function sendTestMessage(string $message, $settings = null): array
     {
         $settings = $settings === null ? self::runtimeSettings() : (object)$settings;
-        if (Enhancement_QqAgentHelper::enabled($settings)) {
-            return Enhancement_QqAgentHelper::send(Enhancement_QqAgentHelper::envelope($message, $settings), $settings);
-        }
         if (in_array(self::provider($settings), array('official', 'standalone'), true)) {
             $error = self::officialConfigurationError($settings);
             if ($error !== '') {
@@ -101,7 +101,7 @@ class Enhancement_QqNotifyHelper
             }
             return self::sendOfficial(self::officialEnvelope($message, $settings), $settings);
         }
-        return array('success' => false, 'error' => _t('请先选择并配置独立 QQ 通道、官方 QQ Bot、OpenClaw 或 Hermes'));
+        return array('success' => false, 'error' => _t('请先选择并配置独立 QQ 通道或官方 QQ Bot'));
     }
 
     public static function mark($comment, $edit, $status)
@@ -246,16 +246,10 @@ class Enhancement_QqNotifyHelper
                 return;
             }
 
-            $official = strpos($message, self::OFFICIAL_QUEUE_PREFIX) === 0;
-            $agent = strpos($message, Enhancement_QqAgentHelper::QUEUE_PREFIX) === 0;
-            if (!$official && !$agent) {
+            if (strpos($message, self::OFFICIAL_QUEUE_PREFIX) !== 0) {
                 return;
             }
-            if ($agent) {
-                $result = Enhancement_QqAgentHelper::send(json_decode(substr($message, strlen(Enhancement_QqAgentHelper::QUEUE_PREFIX)), true), $settings, $retries + 1);
-            } else {
-                $result = self::sendOfficial(json_decode(substr($message, strlen(self::OFFICIAL_QUEUE_PREFIX)), true), $settings);
-            }
+            $result = self::sendOfficial(json_decode(substr($message, strlen(self::OFFICIAL_QUEUE_PREFIX)), true), $settings);
             if (!empty($result['success'])) {
                 $db->query(
                     $db->update($table)
@@ -300,8 +294,7 @@ class Enhancement_QqNotifyHelper
                 'last_error' => _t('旧 QQ 机器人推送方式已移除，此通知停止投递')
             ))
             ->where('status = ?', 0)
-            ->where('SUBSTR(message, 1, ?) <> ?', strlen(self::OFFICIAL_QUEUE_PREFIX), self::OFFICIAL_QUEUE_PREFIX)
-            ->where('SUBSTR(message, 1, ?) <> ?', strlen(Enhancement_QqAgentHelper::QUEUE_PREFIX), Enhancement_QqAgentHelper::QUEUE_PREFIX));
+            ->where('SUBSTR(message, 1, ?) <> ?', strlen(self::OFFICIAL_QUEUE_PREFIX), self::OFFICIAL_QUEUE_PREFIX));
     }
 
     public static function getQueueStats(): array
@@ -362,14 +355,6 @@ class Enhancement_QqNotifyHelper
             $settings = self::runtimeSettings();
         }
 
-        if (Enhancement_QqAgentHelper::enabled($settings)) {
-            try {
-                Enhancement_QqAgentHelper::validateSettings(method_exists($settings, 'toArray') ? $settings->toArray() : (array)$settings);
-                return true;
-            } catch (Exception $e) {
-                return false;
-            }
-        }
         if (in_array(self::provider($settings), array('official', 'standalone'), true)) {
             return self::officialConfigurationError($settings) === '';
         }
@@ -388,22 +373,6 @@ class Enhancement_QqNotifyHelper
         }
 
         if (!self::configured($settings)) {
-            return;
-        }
-
-        if (Enhancement_QqAgentHelper::enabled($settings)) {
-            $envelope = Enhancement_QqAgentHelper::envelope($message, $settings);
-            $encoded = json_encode($envelope, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-            if ($encoded === false) {
-                return;
-            }
-            $qid = self::enqueue(Enhancement_QqAgentHelper::QUEUE_PREFIX . $encoded);
-            $result = Enhancement_QqAgentHelper::send($envelope, $settings);
-            if ($qid > 0) {
-                self::recordOfficialResult($qid, $result);
-            } elseif (empty($result['success'])) {
-                error_log('[Enhancement][QQAgent] 通道投递和本地重试队列均失败。');
-            }
             return;
         }
 

@@ -21,7 +21,7 @@ Typecho\Db::set($db);
 Typecho\Widget::widget('Widget_Init');
 require_once dirname(__DIR__, 2) . '/Plugin.php';
 Typecho\Plugin::init(['activated' => [], 'handles' => []]);
-if (getenv('ENHANCEMENT_QQ_AGENT_HOOKS') === '1') {
+if (getenv('ENHANCEMENT_QQ_COMMAND_HOOKS') === '1') {
     Typecho_Plugin::factory('Widget_Comments_Edit')->mark = static function ($comment, $editor, $status) use ($directory) {
         file_put_contents($directory . '/hooks.jsonl', json_encode(['hook' => 'mark', 'id' => $comment['coid'], 'status' => $status]) . "\n", FILE_APPEND);
     };

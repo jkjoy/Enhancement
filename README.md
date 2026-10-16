@@ -17,7 +17,7 @@
 7. 评论同步：游客/登录用户评论时自动同步历史评论中的网址/昵称/邮箱
 8. 标签助手：后台写文章时显示标签快捷选择列表
 9. 站点地图：提供 `/sitemap.xml`
-10. QQ评论通知：支持无需智能体的独立 QQ 双向通道、官方 Webhook Bot，以及复用 OpenClaw / Hermes
+10. QQ评论通知：支持独立 QQ 双向通道及官方 Webhook Bot，无需模型
 11. 评论邮件提醒：支持 SMTP 推送，支持模板管理
 12. 可选`Gravatar`头像镜像加速
 13. 可选视频链接解析：自动将 YouTube / Bilibili / 优酷链接替换为播放器
@@ -79,7 +79,7 @@
 - Turnstile 人机验证（评论/友链提交）
 - 仅游客评论启用 Turnstile（登录用户评论可免验证）
 - 评论防御（默认关闭，普通评论和 REST API 共用规则，含单独的内容/IP/限频开关）
-- QQ 通知方式（独立 QQ 通道 / 官方 Webhook Bot / OpenClaw / Hermes），支持私聊和群聊，以及独立的 QQ 侧管理开关
+- QQ 通知方式（独立 QQ 通道 / 官方 Webhook Bot），支持私聊和群聊，以及独立的 QQ 侧管理开关
 - 禁用插件时是否删除友情链接表（links，默认否）
 - 禁用插件时是否删除说说表（moments，默认否）
 - 禁用插件时是否删除 QQ 通知队列表（qq_notify_queue，默认否）
@@ -183,13 +183,13 @@
 
 ### QQ 双向通道与通知
 
-**1.5.0 新增独立 QQ 通道，适合没有部署智能体的服务器。** 配套服务位于 [dockerfile/qq-channel](https://github.com/jkjoy/dockerfile/tree/main/qq-channel)，使用腾讯 SDK 通过 WebSocket 接收 QQ 私聊及群聊消息，提供通知推送和固定的评论查询、审核、回复与友链审核指令。无需 OpenClaw、Hermes、模型或公网事件回调地址，Docker 部署及插件配置见 [独立 QQ 通道说明](integrations/qq-channel/README.md)。
+**独立 QQ 通道支持通知推送与固定管理指令。** 配套服务位于 [dockerfile/qq-channel](https://github.com/jkjoy/dockerfile/tree/main/qq-channel)，使用腾讯 SDK 通过 WebSocket 接收 QQ 私聊及群聊消息，提供通知推送和固定的评论查询、审核、回复与友链审核指令。无需模型或公网事件回调地址，Docker 部署及插件配置见 [独立 QQ 通道说明](integrations/qq-channel/README.md)。
 
-也可直接复用已部署的 OpenClaw / Hermes QQ 通道，发送通知并接收站长的评论查询、审核、回复与友链审核指令。无需另建 Bot 服务，配置与 Agent 技能见 [QQ 双向通道接入说明](integrations/qq-agent/README.md)。QQ 侧管理具有独立开关，默认关闭。
+**1.5.2 移除「复用 OpenClaw QQ 通道」和「复用 Hermes QQ 通道」。** 升级后旧通道立即停止发送及接收管理指令，设置页显示「未配置 / 关闭通知」和关闭的管理开关；保存设置或恢复旧备份时会清理这两种通道的接口地址、通知凭据、接收目标等专用配置。旧待发记录保留为失败记录并注明停止投递原因，不能通过手动重试恢复。原用户需明确选择并配置下述受支持通道；已有独立 QQ 通道的通知、绑定和管理配置继续可用。
 
-「QQ」设置中的「通知方式」可选择独立 QQ 通道、官方 QQ Bot 服务（Webhook）、OpenClaw 或 Hermes；默认「未配置 / 关闭通知」，评论通过通知与友链申请通知仍使用各自开关。选择关闭通知时，本地待发记录也暂停投递。
+「QQ」设置中的「通知方式」可选择独立 QQ 通道或官方 QQ Bot 服务（Webhook）；默认「未配置 / 关闭通知」，评论通过通知与友链申请通知仍使用各自开关。QQ 侧管理仅限独立 QQ 通道，具有独立开关，默认关闭。选择关闭通知时，本地待发记录也暂停投递。
 
-从 1.4.1 起移除旧 go-cqhttp / OneBot 推送接口、接收 QQ 号和旧异步发送开关。原用户升级后需重新选择并配置上述通道；保存设置或恢复旧备份时会清理废弃配置。旧接口的待发队列保留为失败记录并注明停止投递原因，手动重试仅处理现代通道记录。
+从 1.4.1 起移除旧 go-cqhttp / OneBot 推送接口、接收 QQ 号和旧异步发送开关。原用户升级后需重新选择并配置上述通道；保存设置或恢复旧备份时会清理废弃配置。旧接口的待发队列保留为失败记录并注明停止投递原因，手动重试仅处理独立 QQ / 官方 Bot 服务记录。
 
 1.4.2 修复旧配置残留导致插件设置页 HTTP 500 的问题。已升级到 1.4.1 且无法打开设置页时，下载 1.4.2 或更新版本，将解压后的插件文件覆盖到 `usr/plugins/Enhancement` 后重新访问设置页即可；配置和内容保存在数据库中。兼容处理接收 Typecho 对历史字段的绑定，旧 QQ 设置不会重新显示或发送。
 
@@ -206,7 +206,7 @@
 
 服务访问令牌输入框不回显已保存的值，留空保存时保留原令牌。修改令牌时同时更新插件与 Bot 服务。远程访问 Bot 服务请使用 HTTPS；同机或 Docker 内网可使用 HTTP。当前仅支持 QQ 私聊与群聊。
 
-开发验证：插件发送协议使用 `php tests/qq-notify/run.php`；Bot 服务使用其目录中的 `python -m unittest discover -s tests`。测试使用隔离状态与模拟接口，不向真实 QQ 发送消息。
+开发验证：通知协议和旧配置迁移使用 `php tests/qq-notify/run.php`，签名管理指令使用 `php tests/qq-commands/run.php`，独立服务联调见 [tests/qq-channel](tests/qq-channel/README.md)。官方 Webhook Bot 服务使用其目录中的 `python -m unittest discover -s tests`。测试使用隔离状态与模拟接口，不向真实 QQ 发送消息。
 
 ### 评论防御
 

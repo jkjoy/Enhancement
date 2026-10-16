@@ -1,6 +1,6 @@
 <?php
 
-/** Finite blog operations invoked by a trusted independent QQ service or Agent. */
+/** Finite blog operations invoked by the independent QQ service. */
 class Enhancement_QqAgentCommandHelper
 {
     public static function handle($action)
@@ -9,7 +9,7 @@ class Enhancement_QqAgentCommandHelper
         $status = 200;
         $body = array();
         try {
-            if (!Enhancement_QqAgentHelper::commandsSupported($settings) || ($settings->qq_agent_commands ?? '0') !== '1') {
+            if (!Enhancement_QqCommandSettingsHelper::commandsSupported($settings) || ($settings->qq_agent_commands ?? '0') !== '1') {
                 throw new Typecho_Widget_Exception('commands_disabled', 404);
             }
             if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
@@ -38,7 +38,7 @@ class Enhancement_QqAgentCommandHelper
                 || !is_array($request['args'] ?? null)) {
                 throw new Typecho_Widget_Exception('invalid_request', 400);
             }
-            if (!in_array($request['sender'], Enhancement_QqAgentHelper::allowedSenders($settings), true)) {
+            if (!in_array($request['sender'], Enhancement_QqCommandSettingsHelper::allowedSenders($settings), true)) {
                 throw new Typecho_Widget_Exception('sender_not_allowed', 403);
             }
             $db = Typecho_Db::get();

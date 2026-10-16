@@ -496,15 +496,14 @@ class Enhancement_ConfigFormHelper
         $qqNotifyProvider = new class(
             'qq_notify_provider',
             array('none' => _t('未配置 / 关闭通知'), 'standalone' => _t('独立 QQ 通道（无需智能体，推荐）'),
-                'official' => _t('官方 QQ Bot 服务（Webhook）'),
-                'openclaw' => _t('复用 OpenClaw QQ 通道'), 'hermes' => _t('复用 Hermes QQ 通道')),
+                'official' => _t('官方 QQ Bot 服务（Webhook）')),
             'none',
             _t('QQ 通知方式'),
-            _t('独立 QQ 通道使用 qq-channel Docker 服务，通过腾讯 SDK 收发消息及执行固定博客管理指令，无需 OpenClaw、Hermes 或模型。官方 Webhook 模式使用 qq-official-bot 服务；OpenClaw / Hermes 使用已部署的智能体通道。主动消息受 QQ 平台权限和额度限制。')
+            _t('独立 QQ 通道使用 qq-channel Docker 服务，通过腾讯 SDK 收发消息及执行固定博客管理指令，无需模型。官方 Webhook 模式使用 qq-official-bot 服务。主动消息受 QQ 平台权限和额度限制。')
         ) extends Typecho_Widget_Helper_Form_Element_Radio {
             protected function inputValue($value)
             {
-                parent::inputValue($value === 'legacy' || $value === null ? 'none' : $value);
+                parent::inputValue(in_array($value, array('none', 'standalone', 'official'), true) ? $value : 'none');
             }
         };
         $form->addInput($qqNotifyProvider);
@@ -541,45 +540,33 @@ class Enhancement_ConfigFormHelper
         );
         $form->addInput($qqOfficialIncludeLinks);
 
-        $qqAgentUrl = new Typecho_Widget_Helper_Form_Element_Text(
-            'qq_agent_url', null, '', _t('Agent 消息接口 URL'),
-            _t('OpenClaw 示例：http://127.0.0.1:18789/tools/invoke；Hermes 示例：http://127.0.0.1:8644/webhooks/enhancement。填写完整接口地址，远程访问使用 HTTPS。')
-        );
-        $form->addInput($qqAgentUrl);
-        foreach (array(
-            'qq_agent_token' => array(_t('Agent 通知凭据'), _t('OpenClaw 填 Gateway Token；Hermes 填 enhancement Webhook 路由密钥。至少 32 位，保存后不回显，留空保留。OpenClaw 凭据具有网关操作权限，仅通过可信内网或 HTTPS 连接。')),
-            'qq_agent_command_secret' => array(_t('QQ 指令回调密钥'), _t('与通知凭据使用不同的随机密钥，至少 32 位。独立服务填入 ENHANCEMENT_COMMAND_SECRET；Agent 模式在智能体端配置同一值。保存后不回显，留空保留。'))
-        ) as $name => $labels) {
-            $secret = new class($name, null, '', $labels[0], $labels[1]) extends Typecho_Widget_Helper_Form_Element_Password {
-                protected function inputValue($value)
-                {
-                    $this->value = '';
-                    $this->input->removeAttribute('value');
-                }
-            };
-            $secret->input->setAttribute('autocomplete', 'new-password');
-            $form->addInput($secret);
-        }
-        $form->addInput(new Typecho_Widget_Helper_Form_Element_Text(
-            'qq_agent_target', null, '', _t('Agent QQ 接收目标'),
-            _t('填写 qqbot:c2c:用户OpenID 或 qqbot:group:群OpenID，一次配置一个私聊或群聊目标。必须属于 Agent 已连接的机器人，不能使用 QQ 号或群号。')
-        ));
-        $form->addInput(new Typecho_Widget_Helper_Form_Element_Text(
-            'qq_agent_account', null, '', _t('OpenClaw QQ 账号 ID'),
-            _t('可选，多机器人时填写 OpenClaw 中的 accountId；留空使用默认机器人。Hermes 不使用此项。')
-        ));
-        $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
-            'qq_agent_include_links', array('1' => _t('包含链接'), '0' => _t('省略链接')), '1',
-            _t('Agent QQ 通知中的链接'), _t('未完成 QQ 消息域名报备时可省略链接，通知正文按 UTF-8 安全截短到 1800 字节。')
-        ));
-        $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
+        $qqCommandSecret = new class(
+            'qq_agent_command_secret', null, '', _t('QQ 指令回调密钥'),
+            _t('与服务访问令牌使用不同的随机密钥，至少 32 位。独立服务填入相同的 ENHANCEMENT_COMMAND_SECRET。保存后不回显，留空保留。')
+        ) extends Typecho_Widget_Helper_Form_Element_Password {
+            protected function inputValue($value)
+            {
+                $this->value = '';
+                $this->input->removeAttribute('value');
+            }
+        };
+        $qqCommandSecret->input->setAttribute('autocomplete', 'new-password');
+        $form->addInput($qqCommandSecret);
+        $qqCommands = new class(
             'qq_agent_commands', array('1' => _t('启用'), '0' => _t('关闭')), '0',
             _t('允许 QQ 侧管理博客'),
-            _t('独立 QQ 通道使用固定指令，无需技能或模型；OpenClaw / Hermes 需安装 enhancement-qq 技能。支持评论查询、审核、回复和友链审核；只接受签名且来自白名单用户的指令。')
-        ));
+            _t('独立 QQ 通道使用固定指令，无需技能或模型。支持评论查询、审核、回复和友链审核；只接受签名且来自白名单用户的指令。')
+        ) extends Typecho_Widget_Helper_Form_Element_Radio {
+            protected function inputValue($value)
+            {
+                $settings = Enhancement_Plugin::runtimeSettings();
+                parent::inputValue(Enhancement_QqCommandSettingsHelper::commandsSupported($settings) ? $value : '0');
+            }
+        };
+        $form->addInput($qqCommands);
         $form->addInput(new Typecho_Widget_Helper_Form_Element_Textarea(
             'qq_agent_allowed_senders', null, '', _t('允许 QQ 指令的用户 OpenID'),
-            _t('每行一个站长 QQ 用户 OpenID，最多 20 个，不支持通配符。独立服务还需配置 QQ_ALLOWED_USERS，群指令另配 QQ_ALLOWED_GROUPS；Agent 模式也需限制允许交互的用户和群。')
+            _t('每行一个站长 QQ 用户 OpenID，最多 20 个，不支持通配符。独立服务还需配置 QQ_ALLOWED_USERS，群指令另配 QQ_ALLOWED_GROUPS。')
         ));
         $form->addInput(new Typecho_Widget_Helper_Form_Element_Text(
             'qq_agent_admin_uid', null, '1', _t('QQ 指令执行身份 UID'),

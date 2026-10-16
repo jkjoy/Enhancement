@@ -1747,9 +1747,8 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
                         'updated' => time()
                     ))
                     ->where('status = ?', 2)
-                    ->where('(SUBSTR(message, 1, ?) = ? OR SUBSTR(message, 1, ?) = ?)',
-                        strlen(Enhancement_QqNotifyHelper::OFFICIAL_QUEUE_PREFIX), Enhancement_QqNotifyHelper::OFFICIAL_QUEUE_PREFIX,
-                        strlen(Enhancement_QqAgentHelper::QUEUE_PREFIX), Enhancement_QqAgentHelper::QUEUE_PREFIX)
+                    ->where('SUBSTR(message, 1, ?) = ?',
+                        strlen(Enhancement_QqNotifyHelper::OFFICIAL_QUEUE_PREFIX), Enhancement_QqNotifyHelper::OFFICIAL_QUEUE_PREFIX)
             );
 
             $this->qqQueueResponse(true, _t('已将 %d 条失败记录标记为待重试', intval($affected)), 200);
@@ -1786,9 +1785,6 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             $message = isset($result['provider']) && in_array($result['provider'], array('official', 'standalone'), true)
                 ? _t('测试通知已进入 Bot 服务队列，通知 ID：%s。可在服务中查询投递结果；接收方需允许主动消息且满足 QQ 官方额度。', $result['id'])
                 : _t('QQ通知测试发送成功，请检查 QQ 是否收到消息。');
-            if (isset($result['provider']) && in_array($result['provider'], array('openclaw', 'hermes'), true)) {
-                $message = _t('Agent 已确认通知请求，编号：%s。请检查原有 QQ 通道的接收结果。', $result['id']);
-            }
             $this->testActionResponse(true, $message, 200);
             return;
         }

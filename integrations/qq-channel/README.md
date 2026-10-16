@@ -1,6 +1,6 @@
 # 独立 QQ 双向通道
 
-Enhancement 1.5.0 起支持使用独立常驻服务收发 QQ 消息。服务直接使用腾讯 `@tencent-connect/qqbot-nodejs` SDK，通过 WebSocket 连接 QQ 官方机器人；无需部署 OpenClaw、Hermes 或大模型。
+Enhancement 1.5.0 起支持使用独立常驻服务收发 QQ 消息。服务直接使用腾讯 `@tencent-connect/qqbot-nodejs` SDK，通过 WebSocket 连接 QQ 官方机器人，无需模型。1.5.2 起插件仅保留独立 QQ 通道和官方 Webhook Bot 服务。
 
 服务源码与完整部署说明：[dockerfile/qq-channel](https://github.com/jkjoy/dockerfile/tree/main/qq-channel)。
 
@@ -19,7 +19,8 @@ openssl rand -hex 32
 将 AppID / AppSecret 和生成的随机值填入 `.env` 的 `QQ_APP_ID`、`QQ_APP_SECRET`、`BOT_API_TOKEN`，然后启动：
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 curl http://127.0.0.1:8080/readyz
 ```
 
@@ -46,12 +47,10 @@ curl http://127.0.0.1:8080/readyz
 3. 插件中开启“允许 QQ 侧管理博客”，填写同一指令密钥、每行一个的用户 OpenID 和 Typecho 管理员 UID。指令密钥必须与通知服务令牌不同。
 4. 执行 `docker compose up -d --force-recreate`，发送 `博客状态` 验证。
 
-独立模式无需填写 Agent 消息接口、Agent 通知凭据和 Agent 接收目标。只需通知时将服务指令环境变量留空，并保持插件管理开关关闭。
+只需通知时将服务指令环境变量留空，并保持插件管理开关关闭。
 
 固定指令包括：`帮助`、`我的ID`、`博客状态`、`待审评论 5`、`已审评论 5`、`垃圾评论 5`、`通过评论 123`、`暂缓评论 123`、`垃圾标记 123`、`回复评论 123：谢谢留言`、`待审友链 5`、`通过友链 12`、`驳回友链 12`。查询数量可省略，范围为 1–20。评论回复须先审核父评论，以指定管理员身份发布；驳回友链会隐藏记录。
 
 服务只接受官方事件中的身份，管理操作同时校验服务和插件白名单；群操作还需群白名单。不执行自由文本任务，不调用模型。插件继续验证 HMAC、时间戳、参数、管理员权限和危险内容，按官方消息 ID 去重。QQ 回复失败时重试已保存的结果，不会再次执行已确认的博客操作；结果不确定时到后台核对。
 
 服务持久卷保存通知和指令状态，完成记录保留 30 天。每个目标最多自动投递 5 次，失败后可通过服务 API 手动重试；已成功的目标不重发。备份与升级方法见服务 README。
-
-与复用智能体的差异：OpenClaw/Hermes 方案依赖已有 Agent 网关及其 QQ 通道；本方案只运行独立服务，使用固定指令完成博客管理。

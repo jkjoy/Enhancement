@@ -34,6 +34,12 @@ try {
     $form = fixtureRequest($base, '/form');
     qqCheck($form['status'] === 200 && strpos($form['body'], 'value="standalone"') !== false
         && strpos($form['body'], str_repeat('a', 48)) === false, 'Real backend renders standalone option and hides service token');
+    qqCheck(strpos($form['body'], 'value="openclaw"') === false && strpos($form['body'], 'value="hermes"') === false
+        && strpos($form['body'], 'name="qq_agent_url"') === false && strpos($form['body'], 'name="qq_agent_token"') === false,
+        'Removed providers and their dedicated settings are absent from the real standalone form');
+    qqCheck(preg_match('/<input[^>]*id="qq_agent_commands-1"[^>]*checked=/', $form['body']) === 1
+        && strpos($form['body'], 'name="qq_agent_command_secret"') !== false && strpos($form['body'], str_repeat('b', 48)) === false,
+        'Existing standalone management stays enabled and its command secret stays hidden');
     qqCheck(qqConfig(['qq_agent_commands' => '1', 'qq_agent_command_secret' => $settings['qq_official_token']])['status'] === 400,
         'Standalone requires a separate command secret');
     qqCheck(qqConfig(['qq_agent_allowed_senders' => '*'])['status'] === 400, 'Standalone rejects wildcard command identity');
