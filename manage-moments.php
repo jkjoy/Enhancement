@@ -17,8 +17,17 @@ include 'manage-page-start.php';
                 <?php
                     Enhancement_Plugin::ensureMomentsTable();
                     $prefix = $db->getPrefix();
-                    $moments = $db->fetchAll($db->select()->from($prefix . 'moments')->order($prefix . 'moments.mid', Typecho_Db::SORT_DESC));
+                    $moments = array();
+                    $momentsError = '';
+                    try {
+                        $moments = $db->fetchAll($db->select()->from($prefix . 'moments')->order($prefix . 'moments.mid', Typecho_Db::SORT_DESC));
+                    } catch (Exception $e) {
+                        $momentsError = $e->getMessage();
+                    }
                 ?>
+                <?php if ($momentsError !== ''): ?>
+                <div class="message error"><?php echo htmlspecialchars(_t('瞬间数据读取失败：') . $momentsError, ENT_QUOTES, 'UTF-8'); ?></div>
+                <?php endif; ?>
                 <form method="post" name="manage_moments" class="operate-form">
                     <div class="typecho-list-operate clearfix">
                         <div class="operate">

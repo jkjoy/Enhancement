@@ -214,7 +214,7 @@ class Enhancement_LifecycleHelper
         $type = explode('_', $installDb->getAdapterName());
         $type = array_pop($type);
         $prefix = $installDb->getPrefix();
-        $scripts = file_get_contents('usr/plugins/Enhancement/sql/' . $type . '.sql');
+        $scripts = file_get_contents(__DIR__ . '/sql/' . $type . '.sql');
         $scripts = str_replace('typecho_', $prefix, $scripts);
         $scripts = str_replace('%charset%', 'utf8', $scripts);
         $scripts = explode(';', $scripts);

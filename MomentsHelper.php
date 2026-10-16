@@ -265,7 +265,7 @@ class Enhancement_MomentsHelper
         $type = array_pop($type);
         $prefix = $db->getPrefix();
 
-        $scripts = @file_get_contents('usr/plugins/Enhancement/sql/' . $type . '.sql');
+        $scripts = @file_get_contents(__DIR__ . '/sql/' . $type . '.sql');
         if (!$scripts) {
             return;
         }
