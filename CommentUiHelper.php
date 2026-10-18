@@ -4,7 +4,9 @@ class Enhancement_CommentUiHelper
 {
     public static function renderSmileyPicker($archive = null)
     {
-        if (!($archive instanceof Widget_Archive) || !$archive->is('single')) {
+        // Output on every page: PJAX themes (e.g. Swup) swap in comment forms
+        // without rerunning the footer, so the observer below must already exist.
+        if (!($archive instanceof Widget_Archive)) {
             return;
         }
 
