@@ -12,6 +12,7 @@ class Enhancement_LifecycleHelper
         Helper::addPanel(3, 'Enhancement/manage-enhancement.php', _t('链接'), _t('链接审核与管理'), 'administrator');
         Helper::addPanel(3, 'Enhancement/manage-moments.php', _t('瞬间'), _t('瞬间管理'), 'administrator');
         Helper::addPanel(3, 'Enhancement/manage-ai-summary.php', _t('摘要'), _t('AI 摘要批量生成'), 'administrator');
+        self::ensureFriendPostsPanel();
         Helper::addPanel(1, 'Enhancement/manage-upload.php', _t('上传'), _t('上传管理'), 'administrator');
         Helper::addPanel(1, $commentNotifierPanel, _t('邮件提醒外观'), _t('评论邮件提醒主题列表'), 'administrator');
         Helper::addRoute('sitemap', '/sitemap.xml', 'Enhancement_Sitemap_Action', 'action');
@@ -43,6 +44,17 @@ class Enhancement_LifecycleHelper
         }
 
         return _t($info);
+    }
+
+    /** Register the new menu on in-place upgrades without disabling the plugin. */
+    public static function ensureFriendPostsPanel()
+    {
+        $path = 'Enhancement/manage-friend-posts.php';
+        $panelTable = Typecho_Widget::widget('Widget_Options')->panelTable;
+        $files = is_array($panelTable) && isset($panelTable['file']) && is_array($panelTable['file']) ? $panelTable['file'] : array();
+        if (!in_array(urlencode($path), $files, true) && !in_array($path, $files, true)) {
+            Helper::addPanel(3, $path, _t('朋友文章'), _t('朋友文章订阅与缓存'), 'administrator');
+        }
     }
 
     private static function repairCorePluginsOption()
@@ -154,6 +166,7 @@ class Enhancement_LifecycleHelper
             'manage-enhancement.php',
             'manage-moments.php',
             'manage-ai-summary.php',
+            'manage-friend-posts.php',
             'manage-upload.php',
             str_replace('Enhancement/', '', $commentNotifierPanel)
         );
@@ -202,6 +215,7 @@ class Enhancement_LifecycleHelper
         Helper::removePanel(3, 'Enhancement/manage-enhancement.php');
         Helper::removePanel(3, 'Enhancement/manage-moments.php');
         Helper::removePanel(3, 'Enhancement/manage-ai-summary.php');
+        Helper::removePanel(3, 'Enhancement/manage-friend-posts.php');
         Helper::removePanel(1, 'Enhancement/manage-upload.php');
         Helper::removePanel(1, $commentNotifierPanel);
 

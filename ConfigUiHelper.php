@@ -372,6 +372,9 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select:focus{
             if (value.indexOf('友链') >= 0) {
                 return '友链';
             }
+            if (value.indexOf('朋友文章') >= 0) {
+                return '朋友文章';
+            }
             if (value.indexOf('瞬间') >= 0) {
                 return '瞬间';
             }

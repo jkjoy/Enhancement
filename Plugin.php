@@ -2,10 +2,10 @@
 
 /**
  * Enhancement 插件
- * 具体功能包含:插件/主题zip上传,友情链接,瞬间,REST API,网站地图,编辑器增强,站外链接跳转,评论邮件通知,QQ通知,常见视频链接 音乐链接 解析,AI摘要生成等
+ * 具体功能包含:插件/主题zip上传,友情链接,朋友文章RSS聚合,瞬间,REST API,网站地图,编辑器增强,站外链接跳转,评论邮件通知,QQ通知,常见视频链接 音乐链接 解析,AI摘要生成等
  * @package Enhancement
  * @author 老孙博客
- * @version 1.5.5
+ * @version 1.6.0
  * @link HTTPS://www.IMSUN.ORG
  * @dependence 14.10.10-*
  */
@@ -25,6 +25,8 @@ require_once __DIR__ . '/QqNotifyHelper.php';
 require_once __DIR__ . '/QqAgentCommandHelper.php';
 require_once __DIR__ . '/EditorUiHelper.php';
 require_once __DIR__ . '/LinkOutputHelper.php';
+require_once __DIR__ . '/FriendFeedHelper.php';
+require_once __DIR__ . '/FriendPostsHelper.php';
 require_once __DIR__ . '/AvatarHelper.php';
 require_once __DIR__ . '/MomentsHelper.php';
 require_once __DIR__ . '/FormHelper.php';
@@ -274,6 +276,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
     public static function config(Typecho_Widget_Helper_Form $form)
     {
         self::ensurePluginConfigOptionExists();
+        Enhancement_LifecycleHelper::ensureFriendPostsPanel();
 
         $pluginVersion = self::getPluginVersion();
         Enhancement_ConfigUiHelper::renderConfigChrome($pluginVersion);
@@ -311,6 +314,12 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
     public static function publicForm()
     {
         return Enhancement_FormHelper::publicForm();
+    }
+
+    /** Return recent RSS/Atom articles for themes, with cached, bounded refreshes. */
+    public static function friendPosts($pageSize = 20, $page = 1)
+    {
+        return Enhancement_FriendPostsHelper::getPosts($pageSize, $page);
     }
 
     public static function momentsForm($action = null)

@@ -590,6 +590,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $settings = Enhancement_QqNotifyHelper::normalizeSettings($settings);
         Enhancement_CommentGuardHelper::validateSettings($settings);
         Enhancement_QqNotifyHelper::validateSettings($settings);
+        Enhancement_FriendPostsHelper::validateSettings($settings);
         $storedValue = $this->encodeStoredPluginSettingsValue($settings);
 
         $row = $this->db->fetchRow(
@@ -3142,6 +3143,31 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         echo '</body></html>';
     }
 
+    public function refreshFriendPosts()
+    {
+        if (!$this->request->isPost()) {
+            $this->response->setStatus(405);
+            $this->response->setHeader('Allow', 'POST');
+            $this->response->throwJson(array('success' => false, 'message' => _t('请使用 POST 请求。')));
+            return;
+        }
+        $requestedLid = $this->request->get('lid');
+        $lid = is_scalar($requestedLid) && preg_match('/^\d+$/D', (string)$requestedLid) ? (int)$requestedLid : 0;
+        if ($lid <= 0) {
+            $this->response->setStatus(400);
+            $this->response->throwJson(array('success' => false, 'message' => _t('请选择要刷新的友链。')));
+            return;
+        }
+        try {
+            $result = Enhancement_FriendPostsHelper::refresh(1, $lid);
+            $result = array_merge(Enhancement_FriendPostsHelper::status(), $result);
+        } catch (Throwable $error) {
+            $this->response->setStatus(500);
+            $result = array('success' => false, 'message' => _t('朋友文章刷新失败，请检查缓存目录权限与订阅设置。'));
+        }
+        $this->response->throwJson($result);
+    }
+
     private function protectRequest($requireAdministrator = false)
     {
         Helper::security()->protect();
@@ -3190,6 +3216,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             'upgrade-plugin' => 'upgradePlugin',
             'ai-summary-batch' => 'batchGenerateAiSummary',
             'ai-slug-translate' => 'previewAiSlug',
+            'refresh-friend-posts' => 'refreshFriendPosts',
             'resolve-attachment-urls' => 'resolveAttachmentUrls'
         );
 

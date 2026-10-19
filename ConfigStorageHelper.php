@@ -63,6 +63,7 @@ class Enhancement_ConfigStorageHelper
         $merged = Enhancement_QqNotifyHelper::normalizeSettings(array_merge($current, $incoming));
         Enhancement_CommentGuardHelper::validateSettings($merged);
         Enhancement_QqNotifyHelper::validateSettings($merged);
+        Enhancement_FriendPostsHelper::validateSettings($merged);
         $storedValue = Enhancement_SettingsHelper::encodePluginConfigValue($merged);
 
         try {
@@ -96,6 +97,7 @@ class Enhancement_ConfigStorageHelper
         }
 
         Enhancement_SettingsHelper::syncOptionCache($optionName, $storedValue, 'Enhancement');
+        Enhancement_LifecycleHelper::ensureFriendPostsPanel();
         Enhancement_RestApiHelper::syncRoutes((object)$merged);
         if (Enhancement_S3Helper::enabled()) {
             Enhancement_S3Helper::registerHooks();

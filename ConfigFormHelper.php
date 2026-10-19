@@ -38,6 +38,33 @@ class Enhancement_ConfigFormHelper
         $dsize->input->setAttribute('class', 'w-10');
         $form->addInput($dsize->addRule('isInteger', _t('请填写整数数字')));
 
+        $enableFriendPosts = new Typecho_Widget_Helper_Form_Element_Radio(
+            'enable_friend_posts',
+            array('1' => _t('启用'), '0' => _t('禁用')),
+            '1',
+            _t('<h3 class="enhancement-title">朋友文章</h3><hr/>获取朋友的最近文章'),
+            _t('默认启用。访问朋友文章独立页面时，轮换更新一个到期友链，每站抓取最多 8 秒；管理员可在“管理 → 朋友文章”提前刷新全部站点。关闭后停止抓取与前台输出。')
+        );
+        $form->addInput($enableFriendPosts);
+
+        $friendPostsInterval = new Typecho_Widget_Helper_Form_Element_Text(
+            'friend_posts_interval', null, '60', _t('缓存有效期（分钟）'),
+            _t('范围 5–1440 分钟，默认 60 分钟。抓取失败保留旧缓存；未审核、已删除或排除的友链立即从结果中移除。')
+        );
+        $form->addInput($friendPostsInterval->addRule('isInteger', _t('请填写 5–1440 的整数')));
+
+        $friendPostsPerFriend = new Typecho_Widget_Helper_Form_Element_Text(
+            'friend_posts_per_friend', null, '5', _t('每位朋友保留的文章数'),
+            _t('范围 1–20，默认 5 篇，所有朋友的文章按发布时间合并排序。')
+        );
+        $form->addInput($friendPostsPerFriend->addRule('isInteger', _t('请填写 1–20 的整数')));
+
+        $friendPostsFeeds = new Typecho_Widget_Helper_Form_Element_Textarea(
+            'friend_posts_feeds', null, '', _t('自定义订阅地址 / 排除站点'),
+            _t('默认从已审核友链自动发现 RSS 2.0 / Atom 订阅。一行一条：友链地址|订阅地址，例如 https://friend.example/|https://friend.example/feed/；填写 友链地址|- 可排除该站，空行忽略。缓存保存在服务器临时目录，无需修改数据表。')
+        );
+        $form->addInput($friendPostsFeeds);
+
         $momentsToken = new Typecho_Widget_Helper_Form_Element_Text(
             'moments_token',
             null,

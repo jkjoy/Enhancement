@@ -1,6 +1,6 @@
 # Enhancement 插件
 
-融合怪插件 —— 友链增强 + 瞬间 + REST API + AI摘要 + 标签助手 + 站点地图 + 评论增强 + 外链跳转 + 视频链接解析 + QQ通知 + 邮件提醒 + 主题插件在线上传/删除等多功能于一体的 Typecho 插件。
+融合怪插件 —— 友链增强 + 朋友文章 + 瞬间 + REST API + AI摘要 + 标签助手 + 站点地图 + 评论增强 + 外链跳转 + 视频链接解析 + QQ通知 + 邮件提醒 + 主题插件在线上传/删除等多功能于一体的 Typecho 插件。
 
 ### 简介
 
@@ -39,6 +39,7 @@
 29. 申请链接时可选择是否通知管理员(可选择QQ通知/邮件通知/均不通知)
 30. 可选 REST API：集成 Typecho-RestAPI 的 WordPress `wp/v2` 兼容接口，支持公开内容读取与评论提交，默认关闭
 31. 可选评论防御：XSS 特征、HTML、中文、关键词、IP/IP 段黑名单、同网段限频及重复评论拦截
+32. 朋友文章：自动发现已审核友链的 RSS / Atom 订阅，缓存并汇总最近文章，提供独立页面 API 和后台逐站刷新
 
 ### 安装
 1. 上传到 `usr/plugins/Enhancement`
@@ -46,7 +47,7 @@
 
 ### 后台管理
 
-- 管理 → 链接 / 瞬间 / 摘要
+- 管理 → 链接 / 朋友文章 / 瞬间 / 摘要
 
 - 控制台 → 评论邮件提醒外观（模板列表/编辑）
 
@@ -58,6 +59,7 @@
 - 评论表情（评论框表情面板 + 评论短代码解析）
 - 标签助手
 - Sitemap
+- 朋友文章（默认开启，可设置缓存有效期、每位朋友的文章数、自定义订阅及排除站点）
 - REST API（默认关闭，含独立的网站标题、描述、头部 HTML、页脚文本及备案号设置）
 - 视频链接解析
 - 音乐链接解析（APlayer + Meting）
@@ -89,6 +91,43 @@
 - QQ评论通知
 - 评论邮件提醒
 - `Gravatar`头像镜像加速（可开关）
+
+### 朋友文章（1.6.0）
+
+自动从已审核的友情链接发现 RSS 2.0 / Atom 订阅，将最近文章按发布时间合并排序。默认启用，每位朋友保留 5 篇，缓存有效期 60 分钟。插件设置的「朋友文章」分组可调整有效期（5–1440 分钟）和每位朋友的文章数（1–20 篇）。设置保存后立即生效；升级后打开一次插件设置即可注册「管理 → 朋友文章」面板，无需停用或重新启用插件。
+
+访问朋友文章页面时，每次轮换更新一个到期站点，每站抓取最多 8 秒。首次使用时可到「管理 → 朋友文章」点击「依次刷新全部站点」预热缓存，也可单独刷新某个站点。全部刷新按站点顺序执行，某站失败会继续处理其他站点；管理页显示缓存条数、最近检查时间和失败原因。抓取失败保留旧文章，未审核、已删除或被排除的友链会立即从输出中移除。关闭朋友文章功能后停止抓取与前台输出。
+
+缓存保存在服务器临时目录，需保证 PHP 可写；无需建表或修改友链表。临时缓存被系统清理后会在后续访问或后台刷新时重建。此功能通过页面访问和手动刷新更新，无需配置定时任务。
+
+通常无需填写订阅地址；站点未公开订阅发现信息时，可在「自定义订阅地址 / 排除站点」中覆盖，一行一条，左侧填写友链中保存的站点地址：
+
+```text
+https://friend.example/|https://friend.example/feed/
+https://another.example/|https://another.example/atom.xml
+https://excluded.example/|-
+```
+
+最后一行排除该站，空行忽略。仅审核通过的友链参与获取，填写自定义地址不会额外创建友链。
+
+Nebula 主题已提供 `page-friends.php` 独立页面模板。在后台新建独立页面（例如「朋友文章」，缩略名 `friends`），选择「朋友文章」模板并发布即可。
+
+其他主题可调用 `Enhancement_Plugin::friendPosts($pageSize = 20, $page = 1)`，返回 `enabled`、`items`、`total`、`page`、`pageSize`、`pages` 和 `updated`。每条文章包含 `title`、`url`、`published`（时间戳，未知时为 0）、`summary`、`author` 及 `friend`（`lid`、`name`、`url`、`image`）；文字字段为纯文本，输出时仍需 HTML 转义。例如：
+
+```php
+<?php $friends = Enhancement_Plugin::friendPosts(20, 1); ?>
+<?php foreach ($friends['items'] as $article): ?>
+    <article>
+        <a href="<?php echo htmlspecialchars($article['url'], ENT_QUOTES, 'UTF-8'); ?>" target="_blank" rel="noopener noreferrer">
+            <?php echo htmlspecialchars($article['title'], ENT_QUOTES, 'UTF-8'); ?>
+        </a>
+        <span><?php echo htmlspecialchars($article['friend']['name'], ENT_QUOTES, 'UTF-8'); ?></span>
+        <?php if ($article['published'] > 0): ?>
+            <time><?php echo date('Y-m-d', $article['published']); ?></time>
+        <?php endif; ?>
+    </article>
+<?php endforeach; ?>
+```
 
 ### AI 摘要
 
