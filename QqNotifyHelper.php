@@ -1,6 +1,8 @@
 <?php
 
 require_once __DIR__ . '/QqCommandSettingsHelper.php';
+require_once __DIR__ . '/NotifyTransportHelper.php';
+require_once __DIR__ . '/QqDirectNotifyHelper.php';
 
 class Enhancement_QqNotifyHelper
 {
@@ -35,10 +37,11 @@ class Enhancement_QqNotifyHelper
             }
         }
         $provider = (string)$settings['qq_notify_provider'];
-        if (!in_array($provider, array('none', 'official', 'standalone'), true)) {
+        if (!in_array($provider, array('none', 'direct', 'official', 'standalone'), true)) {
             throw new Typecho_Widget_Exception(_t('QQ 通知方式无效'), 400);
         }
         Enhancement_QqCommandSettingsHelper::validateSettings($settings);
+        Enhancement_QqDirectNotifyHelper::validateSettings($settings);
         if (!in_array($provider, array('official', 'standalone'), true)) {
             return;
         }
@@ -50,7 +53,7 @@ class Enhancement_QqNotifyHelper
 
     private static function provider($settings): string
     {
-        return isset($settings->qq_notify_provider) && in_array($settings->qq_notify_provider, array('official', 'standalone'), true)
+        return isset($settings->qq_notify_provider) && in_array($settings->qq_notify_provider, array('direct', 'official', 'standalone'), true)
             ? $settings->qq_notify_provider : 'none';
     }
 
@@ -94,6 +97,9 @@ class Enhancement_QqNotifyHelper
     public static function sendTestMessage(string $message, $settings = null): array
     {
         $settings = $settings === null ? self::runtimeSettings() : (object)$settings;
+        if (self::provider($settings) === 'direct') {
+            return array_merge(Enhancement_QqDirectNotifyHelper::send($message, $settings), array('provider' => 'direct'));
+        }
         if (in_array(self::provider($settings), array('official', 'standalone'), true)) {
             $error = self::officialConfigurationError($settings);
             if ($error !== '') {
@@ -101,7 +107,7 @@ class Enhancement_QqNotifyHelper
             }
             return self::sendOfficial(self::officialEnvelope($message, $settings), $settings);
         }
-        return array('success' => false, 'error' => _t('请先选择并配置独立 QQ 通道或官方 QQ Bot'));
+        return array('success' => false, 'error' => _t('请先选择并配置官方 QQ 直连、独立 QQ 通道或官方 QQ Bot 服务'));
     }
 
     public static function mark($comment, $edit, $status)
@@ -224,7 +230,7 @@ class Enhancement_QqNotifyHelper
             $db = Typecho_Db::get();
             $table = $db->getPrefix() . 'qq_notify_queue';
             self::retireObsoleteQueue($db, $table);
-            if (self::provider($settings) === 'none') {
+            if (in_array(self::provider($settings), array('none', 'direct'), true)) {
                 return;
             }
             $query = $db->select()
@@ -355,6 +361,15 @@ class Enhancement_QqNotifyHelper
             $settings = self::runtimeSettings();
         }
 
+        if (self::provider($settings) === 'direct') {
+            try {
+                Enhancement_QqDirectNotifyHelper::validateSettings(method_exists($settings, 'toArray') ? $settings->toArray() : (array)$settings);
+                return !empty($settings->qq_app_id) && !empty($settings->qq_app_secret) && !empty($settings->qq_target_id);
+            } catch (Exception $e) {
+                return false;
+            }
+        }
+
         if (in_array(self::provider($settings), array('official', 'standalone'), true)) {
             return self::officialConfigurationError($settings) === '';
         }
@@ -373,6 +388,12 @@ class Enhancement_QqNotifyHelper
         }
 
         if (!self::configured($settings)) {
+            return;
+        }
+
+        if (self::provider($settings) === 'direct') {
+            // Official APIs do not guarantee idempotency after a timeout.
+            Enhancement_QqDirectNotifyHelper::send($message, $settings);
             return;
         }
 

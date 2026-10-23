@@ -55,7 +55,7 @@ class Enhancement_ConfigStorageHelper
         $current = self::normalizeSettingsForStorage($current);
 
         // The password input stays empty in HTML; an empty save keeps its secret.
-        foreach (array('qq_official_token', 'qq_agent_command_secret') as $secretKey) {
+        foreach (array('qq_app_secret', 'qq_official_token', 'qq_agent_command_secret') as $secretKey) {
             if (isset($incoming[$secretKey]) && $incoming[$secretKey] === '') {
                 unset($incoming[$secretKey]);
             }
@@ -64,6 +64,7 @@ class Enhancement_ConfigStorageHelper
         Enhancement_CommentGuardHelper::validateSettings($merged);
         Enhancement_QqNotifyHelper::validateSettings($merged);
         Enhancement_FriendPostsHelper::validateSettings($merged);
+        Enhancement_WeixinNotifyHelper::validateSettings($merged, $current);
         $storedValue = Enhancement_SettingsHelper::encodePluginConfigValue($merged);
 
         try {

@@ -83,6 +83,37 @@ function qqEnvelope(array $row): array
     return strpos($row['message'], $prefix) === 0 ? json_decode(substr($row['message'], strlen($prefix)), true) : [];
 }
 function qqClearQueue(): void { global $pdo; $pdo->exec('DELETE FROM typecho_qq_notify_queue'); }
+function qqSession(int $uid): array
+{
+    $response = qqCall('/session', ['uid' => $uid]);
+    $cookies = [];
+    foreach ($response['raw_headers'] as $header) {
+        if (preg_match('/^Set-Cookie:\s*([^;]+)/i', $header, $matches)) { $cookies[] = $matches[1]; }
+    }
+    if ($response['status'] !== 200 || !$cookies) { throw new RuntimeException('Fixture login failed: ' . $response['body']); }
+    return ['headers' => ['Cookie: ' . implode('; ', $cookies), 'Referer: ' . $response['json']['referer'],
+        'X-Requested-With: XMLHttpRequest'], 'actions' => $response['json']['actions']];
+}
+function qqAction(array $session, string $action, array $values = [], string $method = 'POST'): array
+{
+    global $base;
+    $url = $session['actions'][$action];
+    $path = substr($url, strlen($base));
+    return fixtureRequest($base, $path, $method, http_build_query($values),
+        array_merge($session['headers'], ['Content-Type: application/x-www-form-urlencoded']));
+}
+function qqSignedWebhook(array $event, string $secret, string $appId): array
+{
+    global $base;
+    $seed = $secret;
+    while (strlen($seed) < 32) { $seed .= $secret; }
+    $keypair = sodium_crypto_sign_seed_keypair(substr($seed, 0, 32));
+    $body = json_encode($event, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $timestamp = (string)time();
+    $signature = bin2hex(sodium_crypto_sign_detached($timestamp . $body, sodium_crypto_sign_secretkey($keypair)));
+    return fixtureRequest($base, '/action/enhancement-edit?do=qq-webhook', 'POST', $body,
+        ['Content-Type: application/json', 'X-Bot-Appid: ' . $appId, 'X-Signature-Timestamp: ' . $timestamp, 'X-Signature-Ed25519: ' . $signature]);
+}
 
 if (defined('ENHANCEMENT_QQ_FIXTURE_LIBRARY') && ENHANCEMENT_QQ_FIXTURE_LIBRARY === true) { return; }
 
@@ -356,6 +387,165 @@ try {
     $beforeSettings = qqSettings();
     $response = qqConfig(['qq_official_token' => 'short']);
     qqCheck($response['status'] === 400 && qqSettings() === $beforeSettings, 'Invalid saved configuration leaves previous settings intact', $response);
+
+    $response = qqCall('/notify-format', ['message' => '<b>中文通知</b> https://example.test/post', 'include_links' => false]);
+    qqCheck(($response['json']['text'] ?? '') === '中文通知 [链接已省略]', 'Direct channel formatter strips HTML and optional links');
+    $response = qqCall('/notify-format', ['message' => str_repeat('测😀', 400), 'include_links' => true]);
+    $formatted = (string)($response['json']['text'] ?? '');
+    qqCheck(strlen($formatted) <= 1800 && preg_match('//u', $formatted) === 1 && substr($formatted, -3) === '…',
+        'Direct channel formatter truncates long Chinese and emoji messages without splitting UTF-8');
+
+    // New channels use shared private options without placing credentials in the public plugin form.
+    $record = ['token' => 'fixture-private-state-token', 'nested' => ['中文', 'context']];
+    qqCall('/state', ['operation' => 'write', 'record' => $record]);
+    qqCheck((qqCall('/state')['json']['record'] ?? null) === $record, 'Private notification state persists across Typecho requests');
+    $response = qqCall('/state', ['operation' => 'cas', 'expected' => ['token' => 'stale'], 'record' => ['used' => true]]);
+    qqCheck(($response['json']['changed'] ?? null) === false && ($response['json']['record'] ?? null) === $record,
+        'State compare-and-swap cannot consume changed or stale records', $response);
+    $response = qqCall('/state', ['operation' => 'cas', 'expected' => $record, 'record' => ['used' => true]]);
+    qqCheck(($response['json']['changed'] ?? false) === true && ($response['json']['record'] ?? null) === ['used' => true],
+        'State compare-and-swap consumes an exact record once', $response);
+    qqCheck((qqCall('/state', ['operation' => 'cas', 'expected' => $record, 'record' => ['used' => true]])['json']['changed'] ?? null) === false,
+        'Consumed private state cannot be consumed a second time');
+
+    $directSecret = 'fixture-direct-app-secret';
+    $direct = ['qq_notify_provider' => 'direct', 'qq_app_id' => '123456789', 'qq_app_secret' => $directSecret,
+        'qq_target_type' => 'c2c', 'qq_target_id' => '', 'enable_comment_by_qq' => '0', 'enable_link_submit_by_qq' => '0'];
+    $response = qqConfig($direct + ['qq_direct_include_links' => '1']);
+    qqCheck($response['status'] === 200 && (qqSettings()['qq_notify_provider'] ?? '') === 'direct',
+        'Direct QQ credentials save before recipient binding while notification switches are disabled', $response);
+    $beforeSettings = qqSettings();
+    $response = qqConfig(['enable_comment_by_qq' => '1']);
+    qqCheck($response['status'] === 400 && qqSettings() === $beforeSettings, 'Direct QQ cannot be enabled without a recipient', $response);
+    qqConfig(['qq_app_secret' => '']);
+    qqCheck((qqSettings()['qq_app_secret'] ?? '') === $directSecret, 'Empty direct QQ password preserves AppSecret');
+
+    $admin = qqSession(1);
+    $contributor = qqSession(2);
+    $guestForm = fixtureRequest($base, '/form');
+    if (preg_match('/data-qq-binding-start="([^"]+)"/', $guestForm['body'], $matches)) {
+        $guestUrl = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
+        $response = fixtureRequest($base, substr($guestUrl, strlen($base)), 'POST', '', ['Referer: ' . $base . '/form']);
+        qqCheck($response['status'] === 302 && (qqCall('/state', ['key' => 'qq_binding'])['json']['record'] ?? null) === [],
+            'Anonymous browser with a valid guest CSRF token still cannot start QQ binding', $response['status']);
+    } else {
+        qqCheck(false, 'Guest form provides a CSRF-protected binding URL');
+    }
+    $notificationActions = array_keys($admin['actions']);
+    foreach ($notificationActions as $action) {
+        $response = fixtureRequest($base, '/action/enhancement-edit?do=' . $action, 'POST', [], ['X-Requested-With: XMLHttpRequest']);
+        qqCheck($response['status'] !== 200 && ($response['json']['success'] ?? false) !== true,
+            'Anonymous requests cannot use notification action: ' . $action, $response['status']);
+    }
+    foreach (['qq-binding-start', 'weixin-status', 'weixin-disconnect'] as $action) {
+        $response = qqAction($contributor, $action);
+        qqCheck($response['status'] === 403, 'Logged-in contributor cannot use administrator notification action: ' . $action, $response);
+    }
+    $response = fixtureRequest($base, '/action/enhancement-edit?do=qq-binding-start', 'POST', '', $admin['headers']);
+    qqCheck($response['status'] !== 200, 'Administrator request without CSRF token cannot start a QQ binding', $response['status']);
+    $response = qqAction($admin, 'qq-binding-status', [], 'GET');
+    qqCheck($response['status'] === 405, 'Notification status requires POST even with administrator and valid CSRF', $response);
+    $response = qqAction($admin, 'qq-binding-status');
+    qqCheck($response['status'] === 200 && ($response['json']['success'] ?? false) === true
+        && ($response['json']['data']['configured'] ?? false) === true && ($response['json']['data']['target_id'] ?? null) === '',
+        'Authorized status action returns direct QQ configuration without secrets', $response);
+    qqCheck(strpos($response['body'], $directSecret) === false, 'Direct QQ status never returns AppSecret');
+
+    if (function_exists('sodium_crypto_sign_seed_keypair')) {
+        $response = qqAction($admin, 'qq-binding-start');
+        $code = (string)($response['json']['data']['code'] ?? '');
+        qqCheck($response['status'] === 200 && preg_match('/\A[A-F0-9]{16}\z/', $code) === 1,
+            'Authorized QQ binding action creates a one-time code', $response);
+        $response = fixtureRequest($base, '/action/enhancement-edit?do=qq-webhook', 'POST', ['op' => 13, 'd' => []]);
+        qqCheck($response['status'] === 403, 'QQ callback rejects unsigned anonymous requests', $response);
+        $response = qqSignedWebhook(['op' => 13, 'd' => ['plain_token' => 'fixture-challenge', 'event_ts' => (string)time()]], $directSecret, $direct['qq_app_id']);
+        qqCheck($response['status'] === 200 && ($response['json']['plain_token'] ?? '') === 'fixture-challenge'
+            && preg_match('/\A[a-f0-9]{128}\z/', $response['json']['signature'] ?? '') === 1,
+            'Valid signed QQ callback verifies without browser login or CSRF', $response);
+        $event = ['op' => 0, 't' => 'C2C_MESSAGE_CREATE', 'd' => ['content' => '绑定通知 ' . $code, 'author' => ['user_openid' => 'fixture-owner-openid']]];
+        $response = qqSignedWebhook($event, $directSecret, $direct['qq_app_id']);
+        qqCheck($response['status'] === 200 && (qqSettings()['qq_target_id'] ?? '') === 'fixture-owner-openid'
+            && (qqSettings()['qq_app_secret'] ?? '') === $directSecret && qqSettings()['enable_comment_by_qq'] === '0',
+            'Signed binding callback saves recipient without losing secret or enabling notifications', $response);
+        $event['d']['author']['user_openid'] = 'fixture-other-openid';
+        qqSignedWebhook($event, $directSecret, $direct['qq_app_id']);
+        qqCheck((qqSettings()['qq_target_id'] ?? '') === 'fixture-owner-openid', 'Used QQ binding code cannot replace the recipient');
+        $response = qqAction($admin, 'qq-binding-status');
+        qqCheck(empty($response['json']['data']['binding']) && ($response['json']['data']['target_id'] ?? '') === 'fixture-owner-openid'
+            && ($response['json']['data']['last_challenge_at'] ?? 0) > 0 && ($response['json']['data']['last_event_at'] ?? 0) > 0,
+            'Binding status exposes saved recipient and verified callback timestamps after consumption', $response);
+    } else {
+        qqConfig(['qq_target_id' => 'fixture-owner-openid']);
+    }
+    $response = qqConfig(['enable_comment_by_qq' => '1', 'qq_app_secret' => '']);
+    qqCheck($response['status'] === 200 && qqSettings()['qq_app_secret'] === $directSecret,
+        'Bound direct QQ can be enabled with the blank password form value', $response);
+
+    // Existing failed service jobs remain tied to their old provider after selecting direct QQ.
+    qqConfig(['qq_notify_provider' => 'official']);
+    qqClearQueue();
+    qqRespond(503, ['ok' => false]);
+    qqCall('/dispatch', ['message' => '服务通道遗留任务']);
+    $queued = qqQueue();
+    qqConfig(['qq_notify_provider' => 'direct']);
+    $before = count(qqRequests());
+    qqCall('/process');
+    qqCheck(count($queued) === 1 && count(qqRequests()) === $before && qqQueue()[0]['status'] === $queued[0]['status'],
+        'Switching to direct QQ cannot replay an old service queue through either provider');
+    qqClearQueue();
+
+    $beforeSettings = qqSettings();
+    $response = qqConfig(['enable_comment_by_weixin' => '1']);
+    qqCheck($response['status'] === 400 && qqSettings() === $beforeSettings, 'Weixin notification cannot be enabled before login', $response);
+    $privateToken = 'fixture-weixin-private-token';
+    $privateContext = 'fixture-weixin-private-context';
+    qqCall('/state', ['key' => 'weixin_account', 'operation' => 'write', 'record' => ['token' => $privateToken,
+        'account_id' => 'fixture-bot', 'owner_id' => 'fixture-owner', 'base_url' => 'https://ilinkai.weixin.qq.com', 'expired' => false]]);
+    $response = qqConfig(['enable_link_submit_by_weixin' => '1']);
+    qqCheck($response['status'] === 400 && qqSettings() === $beforeSettings, 'Weixin login without a bound recipient cannot enable notifications', $response);
+    qqCall('/state', ['key' => 'weixin_sync', 'operation' => 'write', 'record' => ['candidates' => ['fixture-owner'],
+        'context_tokens' => ['fixture-owner' => $privateContext]]]);
+    $response = qqAction($admin, 'weixin-bind', ['user_id' => 'fixture-other']);
+    qqCheck($response['status'] === 400, 'Weixin bind action rejects a recipient absent from synchronized candidates', $response);
+    $response = qqAction($admin, 'weixin-bind', ['user_id' => 'fixture-owner']);
+    qqCheck($response['status'] === 200 && ($response['json']['success'] ?? false) === true, 'Weixin bind action accepts the synchronized account owner', $response);
+    $response = qqConfig(['enable_comment_by_weixin' => '1', 'enable_link_submit_by_weixin' => '1']);
+    qqCheck($response['status'] === 200, 'Weixin business switches save after login and recipient binding', $response);
+    $response = qqAction($admin, 'weixin-status');
+    qqCheck(($response['json']['data']['logged_in'] ?? false) === true && ($response['json']['data']['has_context'] ?? false) === true
+        && ($response['json']['data']['user_id'] ?? '') === 'fixture-owner' && strpos($response['body'], $privateToken) === false
+        && strpos($response['body'], $privateContext) === false, 'Weixin status exposes readiness without login token or context token', $response);
+
+    $form = fixtureRequest($base, '/form');
+    qqCheck($form['status'] === 200 && preg_match('/<input[^>]*id="qq_notify_provider-direct"[^>]*checked=/', $form['body']) === 1,
+        'Real Typecho form keeps the saved direct QQ provider selected');
+    qqCheck($form['status'] === 200 && strpos($form['body'], 'name="qq_app_secret"') !== false
+        && strpos($form['body'], $directSecret) === false && strpos($form['body'], $privateToken) === false
+        && strpos($form['body'], $privateContext) === false, 'Real Typecho form renders both channels without saved or private credentials');
+    qqCheck(substr_count($form['body'], '/assets/notifications.js') === 1 && substr_count($form['body'], '/assets/vendor/qrcode.js') === 1
+        && strpos($form['body'], 'name="enable_comment_by_weixin"') !== false && strpos($form['body'], 'id="enhancement-qq-binding"') !== false,
+        'Real settings form includes both connection controls and local QR scripts exactly once');
+    if (preg_match('/id="enhancement-qq-webhook-url"[^>]*value="([^"]+)"/', $form['body'], $matches)) {
+        qqCheck(strpos(html_entity_decode($matches[1]), 'do=qq-webhook') !== false && strpos(html_entity_decode($matches[1]), '&_=') === false,
+            'Public QQ webhook callback address has no browser CSRF token');
+    } else {
+        qqCheck(false, 'Public QQ webhook callback address is rendered');
+    }
+    qqCall('/state', ['key' => 'weixin_account', 'operation' => 'write', 'record' => ['token' => $privateToken,
+        'account_id' => 'fixture-bot', 'owner_id' => 'fixture-owner', 'base_url' => 'https://ilinkai.weixin.qq.com', 'expired' => true]]);
+    $response = qqConfig(['qq_target_id' => 'fixture-owner-openid']);
+    qqCheck($response['status'] === 200 && qqSettings()['enable_comment_by_weixin'] === '1',
+        'An expired Weixin login cannot block unrelated settings or a QQ recipient binding', $response);
+    qqConfig(['enable_link_submit_by_weixin' => '0']);
+    $response = qqConfig(['enable_link_submit_by_weixin' => '1']);
+    qqCheck($response['status'] === 400 && qqSettings()['enable_link_submit_by_weixin'] === '0',
+        'Re-enabling a Weixin switch requires a current valid login even if another switch remains enabled', $response);
+    $response = qqAction($admin, 'weixin-disconnect');
+    qqCheck($response['status'] === 200 && (qqCall('/state', ['key' => 'weixin_account'])['json']['record'] ?? null) === []
+        && (qqCall('/state', ['key' => 'weixin_sync'])['json']['record'] ?? null) === []
+        && (qqCall('/state', ['key' => 'weixin_recipient'])['json']['record'] ?? null) === []
+        && qqSettings()['enable_comment_by_weixin'] === '0' && qqSettings()['enable_link_submit_by_weixin'] === '0',
+        'Weixin disconnect action clears private login, context and recipient state', $response);
 
     foreach (['typecho.log', 'bot.log'] as $file) {
         $log = file_get_contents($directory . '/' . $file);

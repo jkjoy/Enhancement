@@ -522,18 +522,20 @@ class Enhancement_ConfigFormHelper
 
         $qqNotifyProvider = new class(
             'qq_notify_provider',
-            array('none' => _t('未配置 / 关闭通知'), 'standalone' => _t('独立 QQ 通道（无需智能体，推荐）'),
+            array('none' => _t('未配置 / 关闭通知'), 'direct' => _t('官方 QQ Bot 直连（无需额外服务，推荐）'),
+                'standalone' => _t('独立 QQ 通道（无需智能体）'),
                 'official' => _t('官方 QQ Bot 服务（Webhook）')),
             'none',
             _t('QQ 通知方式'),
-            _t('独立 QQ 通道使用 qq-channel Docker 服务，通过腾讯 SDK 收发消息及执行固定博客管理指令，无需模型。官方 Webhook 模式使用 qq-official-bot 服务。主动消息受 QQ 平台权限和额度限制。')
+            _t('官方直连只需配置下方 AppID、AppSecret 和接收 ID，插件直接调用腾讯接口。独立 QQ 通道及官方 Bot 服务使用原有 Docker 服务。主动消息受 QQ 平台权限和额度限制。')
         ) extends Typecho_Widget_Helper_Form_Element_Radio {
             protected function inputValue($value)
             {
-                parent::inputValue(in_array($value, array('none', 'standalone', 'official'), true) ? $value : 'none');
+                parent::inputValue(in_array($value, array('none', 'direct', 'standalone', 'official'), true) ? $value : 'none');
             }
         };
         $form->addInput($qqNotifyProvider);
+        Enhancement_NotificationConfigHelper::addQqInputs($form);
 
         $qqOfficialUrl = new Typecho_Widget_Helper_Form_Element_Text(
             'qq_official_url', null, '', _t('独立 QQ / 官方 Bot 服务地址'),
@@ -637,6 +639,7 @@ class Enhancement_ConfigFormHelper
             $qqQueueRow->container->setAttribute('style', 'list-style:none;margin:0;padding:0;');
         }
         $form->addInput($qqQueueRow);
+        Enhancement_NotificationConfigHelper::addWeixinInputs($form);
 
         $enableCommentNotifier = new Typecho_Widget_Helper_Form_Element_Radio(
             'enable_comment_notifier',

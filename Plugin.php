@@ -2,10 +2,10 @@
 
 /**
  * Enhancement 插件
- * 具体功能包含:插件/主题zip上传,友情链接,朋友文章RSS聚合,瞬间,REST API,网站地图,编辑器增强,站外链接跳转,评论邮件通知,QQ通知,常见视频链接 音乐链接 解析,AI摘要生成等
+ * 具体功能包含:插件/主题zip上传,友情链接,朋友文章RSS聚合,瞬间,REST API,网站地图,编辑器增强,站外链接跳转,评论邮件通知,QQ/微信通知,常见视频链接 音乐链接 解析,AI摘要生成等
  * @package Enhancement
  * @author 老孙博客
- * @version 1.6.0
+ * @version 1.7.0
  * @link HTTPS://www.IMSUN.ORG
  * @dependence 14.10.10-*
  */
@@ -22,6 +22,7 @@ require_once __DIR__ . '/TurnstileHelper.php';
 require_once __DIR__ . '/CommentGuardHelper.php';
 require_once __DIR__ . '/CommentUiHelper.php';
 require_once __DIR__ . '/QqNotifyHelper.php';
+require_once __DIR__ . '/WeixinNotifyHelper.php';
 require_once __DIR__ . '/QqAgentCommandHelper.php';
 require_once __DIR__ . '/EditorUiHelper.php';
 require_once __DIR__ . '/LinkOutputHelper.php';
@@ -33,6 +34,7 @@ require_once __DIR__ . '/FormHelper.php';
 require_once __DIR__ . '/SettingsHelper.php';
 require_once __DIR__ . '/ConfigUiHelper.php';
 require_once __DIR__ . '/ConfigFormHelper.php';
+require_once __DIR__ . '/NotificationConfigHelper.php';
 require_once __DIR__ . '/LifecycleHelper.php';
 require_once __DIR__ . '/ConfigStorageHelper.php';
 require_once __DIR__ . '/CommentWorkflowHelper.php';
@@ -478,17 +480,32 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
 
     public static function commentByQQMark($comment, $edit, $status)
     {
-        Enhancement_QqNotifyHelper::mark($comment, $edit, $status);
+        try {
+            Enhancement_QqNotifyHelper::mark($comment, $edit, $status);
+        } catch (Throwable $e) {
+            error_log('[Enhancement] QQ 评论审核通知失败。');
+        }
+        Enhancement_WeixinNotifyHelper::mark($comment, $edit, $status);
     }
 
     public static function notifyLinkSubmissionByQQ(array $link)
     {
-        Enhancement_QqNotifyHelper::notifyLinkSubmission($link);
+        try {
+            Enhancement_QqNotifyHelper::notifyLinkSubmission($link);
+        } catch (Throwable $e) {
+            error_log('[Enhancement] QQ 友链申请通知失败。');
+        }
+        Enhancement_WeixinNotifyHelper::notifyLinkSubmission($link);
     }
 
     public static function commentByQQ($comment, $statusOverride = null)
     {
-        Enhancement_QqNotifyHelper::comment($comment, $statusOverride);
+        try {
+            Enhancement_QqNotifyHelper::comment($comment, $statusOverride);
+        } catch (Throwable $e) {
+            error_log('[Enhancement] QQ 评论通知失败。');
+        }
+        Enhancement_WeixinNotifyHelper::comment($comment, $statusOverride);
     }
 
     public static function commentNotifierGetParent($comment): array

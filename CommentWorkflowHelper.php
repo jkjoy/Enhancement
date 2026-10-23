@@ -12,7 +12,8 @@ class Enhancement_CommentWorkflowHelper
             self::syncCommentIdentity($comment, $user, $commentUrl);
         }
 
-        if (isset($settings->enable_comment_by_qq) && $settings->enable_comment_by_qq == '1') {
+        if ((isset($settings->enable_comment_by_qq) && $settings->enable_comment_by_qq == '1')
+            || (isset($settings->enable_comment_by_weixin) && $settings->enable_comment_by_weixin == '1')) {
             Enhancement_Plugin::commentByQQ($comment);
         }
 

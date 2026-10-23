@@ -46,6 +46,31 @@ try {
             Enhancement_QqNotifyHelper::validateSettings($body);
             echo '{"ok":true}';
             break;
+        case '/notify-format':
+            echo json_encode(['text' => Enhancement_NotifyTransportHelper::text((string)($body['message'] ?? ''), !empty($body['include_links']))]);
+            break;
+        case '/state':
+            $key = (string)($body['key'] ?? 'fixture_state');
+            $operation = (string)($body['operation'] ?? 'read');
+            if ($operation === 'write') {
+                Enhancement_NotifyTransportHelper::write($key, $body['record'] ?? []);
+            }
+            $changed = $operation === 'cas'
+                ? Enhancement_NotifyTransportHelper::compareAndSwap($key, $body['expected'] ?? [], $body['record'] ?? []) : null;
+            echo json_encode(['record' => Enhancement_NotifyTransportHelper::read($key), 'changed' => $changed]);
+            break;
+        case '/session':
+            $uid = (int)($body['uid'] ?? 0);
+            if (!in_array($uid, [1, 2], true) || !Typecho_Widget::widget('Widget_User')->simpleLogin($uid, false)) {
+                throw new RuntimeException('Invalid fixture user.', 400);
+            }
+            $actions = [];
+            foreach (['qq-binding-start', 'qq-binding-cancel', 'qq-binding-status', 'weixin-login-start', 'weixin-login-poll',
+                'weixin-sync', 'weixin-bind', 'weixin-disconnect', 'weixin-status', 'weixin-test-notify'] as $action) {
+                $actions[$action] = Helper::security()->getIndex('/action/enhancement-edit?do=' . $action);
+            }
+            echo json_encode(['actions' => $actions, 'referer' => Typecho_Request::getInstance()->getRequestUrl()]);
+            break;
         case '/restore':
         case '/retry':
             require_once dirname(__DIR__, 2) . '/Action.php';

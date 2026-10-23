@@ -591,6 +591,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         Enhancement_CommentGuardHelper::validateSettings($settings);
         Enhancement_QqNotifyHelper::validateSettings($settings);
         Enhancement_FriendPostsHelper::validateSettings($settings);
+        Enhancement_WeixinNotifyHelper::validateSettings($settings);
         $storedValue = $this->encodeStoredPluginSettingsValue($settings);
 
         $row = $this->db->fetchRow(
@@ -1786,11 +1787,89 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             $message = isset($result['provider']) && in_array($result['provider'], array('official', 'standalone'), true)
                 ? _t('测试通知已进入 Bot 服务队列，通知 ID：%s。可在服务中查询投递结果；接收方需允许主动消息且满足 QQ 官方额度。', $result['id'])
                 : _t('QQ通知测试发送成功，请检查 QQ 是否收到消息。');
+            if (($result['provider'] ?? '') === 'direct') {
+                $message = _t('QQ 官方接口已接受通知，消息 ID：%s。请检查接收端。', $result['id']);
+            }
             $this->testActionResponse(true, $message, 200);
             return;
         }
         $error = isset($result['error']) && $result['error'] !== '' ? $result['error'] : _t('发送失败');
         $this->testActionResponse(false, _t('QQ通知测试失败：%s', $error), 500);
+    }
+
+    public function notificationChannelAction()
+    {
+        if (strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? '')) !== 'POST') {
+            $this->response->setStatus(405);
+            $this->response->throwJson(array('success' => false, 'message' => _t('请使用 POST 请求')));
+            return;
+        }
+        try {
+            switch ((string)$this->request->get('do')) {
+                case 'qq-binding-start':
+                    $data = Enhancement_QqDirectNotifyHelper::startBinding();
+                    break;
+                case 'qq-binding-cancel':
+                    $data = Enhancement_QqDirectNotifyHelper::cancelBinding();
+                    break;
+                case 'qq-binding-status':
+                    $data = Enhancement_QqDirectNotifyHelper::status();
+                    break;
+                case 'weixin-login-start':
+                    $data = Enhancement_WeixinNotifyHelper::startLogin();
+                    break;
+                case 'weixin-login-poll':
+                    $code = $this->request->get('verify_code', '');
+                    if (!is_scalar($code)) { throw new RuntimeException(_t('微信验证码格式无效')); }
+                    $data = Enhancement_WeixinNotifyHelper::pollLogin((string)$code);
+                    break;
+                case 'weixin-sync':
+                    $data = Enhancement_WeixinNotifyHelper::sync();
+                    break;
+                case 'weixin-bind':
+                    $userId = $this->request->get('user_id', '');
+                    if (!is_scalar($userId)) { throw new RuntimeException(_t('微信接收 ID 格式无效')); }
+                    $data = Enhancement_WeixinNotifyHelper::bind((string)$userId);
+                    break;
+                case 'weixin-disconnect':
+                    $data = Enhancement_WeixinNotifyHelper::disconnect();
+                    break;
+                case 'weixin-status':
+                    $data = Enhancement_WeixinNotifyHelper::status();
+                    break;
+                case 'weixin-test-notify':
+                    $data = Enhancement_WeixinNotifyHelper::send("【微信通知测试】\n站点：" . (string)$this->options->title
+                        . "\n时间：" . date('Y-m-d H:i:s') . "\n如果收到此消息，说明微信通知配置可用。");
+                    if (empty($data['success'])) { throw new RuntimeException((string)($data['error'] ?? _t('微信通知发送失败'))); }
+                    $data['message'] = _t('微信接口已接受测试通知，请检查接收端。');
+                    break;
+                default:
+                    throw new RuntimeException(_t('通知操作无效'));
+            }
+        } catch (Throwable $e) {
+            $this->response->setStatus(400);
+            $this->response->throwJson(array('success' => false, 'message' => get_class($e) === 'RuntimeException'
+                ? $e->getMessage() : _t('通知操作失败，请检查数据库和服务器环境')));
+            return;
+        }
+        $this->response->throwJson(array('success' => true, 'message' => (string)($data['message'] ?? _t('状态已更新')), 'data' => $data));
+    }
+
+    public function qqOfficialWebhook()
+    {
+        if (strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? '')) !== 'POST') {
+            $this->response->setStatus(405);
+            $this->response->throwJson(array('op' => 12, 'd' => 1));
+            return;
+        }
+        $headers = array();
+        foreach (array('X-Bot-Appid', 'X-Signature-Timestamp', 'X-Signature-Ed25519') as $header) {
+            $headers[$header] = (string)$this->request->getHeader($header, '');
+        }
+        $body = file_get_contents('php://input', false, null, 0, 65537);
+        $result = Enhancement_QqDirectNotifyHelper::webhook(is_string($body) ? $body : '', $headers);
+        $this->response->setStatus($result['status']);
+        $this->response->throwJson($result['body']);
     }
 
     public function sendSmtpTestMail()
@@ -3189,6 +3268,11 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $this->prefix = $this->db->getPrefix();
         $this->options = Typecho_Widget::widget('Widget_Options');
 
+        if ($this->request->is('do=qq-webhook')) {
+            $this->qqOfficialWebhook();
+            return;
+        }
+
         if ($this->request->is('do=qq-agent-command')) {
             Enhancement_QqAgentCommandHelper::handle($this);
             return;
@@ -3206,6 +3290,16 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             'restore-settings' => 'restorePluginSettings',
             'delete-backup' => 'deletePluginSettingsBackup',
             'qq-test-notify' => 'sendQqTestNotify',
+            'qq-binding-start' => 'notificationChannelAction',
+            'qq-binding-cancel' => 'notificationChannelAction',
+            'qq-binding-status' => 'notificationChannelAction',
+            'weixin-login-start' => 'notificationChannelAction',
+            'weixin-login-poll' => 'notificationChannelAction',
+            'weixin-sync' => 'notificationChannelAction',
+            'weixin-bind' => 'notificationChannelAction',
+            'weixin-disconnect' => 'notificationChannelAction',
+            'weixin-status' => 'notificationChannelAction',
+            'weixin-test-notify' => 'notificationChannelAction',
             'smtp-test-mail' => 'sendSmtpTestMail',
             'qq-queue-retry' => 'retryQqNotifyQueue',
             'qq-queue-clear' => 'clearQqNotifyQueue',
