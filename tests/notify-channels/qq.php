@@ -177,4 +177,87 @@ if (function_exists('sodium_crypto_sign_seed_keypair')) {
     notifyCheck(Enhancement_Plugin::$settings['qq_target_id'] === 'BOUND_GROUP' && Enhancement_Plugin::$settings['enable_comment_by_qq'] === '0', 'QQ group binding strips mention, chooses group OpenID and preserves switch');
     $status = Enhancement_QqDirectNotifyHelper::status();
     notifyCheck(!empty($status['last_event_at']) && !isset($status['identity'], $status['token']), 'QQ admin status contains no secret credentials');
+
+    notifyReset(notifyQqConfig(array('qq_target_type' => 'channel', 'qq_target_id' => 'NOT_THE_SENDER', 'qq_moments_enabled' => '1')));
+    notifyQqCached(notifyQqConfig());
+    $normalized = array();
+    Enhancement_BotMomentsHelper::$handler = static function ($channel, $message) use (&$normalized) {
+        $normalized[] = array('channel' => $channel, 'message' => $message);
+        return array('success' => true, 'mid' => 12, 'status' => 'public', 'message' => '瞬间 #12 已发布', 'replayed' => false);
+    };
+    $event = array('op' => 0, 't' => 'C2C_MESSAGE_CREATE', 'id' => 'outer-event', 'd' => array('id' => 'private.message-1',
+        'content' => ' <@!123456> 发瞬间 今天很好🙂', 'timestamp' => '2026-10-28T04:05:06+08:00',
+        'author' => array('user_openid' => 'PUBLISHING_USER')));
+    list($body, $headers) = notifyQqSigned($event);
+    $calls = array();
+    $result = Enhancement_QqDirectNotifyHelper::webhook($body, $headers, notifyQqTransport($calls, array(array('id' => 'receipt-1'))));
+    notifyCheck($result['status'] === 200 && count($normalized) === 1, 'QQ signed private event reaches shared publishing handler');
+    notifyCheck($normalized[0] === array('channel' => 'qq', 'message' => array('id' => 'private.message-1', 'sender' => 'PUBLISHING_USER',
+        'conversation' => 'PUBLISHING_USER', 'conversation_type' => 'c2c', 'text' => '发瞬间 今天很好🙂', 'timestamp' => strtotime('2026-10-28T04:05:06+08:00'), 'account' => '123456')),
+        'QQ normalizes real message identity, sender, text, timestamp and bot account');
+    notifyCheck(count($calls) === 1 && $calls[0]['url'] === 'https://api.bot.qq.com/v2/users/PUBLISHING_USER/messages',
+        'QQ moment receipt targets current private sender regardless of notification recipient');
+    notifyCheck($calls[0]['payload'] === array('content' => '瞬间 #12 已发布', 'msg_type' => 0, 'msg_id' => 'private.message-1', 'msg_seq' => 1),
+        'QQ moment receipt references actual incoming message once');
+    $forged = $headers;
+    $forged['x-signature-ed25519'] = str_repeat('0', 128);
+    $before = count($normalized);
+    notifyCheck(Enhancement_QqDirectNotifyHelper::webhook($body, $forged)['status'] === 403 && count($normalized) === $before,
+        'Unsigned or forged messages never reach moment publishing');
+
+    $event['t'] = 'GROUP_AT_MESSAGE_CREATE';
+    $event['d'] = array('id' => 'group.message-1', 'content' => '<@123456> <@!123456> 私密瞬间 群里的记录', 'timestamp' => 1793131506,
+        'group_openid' => 'PUBLISHING_GROUP', 'author' => array('member_openid' => 'PUBLISHING_MEMBER', 'user_openid' => 'WRONG_ID'));
+    list($body, $headers) = notifyQqSigned($event);
+    $calls = array();
+    $result = Enhancement_QqDirectNotifyHelper::webhook($body, $headers, notifyQqTransport($calls, array(array('id' => 'receipt-2'))));
+    notifyCheck($result['status'] === 200 && end($normalized)['message']['sender'] === 'PUBLISHING_MEMBER'
+        && end($normalized)['message']['conversation'] === 'PUBLISHING_GROUP' && end($normalized)['message']['text'] === '私密瞬间 群里的记录',
+        'QQ passes distinct group and member identities to shared authorization');
+    notifyCheck($calls[0]['url'] === 'https://api.bot.qq.com/v2/groups/PUBLISHING_GROUP/messages'
+        && $calls[0]['payload']['msg_id'] === 'group.message-1', 'QQ replies to actual group conversation and message');
+
+    foreach (array('missing-id', 'missing-member', 'invalid-group', 'unsupported-event') as $case) {
+        $invalid = $event;
+        if ($case === 'missing-id') { unset($invalid['d']['id']); }
+        if ($case === 'missing-member') { unset($invalid['d']['author']['member_openid']); }
+        if ($case === 'invalid-group') { $invalid['d']['group_openid'] = '../escape'; }
+        if ($case === 'unsupported-event') { $invalid['t'] = 'AT_MESSAGE_CREATE'; }
+        list($body, $headers) = notifyQqSigned($invalid);
+        $before = count($normalized);
+        $calls = array();
+        $result = Enhancement_QqDirectNotifyHelper::webhook($body, $headers, notifyQqTransport($calls, array()));
+        notifyCheck($result['status'] === 200 && count($normalized) === $before && $calls === array(), 'QQ ignores malformed or unsupported moment event: ' . $case);
+    }
+    foreach (array(null, array('success' => true, 'message' => '已发布', 'replayed' => true)) as $ignored) {
+        Enhancement_BotMomentsHelper::$handler = static function () use ($ignored) { return $ignored; };
+        list($body, $headers) = notifyQqSigned($event);
+        $calls = array();
+        $result = Enhancement_QqDirectNotifyHelper::webhook($body, $headers, notifyQqTransport($calls, array()));
+        notifyCheck($result['status'] === 200 && $calls === array(), 'QQ ignores unpublished and replayed results without another reply');
+    }
+
+    $executions = 0;
+    Enhancement_BotMomentsHelper::$handler = static function () use (&$executions) {
+        return array('success' => true, 'message' => '瞬间已发布', 'replayed' => ++$executions > 1);
+    };
+    $calls = array();
+    $result = Enhancement_QqDirectNotifyHelper::webhook($body, $headers, notifyQqTransport($calls,
+        array(array('status' => 429, 'data' => array('code' => 40034100, 'message' => 'private upstream secret')))));
+    notifyCheck($result['status'] === 200 && empty(Enhancement_NotifyTransportHelper::read('qq_result')['success']) && count($calls) === 1,
+        'QQ receipt failure still acknowledges completed publishing without automatic retry');
+    notifyCheck(strpos(Enhancement_NotifyTransportHelper::read('qq_result')['error'], 'private upstream secret') === false,
+        'QQ receipt errors hide upstream response details');
+    $calls = array();
+    notifyCheck(Enhancement_QqDirectNotifyHelper::webhook($body, $headers, notifyQqTransport($calls, array()))['status'] === 200 && $calls === array(),
+        'QQ replay after failed receipt does not issue another reply');
+
+    Enhancement_BotMomentsHelper::$handler = static function () { return array('success' => false, 'message' => '内容不能为空'); };
+    $calls = array();
+    $result = Enhancement_QqDirectNotifyHelper::webhook($body, $headers, notifyQqTransport($calls, array(
+        array('status' => 401, 'data' => array('code' => 11241)), array('access_token' => 'reply-renewed-token', 'expires_in' => 7200), array('id' => 'receipt-3')
+    )));
+    notifyCheck($result['status'] === 200 && count($calls) === 3 && $calls[0]['payload'] === $calls[2]['payload']
+        && $calls[2]['headers'] === array('Authorization: QQBot reply-renewed-token'), 'QQ failure receipt refreshes expired access token with same reply reference');
+    Enhancement_BotMomentsHelper::$handler = null;
 }

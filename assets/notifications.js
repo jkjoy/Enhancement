@@ -223,7 +223,7 @@
         }
         const result = await request(weixin, action, values);
         if (action === 'weixin-disconnect' || (result.data && result.data.status === 'confirmed')) {
-          ['enable_comment_by_weixin', 'enable_link_submit_by_weixin'].forEach((name) => {
+          ['enable_comment_by_weixin', 'enable_link_submit_by_weixin', 'weixin_moments_enabled'].forEach((name) => {
             const off = document.querySelector('[name="' + name + '"][value="0"]');
             if (off) off.checked = true;
           });

@@ -592,6 +592,8 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         Enhancement_QqNotifyHelper::validateSettings($settings);
         Enhancement_FriendPostsHelper::validateSettings($settings);
         Enhancement_WeixinNotifyHelper::validateSettings($settings);
+        Enhancement_BotMomentsHelper::validateSettings($settings);
+        Enhancement_BotMomentsHelper::syncActivation($settings);
         $storedValue = $this->encodeStoredPluginSettingsValue($settings);
 
         $row = $this->db->fetchRow(

@@ -30,11 +30,19 @@ function weixinBindOwner(): void
 }
 
 notifyReset();
+
 Enhancement_WeixinNotifyHelper::validateSettings(array('enable_comment_by_weixin' => '0'));
 weixinThrows(static function () { Enhancement_WeixinNotifyHelper::validateSettings(array('weixin_include_links' => array('1'))); }, 'Weixin rejects array settings');
+weixinThrows(static function () { Enhancement_WeixinNotifyHelper::validateSettings(array('weixin_moments_enabled' => array('1'))); }, 'Weixin rejects malformed moment switches');
 weixinThrows(static function () { Enhancement_WeixinNotifyHelper::validateSettings(array('enable_comment_by_weixin' => '1')); }, 'Weixin requires a connected account before enabling');
+weixinThrows(static function () { Enhancement_WeixinNotifyHelper::validateSettings(array('weixin_moments_enabled' => '1')); }, 'Weixin moment receiving alone requires a connected account');
 Enhancement_WeixinNotifyHelper::validateSettings(array('enable_comment_by_weixin' => '1'), array('enable_comment_by_weixin' => '1'));
 notifyCheck(true, 'An existing enabled Weixin setting does not block unrelated saves after a session expires');
+Enhancement_WeixinNotifyHelper::validateSettings(array('weixin_moments_enabled' => '1'), array('weixin_moments_enabled' => '1'));
+notifyCheck(true, 'Existing Weixin moment enablement does not block unrelated saves without a valid connection');
+weixinThrows(static function () {
+    Enhancement_WeixinNotifyHelper::validateSettings(array('enable_comment_by_weixin' => '1', 'weixin_moments_enabled' => '1'), array('enable_comment_by_weixin' => '1'));
+}, 'A previously enabled notification switch does not bypass first-time Weixin moment connection checks');
 weixinThrows(static function () {
     Enhancement_WeixinNotifyHelper::validateSettings(array('enable_comment_by_weixin' => '1'), array('enable_comment_by_weixin' => '0'));
 }, 'Re-enabling Weixin still requires a valid connected account');
@@ -88,17 +96,18 @@ $expiredCalls = 0;
 $expired = Enhancement_WeixinNotifyHelper::pollLogin('', static function () use (&$expiredCalls): array { $expiredCalls++; return array(); });
 notifyCheck($expired['status'] === 'expired' && $expiredCalls === 0, 'Expired Weixin QR codes never reach the network');
 
-notifySettings(array('enable_comment_by_weixin' => '1', 'enable_link_submit_by_weixin' => '1', 'unrelated_setting' => 'preserved'));
+notifySettings(array('enable_comment_by_weixin' => '1', 'enable_link_submit_by_weixin' => '1', 'weixin_moments_enabled' => '1', 'unrelated_setting' => 'preserved'));
 weixinConnect();
 $connected = Enhancement_WeixinNotifyHelper::status();
 notifyCheck($connected['logged_in'] && !$connected['expired'] && $connected['account_id'] === 'fixture-bot' && !$connected['login_pending'], 'Weixin saves the connected account');
-notifyCheck(Enhancement_Plugin::$settings['enable_comment_by_weixin'] === '0' && Enhancement_Plugin::$settings['enable_link_submit_by_weixin'] === '0'
+notifyCheck(Enhancement_Plugin::$settings['enable_comment_by_weixin'] === '0' && Enhancement_Plugin::$settings['enable_link_submit_by_weixin'] === '0' && Enhancement_Plugin::$settings['weixin_moments_enabled'] === '0'
     && Enhancement_Plugin::$settings['unrelated_setting'] === 'preserved', 'A confirmed Weixin login disables notifications until the new recipient is ready');
 Enhancement_NotifyTransportHelper::write('weixin_result', array('success' => false, 'message' => '微信凭证已失效', 'time' => 123, 'token' => 'private-status-secret'));
 $storedStatus = Enhancement_WeixinNotifyHelper::status();
 notifyCheck($storedStatus['last_result'] === array('success' => false, 'message' => '微信凭证已失效', 'time' => 123)
     && strpos(json_encode($storedStatus), 'private-status-secret') === false, 'Weixin only exposes public delivery result fields');
 weixinThrows(static function () { Enhancement_WeixinNotifyHelper::validateSettings(array('enable_link_submit_by_weixin' => '1')); }, 'Weixin requires recipient binding before enabling');
+weixinThrows(static function () { Enhancement_WeixinNotifyHelper::validateSettings(array('weixin_moments_enabled' => '1')); }, 'Weixin moment receiving alone requires recipient binding');
 Enhancement_WeixinNotifyHelper::startLogin(static function ($method, $url, $headers, $payload): array {
     notifyCheck($payload['local_token_list'] === array('private-token-fixture'), 'Weixin relogin supplies its existing token only to the official endpoint');
     return array('status' => 200, 'data' => array('qrcode' => 'new', 'qrcode_img_content' => 'https://ilinkai.weixin.qq.com/qr'));
@@ -120,6 +129,8 @@ notifyCheck(strpos($statusJson, 'private-token-fixture') === false && strpos($st
     && strpos($statusJson, 'qr-private-secret') === false && strpos($statusJson, 'base_url') === false, 'Weixin status omits token, context, QR secret and API base');
 Enhancement_WeixinNotifyHelper::validateSettings(array('enable_comment_by_weixin' => '1', 'weixin_include_links' => '0'));
 notifyCheck(true, 'Weixin can enable notifications after binding');
+Enhancement_WeixinNotifyHelper::validateSettings(array('weixin_moments_enabled' => '1'));
+notifyCheck(true, 'Weixin can enable moment receiving alone after binding');
 
 $sentCalls = 0;
 $sent = Enhancement_WeixinNotifyHelper::send('<b>通知</b> https://example.test/post', array('weixin_include_links' => '0'), static function ($method, $url, $headers, $payload, $timeout) use (&$sentCalls): array {
@@ -222,6 +233,9 @@ foreach (array(array('ret' => -14), array('ret' => 0, 'errcode' => '-14')) as $i
     $invalidResult = Enhancement_WeixinNotifyHelper::send('通知', array(), weixinResponse($invalid));
     notifyCheck(!$invalidResult['success'] && Enhancement_WeixinNotifyHelper::status()['expired'], 'Weixin persists expired credentials from every API code field');
     weixinThrows(static function () { Enhancement_WeixinNotifyHelper::validateSettings(array('enable_comment_by_weixin' => '1')); }, 'Expired Weixin credentials cannot be enabled');
+    weixinThrows(static function () { Enhancement_WeixinNotifyHelper::validateSettings(array('weixin_moments_enabled' => '1'), array('weixin_moments_enabled' => '0')); }, 'Expired Weixin credentials cannot newly enable moment receiving');
+    Enhancement_WeixinNotifyHelper::validateSettings(array('weixin_moments_enabled' => '1'), array('weixin_moments_enabled' => '1'));
+    notifyCheck(true, 'An expired Weixin session preserves unrelated saves when moment receiving was already enabled');
 }
 weixinConnect();
 weixinBindOwner();
@@ -240,18 +254,176 @@ weixinThrows(static function () { Enhancement_WeixinNotifyHelper::bind('candidat
 weixinConnect();
 notifyCheck(Enhancement_WeixinNotifyHelper::status()['user_id'] === '' && !Enhancement_WeixinNotifyHelper::status()['has_context'], 'A new confirmed Weixin login clears the previous recipient and context');
 
-notifySettings(array('enable_comment_by_weixin' => '1'));
+notifySettings(array('enable_comment_by_weixin' => '1', 'weixin_moments_enabled' => '1'));
 $configBefore = Enhancement_Plugin::$settings;
 $disconnected = Enhancement_WeixinNotifyHelper::disconnect();
 notifyCheck($disconnected['status'] === 'disconnected' && !Enhancement_WeixinNotifyHelper::status()['logged_in'] && Enhancement_WeixinNotifyHelper::status()['user_id'] === '', 'Disconnect removes Weixin credentials and recipient');
 notifyCheck(Enhancement_NotifyTransportHelper::read('weixin_result') === array(), 'Disconnect clears Weixin delivery status');
-notifyCheck(Enhancement_Plugin::$settings['enable_comment_by_weixin'] === '0' && Enhancement_Plugin::$settings['enable_link_submit_by_weixin'] === '0', 'Disconnect disables Weixin notifications so unrelated configuration can still save');
-unset($configBefore['enable_comment_by_weixin'], $configBefore['enable_link_submit_by_weixin']);
+notifyCheck(Enhancement_Plugin::$settings['enable_comment_by_weixin'] === '0' && Enhancement_Plugin::$settings['enable_link_submit_by_weixin'] === '0' && Enhancement_Plugin::$settings['weixin_moments_enabled'] === '0', 'Disconnect disables Weixin notifications and moment publishing so unrelated configuration can still save');
+unset($configBefore['enable_comment_by_weixin'], $configBefore['enable_link_submit_by_weixin'], $configBefore['weixin_moments_enabled']);
 $otherSettings = Enhancement_Plugin::$settings;
-unset($otherSettings['enable_comment_by_weixin'], $otherSettings['enable_link_submit_by_weixin']);
+unset($otherSettings['enable_comment_by_weixin'], $otherSettings['enable_link_submit_by_weixin'], $otherSettings['weixin_moments_enabled']);
 notifyCheck($otherSettings === $configBefore, 'Disconnect preserves unrelated settings');
 notifySettings(array('enable_comment_by_weixin' => '1'));
 Enhancement_WeixinNotifyHelper::comment($comment);
 notifyCheck(true, 'Enabled but disconnected Weixin does not break comments');
 
+notifyReset();
+
+function weixinMomentMessage(string $id = 'moment-1', array $overrides = array()): array
+{
+    return array_replace(array('message_type' => 1, 'message_id' => $id, 'from_user_id' => 'scanner@im.wechat',
+        'context_token' => 'moment-context', 'create_time_ms' => 1700000000999,
+        'item_list' => array(array('type' => 1, 'text_item' => array('text' => '瞬间 测试内容')))), $overrides);
+}
+
+weixinConnect();
+notifySettings(array('weixin_moments_enabled' => '1'));
+$momentCalls = array();
+Enhancement_BotMomentsHelper::$handler = static function ($channel, $message) use (&$momentCalls): ?array {
+    $momentCalls[] = array($channel, $message);
+    return array('success' => true, 'mid' => 23, 'status' => 'public', 'message' => '瞬间已发布。', 'replayed' => false);
+};
+$firstBinding = Enhancement_WeixinNotifyHelper::sync(weixinResponse(array('get_updates_buf' => 'first-binding', 'msgs' => array(weixinMomentMessage()))));
+notifyCheck($firstBinding['status'] === 'bound' && $momentCalls === array() && $firstBinding['moments_published'] === 0,
+    'The first Weixin binding message cannot also publish a moment');
+
+$momentReplyCalls = 0;
+$momentSync = Enhancement_WeixinNotifyHelper::sync(static function ($method, $url, $headers, $payload) use (&$momentReplyCalls): array {
+    if (strpos($url, '/getupdates') !== false) {
+        return array('status' => 200, 'data' => array('ret' => 0, 'get_updates_buf' => 'moments-normalized', 'msgs' => array(
+            weixinMomentMessage('moment-normalized', array('context_token' => 'latest-moment-context', 'item_list' => array(
+                array('type' => 1, 'text_item' => array('text' => '瞬间 第一段')),
+                array('type' => 2, 'text_item' => array('text' => '不得读取图片正文'), 'image_item' => array('media' => 'encrypted-private-media')),
+                array('type' => '1', 'text_item' => array('text' => '第二段 ![](https://example.test/a.jpg)')),
+                array('type' => 1, 'text_item' => array('text' => array('invalid'))),
+            ))),
+            weixinMomentMessage('foreign', array('from_user_id' => 'stranger')),
+            weixinMomentMessage('group', array('group_id' => 'group')),
+            weixinMomentMessage('outgoing', array('message_type' => 2)),
+            weixinMomentMessage('self', array('from_user_id' => 'fixture-bot')),
+            weixinMomentMessage('another-account', array('to_user_id' => 'another-bot', 'context_token' => 'foreign-account-context')),
+            weixinMomentMessage('image-only', array('item_list' => array(array('type' => 2, 'image_item' => array('media' => 'encrypted-private-media'))))),
+        )));
+    }
+    $momentReplyCalls++;
+    notifyCheck($payload['msg']['context_token'] === 'moment-context', 'Weixin moment replies use the newest conversation context in the batch');
+    notifyCheck($payload['msg']['item_list'][0]['text_item']['text'] === '瞬间已发布。', 'Weixin replies with the shared publisher result');
+    return array('status' => 200, 'data' => array('ret' => 0));
+});
+notifyCheck(count($momentCalls) === 1 && $momentCalls[0] === array('weixin', array('id' => 'moment-normalized', 'sender' => 'scanner@im.wechat',
+    'conversation' => 'scanner@im.wechat', 'text' => "瞬间 第一段\n第二段 ![](https://example.test/a.jpg)", 'timestamp' => 1700000000, 'account' => 'fixture-bot')),
+    'Weixin normalizes only bound-owner private text items and preserves linked Markdown images');
+notifyCheck($momentReplyCalls === 1 && $momentSync['moments_published'] === 1 && $momentSync['moments_failed'] === 0
+    && Enhancement_NotifyTransportHelper::read('weixin_sync')['get_updates_buf'] === 'moments-normalized', 'A handled Weixin moment advances the batch cursor');
+$momentStatus = Enhancement_WeixinNotifyHelper::status();
+notifyCheck($momentStatus['moments_enabled'] && $momentStatus['moments_last_poll'] > 0
+    && strpos(json_encode($momentStatus), 'encrypted-private-media') === false, 'Weixin status exposes moment enablement and polling time without message media');
+
+notifySettings(array('weixin_moments_enabled' => '0'));
+Enhancement_WeixinNotifyHelper::sync(weixinResponse(array('msgs' => array(weixinMomentMessage('disabled')))));
+notifyCheck(count($momentCalls) === 1 && !Enhancement_WeixinNotifyHelper::status()['moments_enabled'], 'Disabled Weixin moment receiving never calls the publisher');
+notifySettings(array('weixin_moments_enabled' => '1'));
+
+$momentReplyCalls = 0;
+Enhancement_BotMomentsHelper::$handler = static function ($channel, $message): ?array {
+    if ($message['id'] === 'ignored') { return null; }
+    return array('success' => $message['id'] === 'replayed', 'mid' => 23, 'status' => 'public', 'message' => '命令失败。', 'replayed' => $message['id'] === 'replayed');
+};
+$failureBatch = Enhancement_WeixinNotifyHelper::sync(static function ($method, $url) use (&$momentReplyCalls): array {
+    if (strpos($url, '/getupdates') !== false) {
+        return array('status' => 200, 'data' => array('get_updates_buf' => 'moments-failure', 'msgs' => array(
+            weixinMomentMessage('ignored'), weixinMomentMessage('replayed'), weixinMomentMessage('rejected'),
+        )));
+    }
+    $momentReplyCalls++;
+    return array('status' => 200, 'data' => array('ret' => 0));
+});
+notifyCheck($failureBatch['moments_failed'] === 1 && $failureBatch['moments_published'] === 0 && $momentReplyCalls === 1
+    && Enhancement_NotifyTransportHelper::read('weixin_sync')['get_updates_buf'] === 'moments-failure', 'Ignored and replayed Weixin messages have no receipt while rejected commands still advance the cursor');
+
+Enhancement_BotMomentsHelper::$handler = static function (): ?array {
+    return array('success' => true, 'mid' => 24, 'status' => 'private', 'message' => '私密瞬间已发布。', 'replayed' => false);
+};
+$momentReplyCalls = 0;
+$receiptTimeout = Enhancement_WeixinNotifyHelper::sync(static function ($method, $url) use (&$momentReplyCalls): array {
+    if (strpos($url, '/getupdates') !== false) {
+        return array('status' => 200, 'data' => array('get_updates_buf' => 'receipt-timeout', 'msgs' => array(weixinMomentMessage('receipt-timeout'))));
+    }
+    $momentReplyCalls++;
+    throw new RuntimeException('timeout', 28);
+});
+notifyCheck($receiptTimeout['moments_published'] === 1 && $momentReplyCalls === 1
+    && Enhancement_NotifyTransportHelper::read('weixin_sync')['get_updates_buf'] === 'receipt-timeout', 'A Weixin receipt timeout neither retries publishing nor blocks cursor advancement');
+
+Enhancement_BotMomentsHelper::$handler = static function (): ?array { throw new RuntimeException('database unavailable'); };
+$previousSync = Enhancement_NotifyTransportHelper::read('weixin_sync');
+weixinThrows(static function () {
+    Enhancement_WeixinNotifyHelper::sync(weixinResponse(array('get_updates_buf' => 'must-not-advance', 'msgs' => array(
+        weixinMomentMessage('database-failure', array('context_token' => 'context-before-retry')),
+    ))));
+}, 'Weixin propagates unknown publication storage failures for a later retry');
+$afterFailure = Enhancement_NotifyTransportHelper::read('weixin_sync');
+notifyCheck($afterFailure['get_updates_buf'] === $previousSync['get_updates_buf'] && $afterFailure['synced_at'] === $previousSync['synced_at']
+    && $afterFailure['context_tokens']['scanner@im.wechat'] === 'context-before-retry', 'A failed Weixin publication preserves its cursor and refreshes only reply context');
+$leaseAfterFailure = Enhancement_NotifyTransportHelper::acquireLease('weixin_sync_lock', 180);
+notifyCheck($leaseAfterFailure !== null, 'Weixin releases its synchronization lease after a publication exception');
+$busyNetworkCalls = 0;
+$busy = Enhancement_WeixinNotifyHelper::sync(static function () use (&$busyNetworkCalls): array { $busyNetworkCalls++; return array(); });
+notifyCheck($busy['status'] === 'busy' && $busyNetworkCalls === 0, 'A concurrent Weixin sync never consumes updates or reaches the network');
+Enhancement_NotifyTransportHelper::releaseLease('weixin_sync_lock', $leaseAfterFailure);
+
+$bulkMessages = array();
+for ($i = 0; $i < 101; $i++) { $bulkMessages[] = weixinMomentMessage('bulk-' . $i); }
+$bulkHandled = 0;
+Enhancement_BotMomentsHelper::$handler = static function () use (&$bulkHandled): ?array {
+    $bulkHandled++;
+    return array('success' => true, 'mid' => $bulkHandled, 'status' => 'public', 'message' => '瞬间已发布。', 'replayed' => false);
+};
+$bulkReceipts = 0;
+$bulk = Enhancement_WeixinNotifyHelper::sync(static function ($method, $url) use ($bulkMessages, &$bulkReceipts): array {
+    if (strpos($url, '/getupdates') !== false) {
+        return array('status' => 200, 'data' => array('get_updates_buf' => 'all-bulk-handled', 'msgs' => $bulkMessages));
+    }
+    $bulkReceipts++;
+    return array('status' => 200, 'data' => array('ret' => 0));
+});
+notifyCheck($bulkHandled === 101 && $bulk['moments_published'] === 101 && $bulkReceipts === 10 && $bulk['moments_replies_skipped'] === 91
+    && Enhancement_NotifyTransportHelper::read('weixin_sync')['get_updates_buf'] === 'all-bulk-handled', 'Large Weixin batches publish every command and bound receipt work without losing the cursor');
+
+foreach (array('disconnect', 'relogin-token', 'relogin-account', 'expired') as $accountChange) {
+    weixinConnect();
+    weixinBindOwner();
+    notifySettings(array('weixin_moments_enabled' => '1'));
+    $staleCommands = 0;
+    Enhancement_BotMomentsHelper::$handler = static function () use (&$staleCommands): ?array { $staleCommands++; return null; };
+    $stateAfterChange = array();
+    $staleSync = Enhancement_WeixinNotifyHelper::sync(static function () use ($accountChange, &$stateAfterChange): array {
+        if ($accountChange === 'disconnect') {
+            Enhancement_WeixinNotifyHelper::disconnect();
+        } elseif ($accountChange === 'expired') {
+            $account = Enhancement_NotifyTransportHelper::read('weixin_account');
+            $account['expired'] = true;
+            Enhancement_NotifyTransportHelper::write('weixin_account', $account);
+        } else {
+            Enhancement_WeixinNotifyHelper::startLogin(weixinResponse(array('qrcode' => 'replacement-qr', 'qrcode_img_content' => 'https://ilinkai.weixin.qq.com/qr/login')));
+            Enhancement_WeixinNotifyHelper::pollLogin('', weixinResponse(array('status' => 'confirmed', 'bot_token' => 'replacement-token',
+                'ilink_bot_id' => $accountChange === 'relogin-token' ? 'fixture-bot' : 'replacement-bot', 'ilink_user_id' => 'replacement-owner',
+                'baseurl' => 'https://ilinkai.weixin.qq.com/')));
+        }
+        foreach (array('weixin_account', 'weixin_sync', 'weixin_recipient') as $key) {
+            $stateAfterChange[$key] = Enhancement_NotifyTransportHelper::read($key);
+        }
+        return array('status' => 200, 'data' => array('get_updates_buf' => 'stale-cursor', 'msgs' => array(
+            weixinMomentMessage('stale-command', array('context_token' => 'stale-context')),
+        )));
+    });
+    $stateAfterResponse = array();
+    foreach (array('weixin_account', 'weixin_sync', 'weixin_recipient') as $key) {
+        $stateAfterResponse[$key] = Enhancement_NotifyTransportHelper::read($key);
+    }
+    notifyCheck($staleSync['status'] === 'wait' && $staleSync['moments_published'] === 0 && $staleCommands === 0 && $stateAfterChange === $stateAfterResponse,
+        'A Weixin account change while polling never restores old state or executes stale commands: ' . $accountChange);
+}
+Enhancement_BotMomentsHelper::$handler = null;
 notifyReset();

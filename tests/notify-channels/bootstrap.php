@@ -30,6 +30,19 @@ class Enhancement_NotifyTransportHelper
         self::write($key, $next);
         return true;
     }
+    public static function acquireLease(string $key, int $seconds): ?string
+    {
+        $current = self::read($key);
+        if (($current['expires_at'] ?? 0) > time()) { return null; }
+        $token = bin2hex(random_bytes(16));
+        self::write($key, array('token' => $token, 'expires_at' => time() + $seconds));
+        return $token;
+    }
+    public static function releaseLease(string $key, string $token): void
+    {
+        $current = self::read($key);
+        if (($current['token'] ?? '') === $token) { self::write($key, array()); }
+    }
     public static function request(string $method, string $url, array $headers = array(), ?array $payload = null, int $timeout = 6): array
     {
         if (!is_callable(self::$transport)) { throw new RuntimeException('Live network is disabled in notification tests.'); }
@@ -62,11 +75,24 @@ class Enhancement_NotifyTransportHelper
     }
 }
 
+class Enhancement_BotMomentsHelper
+{
+    public static $handler;
+    public static $calls = array();
+    public static function handle(string $channel, array $message): ?array
+    {
+        self::$calls[] = array($channel, $message);
+        return is_callable(self::$handler) ? call_user_func(self::$handler, $channel, $message) : null;
+    }
+}
+
 function notifyReset(array $settings = array()): void
 {
     Enhancement_Plugin::$settings = $settings;
     Enhancement_NotifyTransportHelper::$state = array();
     Enhancement_NotifyTransportHelper::$transport = null;
+    Enhancement_BotMomentsHelper::$handler = null;
+    Enhancement_BotMomentsHelper::$calls = array();
 }
 function notifySettings(array $settings): void
 {

@@ -104,7 +104,7 @@ try {
     $momentsError = $e->getMessage();
 }
 
-$momentsSourceLabels = array('mobile' => _t('手机端'), 'api' => 'API', 'web' => _t('Web端'));
+$momentsSourceLabels = array('mobile' => _t('手机端'), 'api' => 'API', 'web' => _t('Web端'), 'qq' => 'QQ', 'weixin' => _t('微信'));
 $momentsFiltered = $momentsStatusFilter !== '' || $momentsKeywords !== '';
 ?>
 <style>

@@ -49,6 +49,35 @@ class Enhancement_NotifyTransportHelper
             ->where('name = ?', self::optionName($key))->where('user = ?', 0)->where('value = ?', $before)) > 0;
     }
 
+    public static function acquireLease(string $key, int $seconds): ?string
+    {
+        $db = Typecho_Db::get();
+        $name = self::optionName($key);
+        $current = self::read($key);
+        if (($current['expires_at'] ?? 0) > time()) { return null; }
+        $token = bin2hex(random_bytes(16));
+        $next = array('token' => $token, 'expires_at' => time() + max(1, min(600, $seconds)));
+        if (self::compareAndSwap($key, $current, $next)) { return $token; }
+        // The options primary key arbitrates the first concurrent receiver startup.
+        try {
+            $db->query($db->insert('table.options')->rows(array('name' => $name, 'user' => 0,
+                'value' => json_encode($next, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES))));
+            return $token;
+        } catch (Exception $exception) {
+            $row = $db->fetchRow($db->select('name')->from('table.options')->where('name = ?', $name)->where('user = ?', 0)->limit(1));
+            if (!$row) { throw $exception; }
+            return null;
+        }
+    }
+
+    public static function releaseLease(string $key, string $token): void
+    {
+        $current = self::read($key);
+        if (isset($current['token']) && hash_equals((string)$current['token'], $token)) {
+            self::compareAndSwap($key, $current, array());
+        }
+    }
+
     public static function request(string $method, string $url, array $headers = array(), ?array $payload = null, int $timeout = 6): array
     {
         if (!function_exists('curl_init')) {
@@ -95,7 +124,7 @@ class Enhancement_NotifyTransportHelper
         if ($ok === false) {
             throw new RuntimeException('通知接口连接失败或超时，请检查服务器网络和 HTTPS 证书。', $readTimeout ? 28 : 0);
         }
-        $data = json_decode($response, true);
+        $data = json_decode($response, true, 512, JSON_BIGINT_AS_STRING);
         if (!is_array($data)) {
             throw new RuntimeException('通知接口返回了无效的 JSON 响应（HTTP ' . $status . '）。');
         }

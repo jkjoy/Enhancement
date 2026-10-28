@@ -180,7 +180,7 @@ class Enhancement_MomentsHelper
 
     public static function normalizeSource($source, $default = 'web')
     {
-        $allowed = array('web', 'mobile', 'api');
+        $allowed = array('web', 'mobile', 'api', 'qq', 'weixin');
         $source = strtolower(trim((string)$source));
         if (!in_array($source, $allowed, true)) {
             $source = strtolower(trim((string)$default));

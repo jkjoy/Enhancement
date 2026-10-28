@@ -5,7 +5,7 @@
  * 具体功能包含:插件/主题zip上传,友情链接,朋友文章RSS聚合,瞬间,REST API,网站地图,编辑器增强,站外链接跳转,评论邮件通知,QQ/微信通知,常见视频链接 音乐链接 解析,AI摘要生成等
  * @package Enhancement
  * @author 老孙博客
- * @version 1.7.0
+ * @version 1.8.0
  * @link HTTPS://www.IMSUN.ORG
  * @dependence 14.10.10-*
  */
@@ -30,6 +30,7 @@ require_once __DIR__ . '/FriendFeedHelper.php';
 require_once __DIR__ . '/FriendPostsHelper.php';
 require_once __DIR__ . '/AvatarHelper.php';
 require_once __DIR__ . '/MomentsHelper.php';
+require_once __DIR__ . '/BotMomentsHelper.php';
 require_once __DIR__ . '/FormHelper.php';
 require_once __DIR__ . '/SettingsHelper.php';
 require_once __DIR__ . '/ConfigUiHelper.php';

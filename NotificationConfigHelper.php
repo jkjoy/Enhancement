@@ -35,6 +35,15 @@ class Enhancement_NotificationConfigHelper
             _t('直连 QQ 通知中的链接'),
             _t('消息域名可能需要在 QQ 开放平台报备；平台拒绝链接时可选择省略。主动消息受平台权限、额度和频率限制。')
         ));
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
+            'qq_moments_enabled', array('1' => _t('启用'), '0' => _t('禁用')), '0',
+            _t('通过 QQ 发布瞬间'),
+            _t('仅官方 QQ 直连支持，须先完成事件回调和接收人绑定。私聊仅允许已绑定接收人；群聊仅允许已绑定群内下方白名单中的成员，发送命令时须 @机器人。频道不支持。只执行启用并保存后的新消息，不读取旧聊天。')
+        ));
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Textarea(
+            'qq_moments_allowed_senders', null, '', _t('QQ 群瞬间发布者 OpenID'),
+            _t('每行一个允许在已绑定群中发布瞬间的成员 OpenID；不能填写 QQ 号、群号或群 OpenID，不支持通配符。群聊发布必须另行填写此白名单，留空不允许任何群成员发布；私聊仅使用已绑定接收人的身份。')
+        ));
 
         $options = Typecho_Widget::widget('Widget_Options');
         $callback = Typecho_Common::url('/action/enhancement-edit?do=qq-webhook', $options->index);
@@ -57,6 +66,7 @@ class Enhancement_NotificationConfigHelper
             . '<button type="button" class="btn" data-action="qq-binding-status">检查绑定状态</button></div>'
             . '<p data-role="events"></p><p data-role="last-result"></p><p data-role="message" role="status" aria-live="polite"></p>'
             . '<p>自动绑定只填写接收 ID，不会自动启用通知。当前 PHP 需要启用 sodium 扩展以验证官方回调签名；手动填写接收 ID 的发送功能不依赖该扩展。</p>'
+            . '<p>开启“通过 QQ 发布瞬间”后，发送 <code>瞬间 内容</code> 或 <code>发瞬间 内容</code> 发布公开瞬间；发送 <code>私密瞬间 内容</code> 发布私密瞬间。正文支持多行和 Markdown 图片 URL（例如 <code>![图片](https://example.com/photo.jpg)</code>），不会自动接收聊天图片附件。</p>'
             . '<noscript>请启用 JavaScript 以生成绑定码和检查绑定状态。</noscript></section>'
         );
     }
@@ -75,6 +85,11 @@ class Enhancement_NotificationConfigHelper
         $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
             'weixin_include_links', array('1' => _t('包含链接'), '0' => _t('省略链接')), '1',
             _t('微信通知中的链接'), _t('选择是否在微信通知中附上文章、友链及审核地址。')
+        ));
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
+            'weixin_moments_enabled', array('1' => _t('启用'), '0' => _t('禁用')), '0',
+            _t('通过微信发布瞬间'),
+            _t('先登录微信并绑定接收人，仅当前绑定接收人可发布。须另行运行 BotMoments/worker.php --once（单次接收）或 --loop（持续接收）；后台“同步微信接收人”也会处理收到的新命令。只执行启用并保存后的新消息，不读取旧聊天。')
         ));
 
         $options = Typecho_Widget::widget('Widget_Options');
@@ -105,6 +120,7 @@ class Enhancement_NotificationConfigHelper
             . '<button type="button" class="btn" data-action="weixin-disconnect" disabled>退出微信登录</button></div>'
             . '<p data-role="last-result"></p><p data-role="message" role="status" aria-live="polite"></p>'
             . '<p>测试使用已保存的设置；服务受理后请在微信中核对实际送达。会话过期或通知失败时，请给机器人发送一条消息，再同步接收人。退出登录会清除本地登录凭证和接收人。</p>'
+            . '<p>开启“通过微信发布瞬间”后，发送 <code>瞬间 内容</code> 或 <code>发瞬间 内容</code> 发布公开瞬间；发送 <code>私密瞬间 内容</code> 发布私密瞬间。正文支持多行和 Markdown 图片 URL，不会自动接收聊天图片附件。接收器停止时不会自动接收命令；恢复接收或在后台同步后才会处理符合条件的新消息。</p>'
             . '<noscript>请启用 JavaScript 以扫码登录、同步接收人和发送测试通知。</noscript></section>' . $scripts
         );
     }

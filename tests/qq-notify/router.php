@@ -46,6 +46,13 @@ try {
             Enhancement_QqNotifyHelper::validateSettings($body);
             echo '{"ok":true}';
             break;
+        case '/bot-moment':
+            echo json_encode(Enhancement_BotMomentsHelper::handle((string)($body['channel'] ?? ''), $body['event'] ?? []));
+            break;
+        case '/api/v1/memos':
+            require_once dirname(__DIR__, 2) . '/Memos/Action.php';
+            Typecho_Widget::widget('Enhancement_Memos_Action')->action();
+            break;
         case '/notify-format':
             echo json_encode(['text' => Enhancement_NotifyTransportHelper::text((string)($body['message'] ?? ''), !empty($body['include_links']))]);
             break;
@@ -55,9 +62,13 @@ try {
             if ($operation === 'write') {
                 Enhancement_NotifyTransportHelper::write($key, $body['record'] ?? []);
             }
+            $token = $operation === 'acquire' ? Enhancement_NotifyTransportHelper::acquireLease($key, (int)($body['seconds'] ?? 60)) : null;
+            if ($operation === 'release') {
+                Enhancement_NotifyTransportHelper::releaseLease($key, (string)($body['token'] ?? ''));
+            }
             $changed = $operation === 'cas'
                 ? Enhancement_NotifyTransportHelper::compareAndSwap($key, $body['expected'] ?? [], $body['record'] ?? []) : null;
-            echo json_encode(['record' => Enhancement_NotifyTransportHelper::read($key), 'changed' => $changed]);
+            echo json_encode(['record' => Enhancement_NotifyTransportHelper::read($key), 'changed' => $changed, 'token' => $token]);
             break;
         case '/session':
             $uid = (int)($body['uid'] ?? 0);

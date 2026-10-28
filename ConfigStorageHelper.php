@@ -65,6 +65,8 @@ class Enhancement_ConfigStorageHelper
         Enhancement_QqNotifyHelper::validateSettings($merged);
         Enhancement_FriendPostsHelper::validateSettings($merged);
         Enhancement_WeixinNotifyHelper::validateSettings($merged, $current);
+        Enhancement_BotMomentsHelper::validateSettings($merged);
+        Enhancement_BotMomentsHelper::syncActivation($merged);
         $storedValue = Enhancement_SettingsHelper::encodePluginConfigValue($merged);
 
         try {

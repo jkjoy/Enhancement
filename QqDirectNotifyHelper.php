@@ -82,7 +82,7 @@ class Enhancement_QqDirectNotifyHelper
         return $data['access_token'];
     }
 
-    public static function send(string $text, $settings = null, ?callable $transport = null): array
+    public static function send(string $text, $settings = null, ?callable $transport = null, ?string $replyMessageId = null): array
     {
         try {
             $config = self::settings($settings);
@@ -96,6 +96,13 @@ class Enhancement_QqDirectNotifyHelper
             $payload = array('content' => Enhancement_NotifyTransportHelper::text($text, $config['qq_direct_include_links'] === '1', 1800));
             if ($config['qq_target_type'] !== 'channel') {
                 $payload['msg_type'] = 0;
+            }
+            if ($replyMessageId !== null) {
+                if (!preg_match('/\A[\x21-\x7e]{1,512}\z/D', $replyMessageId) || $config['qq_target_type'] === 'channel') {
+                    throw new RuntimeException(_t('QQ 回复消息 ID 或会话类型无效'));
+                }
+                $payload['msg_id'] = $replyMessageId;
+                $payload['msg_seq'] = 1;
             }
             $token = self::token($config, $transport);
             $response = $transport('POST', $url, array('Authorization: QQBot ' . $token), $payload);
@@ -228,7 +235,42 @@ class Enhancement_QqDirectNotifyHelper
         }
     }
 
-    public static function webhook(string $body, array $headers): array
+    private static function momentEvent(array $event, array $config, ?callable $transport): void
+    {
+        $type = array('C2C_MESSAGE_CREATE' => 'c2c', 'GROUP_AT_MESSAGE_CREATE' => 'group')[$event['t']] ?? '';
+        $data = $event['d'];
+        if ($type === '' || !is_string($data['id'] ?? null) || !preg_match('/\A[\x21-\x7e]{1,512}\z/D', $data['id'])
+            || !is_string($data['content'] ?? null) || !is_array($data['author'] ?? null)) {
+            return;
+        }
+        $sender = $type === 'group' ? ($data['author']['member_openid'] ?? null) : ($data['author']['user_openid'] ?? null);
+        $conversation = $type === 'group' ? ($data['group_openid'] ?? null) : $sender;
+        if (!is_string($sender) || !preg_match('/\A[A-Za-z0-9_-]{1,128}\z/D', $sender)
+            || !is_string($conversation) || !preg_match('/\A[A-Za-z0-9_-]{1,128}\z/D', $conversation)) {
+            return;
+        }
+        $text = preg_replace('/\A\s*(?:<@!?[A-Za-z0-9_-]+>\s*)*/u', '', $data['content']);
+        if (!is_string($text)) {
+            return;
+        }
+        $timestamp = $data['timestamp'] ?? null;
+        if (is_int($timestamp) || (is_string($timestamp) && preg_match('/\A[0-9]{1,12}\z/D', $timestamp))) {
+            $timestamp = (int)$timestamp;
+        } else {
+            $timestamp = is_string($timestamp) && strlen($timestamp) <= 64 ? (strtotime($timestamp) ?: 0) : 0;
+        }
+        $result = Enhancement_BotMomentsHelper::handle('qq', array('id' => $data['id'], 'sender' => $sender,
+            'conversation' => $conversation, 'conversation_type' => $type, 'text' => $text, 'timestamp' => $timestamp, 'account' => $config['qq_app_id']));
+        if ($result === null || !empty($result['replayed']) || !is_string($result['message'] ?? null) || $result['message'] === '') {
+            return;
+        }
+        $config['qq_target_type'] = $type;
+        $config['qq_target_id'] = $conversation;
+        // Publishing is complete before the best-effort reply; a reply failure must still acknowledge the event.
+        self::send($result['message'], $config, $transport, $data['id']);
+    }
+
+    public static function webhook(string $body, array $headers, ?callable $transport = null): array
     {
         $failure = static function (int $status): array { return array('status' => $status, 'body' => array('op' => 12, 'd' => 1)); };
         if (strlen($body) > 65536) {
@@ -276,6 +318,7 @@ class Enhancement_QqDirectNotifyHelper
                 return $failure(400);
             }
             self::bindEvent($event, $config);
+            self::momentEvent($event, $config, $transport);
             $state['last_event_at'] = time();
             Enhancement_NotifyTransportHelper::write('qq_webhook', $state);
             return array('status' => 200, 'body' => array('op' => 12, 'd' => 0));
