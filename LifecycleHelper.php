@@ -23,6 +23,8 @@ class Enhancement_LifecycleHelper
         Helper::addAction('enhancement-edit', 'Enhancement_Action');
         Helper::addAction('enhancement-submit', 'Enhancement_Action');
         Helper::addAction('enhancement-moments-edit', 'Enhancement_Action');
+        Typecho_Plugin::factory('index.php')->begin = Enhancement_Plugin::callback('botMomentsCronTick');
+        Typecho_Plugin::factory('admin/common.php')->begin = Enhancement_Plugin::callback('botMomentsCronTick');
         Typecho_Plugin::factory('Widget_Feedback')->comment_1 = Enhancement_Plugin::callback('turnstileFilterComment');
         Typecho_Plugin::factory('Widget_Feedback')->finishComment = Enhancement_Plugin::callback('finishComment');
         Typecho_Plugin::factory('Widget_Comments_Edit')->finishComment = Enhancement_Plugin::callback('finishComment');

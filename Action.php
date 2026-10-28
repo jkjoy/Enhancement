@@ -1857,6 +1857,44 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $this->response->throwJson(array('success' => true, 'message' => (string)($data['message'] ?? _t('状态已更新')), 'data' => $data));
     }
 
+    private function botMomentsCron()
+    {
+        ini_set('display_errors', '0');
+        $bufferLevel = ob_get_level();
+        ob_start(static function () { return ''; });
+        $claim = null;
+        try {
+            $token = $this->request->getHeader('X-Enhancement-Cron-Token', '');
+            $claim = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? '')) === 'POST'
+                && is_string($token) && preg_match('/\A[0-9a-f]{64}\z/D', $token)
+                ? Enhancement_BotMomentsSchedulerHelper::claim($token) : null;
+            $this->response->setStatus($claim === null ? 403 : 204);
+            $this->response->setHeader('Content-Length', '0');
+            $this->response->setHeader('Cache-Control', 'no-store');
+            if ($claim === null) { return; }
+
+            ignore_user_abort(true);
+            if (session_status() === PHP_SESSION_ACTIVE) { session_write_close(); }
+            @set_time_limit(120);
+            Typecho_Response::getInstance()->sendHeaders();
+            if (function_exists('fastcgi_finish_request')) {
+                fastcgi_finish_request();
+                ob_start(static function () { return ''; });
+            } else {
+                echo '';
+            }
+            Enhancement_BotMomentsSchedulerHelper::run($claim);
+        } catch (Throwable $exception) {
+            if (!headers_sent()) {
+                $this->response->setStatus($claim === null ? 403 : 204);
+                $this->response->setHeader('Content-Length', '0');
+                $this->response->setHeader('Cache-Control', 'no-store');
+            }
+        } finally {
+            while (ob_get_level() > $bufferLevel) { ob_end_clean(); }
+        }
+    }
+
     public function qqOfficialWebhook()
     {
         if (strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? '')) !== 'POST') {
@@ -3269,6 +3307,11 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $this->db = Typecho_Db::get();
         $this->prefix = $this->db->getPrefix();
         $this->options = Typecho_Widget::widget('Widget_Options');
+
+        if ($this->request->is('do=bot-moments-cron')) {
+            $this->botMomentsCron();
+            return;
+        }
 
         if ($this->request->is('do=qq-webhook')) {
             $this->qqOfficialWebhook();

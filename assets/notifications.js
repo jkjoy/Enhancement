@@ -8,7 +8,11 @@
   const role = (panel, name) => panel.querySelector('[data-role="' + name + '"]');
   const button = (panel, action) => panel.querySelector('[data-action="' + action + '"]');
   const message = (panel, text) => { role(panel, 'message').textContent = text; };
-  const date = (value) => Number(value) > 0 ? new Date(Number(value) * 1000).toLocaleString() : '尚未收到';
+  const date = (value) => {
+    const seconds = typeof value === 'number' || typeof value === 'string' ? Number(value) : NaN;
+    const parsed = Number.isFinite(seconds) && seconds > 0 ? new Date(seconds * 1000) : null;
+    return parsed && Number.isFinite(parsed.getTime()) ? parsed.toLocaleString() : '尚未收到';
+  };
   const lastResult = (panel, result) => {
     role(panel, 'last-result').textContent = result && result.time
       ? '最近通知：' + (result.success ? '接口已受理' : '失败') + ' · ' + date(result.time) + (result.message ? ' · ' + result.message : '')
@@ -168,6 +172,34 @@
       }
     }
 
+    function renderAutoReceive(data) {
+      const target = role(weixin, 'auto-receive');
+      if (!target) return;
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        target.textContent = '';
+        return;
+      }
+      if (data.enabled !== true) {
+        target.textContent = '自动接收已关闭。';
+        return;
+      }
+      const labels = {
+        idle: '等待网站访问触发',
+        disabled: '等待网站访问触发',
+        queued: '已安排接收',
+        running: '正在接收',
+        bound: '已完成接收',
+        wait: '暂无新消息',
+        busy: '接收器正忙，请稍后刷新状态',
+        select: '请同步并绑定微信接收人',
+        error: '接收失败，请检查微信连接状态，必要时重新登录或手动同步',
+        dispatch_failed: '站点自身请求失败，请检查站点 URL、证书和防火墙'
+      };
+      const status = typeof data.status === 'string' && Object.prototype.hasOwnProperty.call(labels, data.status) ? data.status : 'idle';
+      target.textContent = '自动接收：' + labels[status]
+        + (['bound', 'wait', 'busy', 'select', 'error'].includes(status) ? ' · 最近接收：' + date(data.last_run) : '') + '。';
+    }
+
     function render(data) {
       state = data || {};
       const statusLabels = { wait: '等待扫码', scaned: '已扫码，请在手机确认', scanned: '已扫码，请在手机确认', need_verifycode: '请输入手机微信显示的验证码', expired: '二维码已过期，请重新获取' };
@@ -178,6 +210,7 @@
       role(weixin, 'context').textContent = state.logged_in && !state.expired
         ? state.has_context ? '接收会话已就绪。' : '请先给微信机器人发送一条消息，再点击“同步微信接收人”。'
         : '';
+      renderAutoReceive(state.auto_receive);
       role(weixin, 'verify').hidden = !state.need_verifycode;
       lastResult(weixin, state.last_result);
       if (!state.need_verifycode) verifyCode.value = '';

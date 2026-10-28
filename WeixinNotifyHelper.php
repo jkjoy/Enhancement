@@ -81,7 +81,7 @@ class Enhancement_WeixinNotifyHelper
 
     private static function baseInfo(): array
     {
-        return array('channel_version' => self::VERSION, 'bot_agent' => 'TypechoEnhancement/1.9.0');
+        return array('channel_version' => self::VERSION, 'bot_agent' => 'TypechoEnhancement/1.10.0');
     }
 
     private static function request(?callable $transport, string $method, string $url, array $headers = array(), $payload = null, int $timeout = 6): array
@@ -161,6 +161,7 @@ class Enhancement_WeixinNotifyHelper
             'candidates' => $candidates, 'last_result' => $lastResult,
             'moments_enabled' => isset($settings->weixin_moments_enabled) && $settings->weixin_moments_enabled == '1',
             'moments_last_poll' => (int)($sync['synced_at'] ?? 0),
+            'auto_receive' => class_exists('Enhancement_BotMomentsSchedulerHelper') ? Enhancement_BotMomentsSchedulerHelper::status() : array(),
         );
     }
 

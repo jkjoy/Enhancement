@@ -91,7 +91,12 @@ class Enhancement_NotificationConfigHelper
         $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
             'weixin_moments_enabled', array('1' => _t('启用'), '0' => _t('禁用')), '0',
             _t('通过微信发布瞬间'),
-            _t('先登录微信并绑定接收人，仅当前绑定接收人可发布。须另行运行 BotMoments/worker.php --once（单次接收）或 --loop（持续接收）；后台“同步微信接收人”也会处理收到的新命令。只执行启用并保存后的新消息，不读取旧聊天。')
+            _t('先登录微信并绑定接收人，仅当前绑定接收人可发布。默认随网站访问自动接收；后台“同步微信接收人”也会处理收到的新命令。只执行启用并保存后的新消息，不读取旧聊天。')
+        ));
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
+            'weixin_moments_auto_receive', array('1' => _t('启用'), '0' => _t('禁用')), '1',
+            _t('微信自动接收'),
+            _t('默认开启，仅“通过微信发布瞬间”启用时生效。随网站访问触发，最多每分钟一次，无需常驻接收器；无人访问或全站静态缓存时会延后，需要服务器能请求站点自身 URL。已运行 BotMoments/worker.php --loop 或系统计划任务时可关闭。')
         ));
 
         $options = Typecho_Widget::widget('Widget_Options');
@@ -106,7 +111,7 @@ class Enhancement_NotificationConfigHelper
             . '<h4>微信连接与接收人</h4>'
             . '<p>获取二维码 → 微信扫码并确认 → 检查登录状态 → 给微信机器人发送一条消息 → 同步并绑定接收人 → 保存启用通知。</p>'
             . '<p data-role="state" aria-live="polite">正在读取微信连接状态……</p>'
-            . '<p data-role="recipient"></p><p data-role="context"></p>'
+            . '<p data-role="recipient"></p><p data-role="context"></p><p data-role="auto-receive"></p>'
             . '<div data-role="qr-area" hidden><div data-role="qr" style="max-width:280px"></div>'
             . '<p>请使用微信扫描并在手机上确认；二维码在本机生成。完成后点击“检查登录状态”。</p></div>'
             . '<div data-role="verify" hidden><label for="enhancement-weixin-code">手机验证码</label> '
@@ -121,10 +126,10 @@ class Enhancement_NotificationConfigHelper
             . '<div class="enhancement-action-row" style="margin-top:12px"><button type="button" class="btn" data-action="weixin-test-notify" disabled>发送微信通知测试</button> '
             . '<button type="button" class="btn" data-action="weixin-disconnect" disabled>退出微信登录</button></div>'
             . '<p data-role="last-result"></p><p data-role="message" role="status" aria-live="polite"></p>'
-            . '<p>测试使用已保存的设置；服务受理后请在微信中核对实际送达。会话过期或通知失败时，请给机器人发送一条消息，再同步接收人。退出登录会清除本地登录凭证和接收人。</p>'
+            . '<p>连接与自动接收状态使用已保存的设置；表单修改须保存后才生效。测试受理后请在微信中核对实际送达。会话过期或通知失败时，请给机器人发送一条消息，再同步接收人。退出登录会清除本地登录凭证和接收人。</p>'
             . '<p>开启“通过微信发布瞬间”后，发送 <code>瞬间 内容</code> 或 <code>发瞬间 内容</code> 发布公开瞬间；发送 <code>私密瞬间 内容</code> 发布私密瞬间。正文支持多行、Markdown 图片 URL，以及同条命令携带的图片附件。</p>'
             . '<p>多图分步发布：发送 <code>图文瞬间 正文</code>（公开）或 <code>私密图文瞬间 正文</code>，正文可空；接着连续发送图片，最后发送 <code>发布瞬间</code> 合并发布，或用 <code>取消瞬间</code> 放弃。草稿有效 15 分钟，最多 9 张图片，每张最多 10 MiB；没有草稿时忽略纯图片。图片在确认发布时才下载、解密并保存到站点本地或已配置的 S3。</p>'
-            . '<p>下载期间可取消，进入保存阶段后暂时不能取消；若结果待核对，先查看后台瞬间，确认后再取消重建。私密瞬间的正文和 API 按私密处理；图片文件 URL 沿用现有媒体存储的公开规则，不提供额外的文件访问鉴权。接收器停止时不会自动接收命令；恢复接收或在后台同步后才会处理符合条件的新消息。</p>'
+            . '<p>下载期间可取消，进入保存阶段后暂时不能取消；若结果待核对，先查看后台瞬间，确认后再取消重建。私密瞬间的正文和 API 按私密处理；图片文件 URL 沿用现有媒体存储的公开规则，不提供额外的文件访问鉴权。若关闭自动接收，请运行命令行接收器、配置系统计划任务，或在后台手动同步。</p>'
             . '<noscript>请启用 JavaScript 以扫码登录、同步接收人和发送测试通知。</noscript></section>' . $scripts
         );
     }
