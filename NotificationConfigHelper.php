@@ -38,7 +38,7 @@ class Enhancement_NotificationConfigHelper
         $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
             'qq_moments_enabled', array('1' => _t('启用'), '0' => _t('禁用')), '0',
             _t('通过 QQ 发布瞬间'),
-            _t('仅官方 QQ 直连支持，须先完成事件回调和接收人绑定。私聊仅允许已绑定接收人；群聊仅允许已绑定群内下方白名单中的成员，每次发命令或图片均须 @机器人。频道不支持。只执行启用并保存后的新消息，不读取旧聊天。')
+            _t('仅官方 QQ 直连支持，须先完成事件回调和接收人绑定。私聊仅允许已绑定接收人；群聊仅允许已绑定群内下方白名单中的成员，每次发命令或图片均须 @机器人。频道不支持。只处理启用并保存后发送、且发送至今不超过 24 小时的消息。')
         ));
         $form->addInput(new Typecho_Widget_Helper_Form_Element_Textarea(
             'qq_moments_allowed_senders', null, '', _t('QQ 群瞬间发布者 OpenID'),
@@ -67,7 +67,8 @@ class Enhancement_NotificationConfigHelper
             . '<p data-role="events"></p><p data-role="last-result"></p><p data-role="message" role="status" aria-live="polite"></p>'
             . '<p>自动绑定只填写接收 ID，不会自动启用通知。当前 PHP 需要启用 sodium 扩展以验证官方回调签名；手动填写接收 ID 的发送功能不依赖该扩展。</p>'
             . '<p>开启“通过 QQ 发布瞬间”后，发送 <code>瞬间 内容</code> 或 <code>发瞬间 内容</code> 发布公开瞬间；发送 <code>私密瞬间 内容</code> 发布私密瞬间。正文支持多行、Markdown 图片 URL，以及同条命令携带的图片附件。</p>'
-            . '<p>多图分步发布：发送 <code>图文瞬间 正文</code>（公开）或 <code>私密图文瞬间 正文</code>，正文可空；接着连续发送图片，最后发送 <code>发布瞬间</code> 合并发布，或用 <code>取消瞬间</code> 放弃。草稿有效 15 分钟，最多 9 张图片，每张最多 10 MiB；未建立草稿的纯图片消息会忽略。群聊每一步均须 @机器人。</p>'
+            . '<p>多图分步发布：发送 <code>图文瞬间 正文</code>（公开）或 <code>私密图文瞬间 正文</code>，正文可空；接着连续发送图片，最后发送 <code>发布瞬间</code> 合并发布，或用 <code>取消瞬间</code> 放弃。草稿建立至发布的消息发送时间间隔最多 15 分钟，期间的图片可延迟批量同步；最多 9 张图片，每张最多 10 MiB。未建立草稿的纯图片消息会忽略，群聊每一步均须 @机器人。</p>'
+            . '<p>普通瞬间的时间取命令消息的发送时间，图文草稿取“发布瞬间”消息的发送时间。</p>'
             . '<p>图片在确认发布时才下载并保存到站点本地或已配置的 S3。下载期间可取消，进入保存阶段后暂时不能取消；若结果待核对，先查看后台瞬间，确认后再取消重建。私密瞬间的正文和 API 按私密处理；图片文件 URL 沿用现有媒体存储的公开规则，不提供额外的文件访问鉴权。</p>'
             . '<noscript>请启用 JavaScript 以生成绑定码和检查绑定状态。</noscript></section>'
         );
@@ -91,12 +92,12 @@ class Enhancement_NotificationConfigHelper
         $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
             'weixin_moments_enabled', array('1' => _t('启用'), '0' => _t('禁用')), '0',
             _t('通过微信发布瞬间'),
-            _t('先登录微信并绑定接收人，仅当前绑定接收人可发布。默认随网站访问自动接收；后台“同步微信接收人”也会处理收到的新命令。只执行启用并保存后的新消息，不读取旧聊天。')
+            _t('先登录微信并绑定接收人，仅当前绑定接收人可发布。默认随网站访问自动接收；无人访问时需持续接收，可让系统计划任务每分钟运行 BotMoments/worker.php --once。只处理启用并保存后发送、且发送至今不超过 24 小时的消息。')
         ));
         $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
             'weixin_moments_auto_receive', array('1' => _t('启用'), '0' => _t('禁用')), '1',
             _t('微信自动接收'),
-            _t('默认开启，仅“通过微信发布瞬间”启用时生效。随网站访问触发，最多每分钟一次，无需常驻接收器；无人访问或全站静态缓存时会延后，需要服务器能请求站点自身 URL。已运行 BotMoments/worker.php --loop 或系统计划任务时可关闭。')
+            _t('默认开启，仅“通过微信发布瞬间”启用时生效。随网站访问触发，最多每分钟一次；无人访问或全站静态缓存时会延后，需要服务器能请求站点自身 URL。要不依赖访问接收，请按下方说明配置宝塔每分钟运行 --once 的计划任务；也可使用 --loop。')
         ));
 
         $options = Typecho_Widget::widget('Widget_Options');
@@ -106,12 +107,18 @@ class Enhancement_NotificationConfigHelper
             $url = Enhancement_Plugin::appendVersionToAssetUrl($assetBase . $asset);
             $scripts .= '<script defer src="' . self::escape($url) . '"></script>';
         }
+        $workerPath = str_replace('\\', '/', __DIR__) . '/BotMoments/worker.php';
+        $workerCommand = '/www/server/php/' . PHP_MAJOR_VERSION . PHP_MINOR_VERSION . "/bin/php '" . str_replace("'", "'\\''", $workerPath) . "' --once";
         self::addPanel($form, 'enhancement_weixin_panel',
             '<section id="enhancement-weixin"' . self::actionAttributes(array('weixin-login-start', 'weixin-login-poll', 'weixin-sync', 'weixin-bind', 'weixin-disconnect', 'weixin-status', 'weixin-test-notify')) . '>'
             . '<h4>微信连接与接收人</h4>'
             . '<p>获取二维码 → 微信扫码并确认 → 检查登录状态 → 给微信机器人发送一条消息 → 同步并绑定接收人 → 保存启用通知。</p>'
             . '<p data-role="state" aria-live="polite">正在读取微信连接状态……</p>'
             . '<p data-role="recipient"></p><p data-role="context"></p><p data-role="auto-receive"></p>'
+            . '<details><summary>宝塔每分钟接收配置</summary>'
+            . '<p>在宝塔“计划任务”中添加“Shell脚本”，执行周期选择“每分钟”。将下方 PHP 路径替换为网站对应的 PHP CLI，须启用 cURL、PDO 及站点数据库所需驱动；worker 路径已按当前插件位置填写。执行用户请选择网站 PHP 运行用户，宝塔通常为 www。</p>'
+            . '<textarea id="enhancement-weixin-cron-command" readonly rows="3" spellcheck="false" aria-label="宝塔计划任务接收命令" style="width:100%;box-sizing:border-box;resize:vertical">' . self::escape($workerCommand) . '</textarea>'
+            . '<p>保存并启用任务后，由宝塔计划任务服务每分钟运行，无需保持终端或后台页面打开。接收任务会避免并发重复执行；“通过微信发布瞬间”须保持启用，默认的访问触发偏好可以保留。</p></details>'
             . '<div data-role="qr-area" hidden><div data-role="qr" style="max-width:280px"></div>'
             . '<p>请使用微信扫描并在手机上确认；二维码在本机生成。完成后点击“检查登录状态”。</p></div>'
             . '<div data-role="verify" hidden><label for="enhancement-weixin-code">手机验证码</label> '
@@ -126,9 +133,10 @@ class Enhancement_NotificationConfigHelper
             . '<div class="enhancement-action-row" style="margin-top:12px"><button type="button" class="btn" data-action="weixin-test-notify" disabled>发送微信通知测试</button> '
             . '<button type="button" class="btn" data-action="weixin-disconnect" disabled>退出微信登录</button></div>'
             . '<p data-role="last-result"></p><p data-role="message" role="status" aria-live="polite"></p>'
-            . '<p>连接与自动接收状态使用已保存的设置；表单修改须保存后才生效。测试受理后请在微信中核对实际送达。会话过期或通知失败时，请给机器人发送一条消息，再同步接收人。退出登录会清除本地登录凭证和接收人。</p>'
+            . '<p>连接与自动接收状态使用已保存的设置，表单修改须保存后才生效。自动接收状态仅记录访问触发任务；系统任务请查看宝塔任务日志。测试受理后请在微信中核对实际送达。会话过期或通知失败时，请给机器人发送一条消息，再同步接收人。退出登录会清除本地登录凭证和接收人。</p>'
             . '<p>开启“通过微信发布瞬间”后，发送 <code>瞬间 内容</code> 或 <code>发瞬间 内容</code> 发布公开瞬间；发送 <code>私密瞬间 内容</code> 发布私密瞬间。正文支持多行、Markdown 图片 URL，以及同条命令携带的图片附件。</p>'
-            . '<p>多图分步发布：发送 <code>图文瞬间 正文</code>（公开）或 <code>私密图文瞬间 正文</code>，正文可空；接着连续发送图片，最后发送 <code>发布瞬间</code> 合并发布，或用 <code>取消瞬间</code> 放弃。草稿有效 15 分钟，最多 9 张图片，每张最多 10 MiB；没有草稿时忽略纯图片。图片在确认发布时才下载、解密并保存到站点本地或已配置的 S3。</p>'
+            . '<p>多图分步发布：发送 <code>图文瞬间 正文</code>（公开）或 <code>私密图文瞬间 正文</code>，正文可空；接着连续发送图片，最后发送 <code>发布瞬间</code> 合并发布，或用 <code>取消瞬间</code> 放弃。草稿建立至发布的消息发送时间间隔最多 15 分钟，期间的图片可延迟批量同步；最多 9 张图片，每张最多 10 MiB。没有草稿时忽略纯图片；确认发布时才下载、解密并保存图片。</p>'
+            . '<p>普通瞬间的时间取命令消息的发送时间，图文草稿取“发布瞬间”消息的发送时间。图片沿用站点本地或已配置的 S3 存储。</p>'
             . '<p>下载期间可取消，进入保存阶段后暂时不能取消；若结果待核对，先查看后台瞬间，确认后再取消重建。私密瞬间的正文和 API 按私密处理；图片文件 URL 沿用现有媒体存储的公开规则，不提供额外的文件访问鉴权。若关闭自动接收，请运行命令行接收器、配置系统计划任务，或在后台手动同步。</p>'
             . '<noscript>请启用 JavaScript 以扫码登录、同步接收人和发送测试通知。</noscript></section>' . $scripts
         );

@@ -316,6 +316,135 @@ try {
         && count(draftMoments()) === 6 && draftRows() === [],
         'A receive started before off and on cannot publish under the replacement authorization even in the same second', $response);
 
+    qqCheck(qqConfig(['weixin_moments_enabled' => '1'])['status'] === 200,
+        'Temporal fixture restores Weixin publishing without changing its bound recipient');
+    $temporalGate = qqCall('/state', ['key' => 'bot_moments_gate'])['json']['record'] ?? [];
+    foreach (['qq', 'weixin'] as $channel) { $temporalGate[$channel]['enabled_at'] = time() - 90000; }
+    draftPrivateState('bot_moments_gate', $temporalGate);
+    $delayedAt = time() - 3600;
+    $directCases = [
+        ['qq', 'public', [], '延迟QQ文字'],
+        ['qq', 'private', [draftAttachment(50)], '延迟QQ图片'],
+        ['weixin', 'public', [$weixinImage], '延迟微信图片'],
+        ['weixin', 'private', [], '延迟微信文字'],
+    ];
+    foreach ($directCases as $index => [$channel, $status, $attachments, $body]) {
+        $timestamp = $delayedAt + $index;
+        $scope = $channel === 'qq' ? $one : [];
+        $event = draftEvent(($status === 'private' ? '私密瞬间 ' : '瞬间 ') . $body,
+            $scope + ['timestamp' => $timestamp, 'attachments' => $attachments], $channel);
+        $before = count(draftMoments());
+        $response = draftCall($event, $channel);
+        $moments = draftMoments();
+        $last = end($moments) ?: [];
+        qqCheck(($response['json']['success'] ?? false) === true && count($moments) === $before + 1
+            && ($last['content'] ?? '') === $body && ($last['source'] ?? '') === $channel && ($last['status'] ?? '') === $status
+            && (int)($last['created'] ?? 0) === $timestamp
+            && count(json_decode($last['media'] ?? 'null', true) ?: []) === count($attachments),
+            'Delayed direct command preserves its original send time, source and visibility: ' . $channel . ' ' . $status, $response);
+        $downloads = count(draftReceives());
+        $replay = draftCall($event, $channel);
+        qqCheck(($replay['json']['replayed'] ?? false) === true && count(draftMoments()) === $before + 1
+            && count(draftReceives()) === $downloads, 'Delayed direct command remains idempotent: ' . $channel . ' ' . $status, $replay);
+    }
+
+    foreach (['qq', 'weixin'] as $channel) {
+        $scope = $channel === 'qq' ? $one : [];
+        $attachment = $channel === 'qq' ? draftAttachment(51) : $weixinImage;
+        foreach (['public', 'private'] as $status) {
+            $body = '离线分批图文-' . $channel . '-' . $status;
+            $startedAt = $delayedAt + 10;
+            $before = count(draftMoments());
+            $downloads = count(draftReceives());
+            $start = draftEvent(($status === 'private' ? '私密图文瞬间 ' : '图文瞬间 ') . $body,
+                $scope + ['timestamp' => $startedAt], $channel);
+            $response = draftCall($start, $channel);
+            $draft = draftRows()[0]['draft'] ?? [];
+            qqCheck(($response['json']['success'] ?? false) === true && ($draft['body'] ?? '') === $body
+                && ($draft['state'] ?? '') === 'pending' && ($draft['status'] ?? '') === $status
+                && (int)($draft['created'] ?? 0) === $startedAt && count(draftReceives()) === $downloads,
+                'A start command delayed by an hour opens a durable draft using its send time: ' . $channel . ' ' . $status, $response);
+            $image = draftEvent('', $scope + ['timestamp' => $startedAt + 60, 'attachments' => [$attachment]], $channel);
+            $response = draftCall($image, $channel);
+            $collected = draftRows();
+            qqCheck(($response['json']['success'] ?? false) === true
+                && count($collected[0]['draft']['attachments'] ?? []) === 1 && count(draftMoments()) === $before
+                && count(draftReceives()) === $downloads,
+                'A later receive batch appends an offline image without wall-clock expiration: ' . $channel . ' ' . $status, $response);
+            draftCall($image, $channel);
+            qqCheck(draftRows() === $collected, 'A replayed offline image cannot change the persisted draft: ' . $channel . ' ' . $status);
+            $finishedAt = $startedAt + 120;
+            $finish = draftEvent('发布瞬间', $scope + ['timestamp' => $finishedAt], $channel);
+            $response = draftCall($finish, $channel);
+            $moments = draftMoments();
+            $last = end($moments) ?: [];
+            qqCheck(($response['json']['success'] ?? false) === true && count($moments) === $before + 1
+                && ($last['content'] ?? '') === $body && ($last['source'] ?? '') === $channel && ($last['status'] ?? '') === $status
+                && (int)($last['created'] ?? 0) === $finishedAt && count(json_decode($last['media'] ?? 'null', true) ?: []) === 1
+                && count(draftReceives()) === $downloads + 1 && draftRows() === [],
+                'Finishing an offline collection uses the final command time across separate batches: ' . $channel . ' ' . $status, $response);
+            draftCall($finish, $channel);
+            qqCheck(count(draftMoments()) === $before + 1 && count(draftReceives()) === $downloads + 1 && draftRows() === [],
+                'A redelivered offline final command cannot publish or download twice: ' . $channel . ' ' . $status);
+            draftCommand('取消瞬间', $scope + ['timestamp' => $finishedAt + 1], $channel);
+        }
+
+        $startedAt = $delayedAt + 20;
+        $before = count(draftMoments());
+        $downloads = count(draftReceives());
+        draftCommand('图文瞬间 发送时间恰好十五分钟', $scope + ['timestamp' => $startedAt], $channel);
+        draftCommand('', $scope + ['timestamp' => $startedAt + 900, 'attachments' => [$attachment]], $channel);
+        $response = draftCommand('发布瞬间', $scope + ['timestamp' => $startedAt + 900], $channel);
+        $moments = draftMoments();
+        $last = end($moments) ?: [];
+        qqCheck(($response['json']['success'] ?? false) === true && count($moments) === $before + 1
+            && (int)($last['created'] ?? 0) === $startedAt + 900 && count(draftReceives()) === $downloads + 1 && draftRows() === [],
+            'Image and final command exactly 900 seconds after start remain valid despite delayed receipt: ' . $channel, $response);
+
+        draftCommand('图文瞬间 图片发送超过十五分钟', $scope + ['timestamp' => $startedAt], $channel);
+        $pending = draftRows();
+        $before = count(draftMoments());
+        $downloads = count(draftReceives());
+        draftCommand('', $scope + ['timestamp' => $startedAt + 901, 'attachments' => [$attachment]], $channel);
+        $response = draftCommand('发布瞬间', $scope + ['timestamp' => $startedAt + 902], $channel);
+        qqCheck(draftRows() === $pending && count(draftMoments()) === $before && count(draftReceives()) === $downloads
+            && empty($response['json']['success']), 'An image sent after 900 seconds cannot revive an expired collection: ' . $channel, $response);
+        draftCommand('取消瞬间', $scope + ['timestamp' => $startedAt + 903], $channel);
+
+        draftCommand('私密图文瞬间 最终命令超过十五分钟', $scope + ['timestamp' => $startedAt], $channel);
+        draftCommand('', $scope + ['timestamp' => $startedAt + 899, 'attachments' => [$attachment]], $channel);
+        $pending = draftRows();
+        $response = draftCommand('发布瞬间', $scope + ['timestamp' => $startedAt + 901], $channel);
+        qqCheck(count($pending[0]['draft']['attachments'] ?? []) === 1 && draftRows() === $pending
+            && count(draftMoments()) === $before && count(draftReceives()) === $downloads && empty($response['json']['success']),
+            'A final command sent after 900 seconds cannot publish previously collected images: ' . $channel, $response);
+        draftCommand('取消瞬间', $scope + ['timestamp' => $startedAt + 902], $channel);
+
+        draftCommand('图文瞬间 图片不能早于创建指令', $scope + ['timestamp' => $startedAt], $channel);
+        $pending = draftRows();
+        draftCommand('', $scope + ['timestamp' => $startedAt - 1, 'attachments' => [$attachment]], $channel);
+        qqCheck(draftRows() === $pending && count(draftMoments()) === $before && count(draftReceives()) === $downloads,
+            'An older offline image cannot attach to a newer collection: ' . $channel);
+        draftCommand('取消瞬间', $scope + ['timestamp' => $startedAt + 1], $channel);
+
+        $before = count(draftMoments());
+        $downloads = count(draftReceives());
+        $tooOld = draftEvent('瞬间 超过一天的历史指令', $scope + ['timestamp' => time() - 86401, 'attachments' => [$attachment]], $channel);
+        draftCall($tooOld, $channel);
+        draftCall($tooOld, $channel);
+        draftCommand('图文瞬间 超过一天的历史草稿', $scope + ['timestamp' => time() - 86401], $channel);
+        qqCheck(count(draftMoments()) === $before && count(draftReceives()) === $downloads && draftRows() === [],
+            'The 24-hour replay window still rejects older direct and start commands before receiving: ' . $channel);
+
+        $recentGate = $temporalGate;
+        $recentGate[$channel]['enabled_at'] = $startedAt;
+        draftPrivateState('bot_moments_gate', $recentGate);
+        draftCommand('瞬间 授权启用前的延迟指令', $scope + ['timestamp' => $startedAt - 1, 'attachments' => [$attachment]], $channel);
+        qqCheck(count(draftMoments()) === $before && count(draftReceives()) === $downloads && draftRows() === [],
+            'Accepting offline batches does not permit messages sent before publishing was enabled: ' . $channel);
+        draftPrivateState('bot_moments_gate', $temporalGate);
+    }
+
     $log = file_get_contents($directory . '/typecho.log');
     qqCheck(preg_match('/PHP (?:Warning|Fatal error|Parse error|Deprecated|Notice)/i', $log) !== 1, 'Image draft fixture reports no PHP warnings or errors', $log);
 } catch (Throwable $exception) {

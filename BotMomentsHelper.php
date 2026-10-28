@@ -157,12 +157,12 @@ class Enhancement_BotMomentsHelper
         return array($content, $media);
     }
 
-    private static function insertMoment($db, string $channel, string $content, array $media, string $status): array
+    private static function insertMoment($db, string $channel, string $content, array $media, string $status, int $timestamp): array
     {
         $mid = (int)$db->query($db->insert($db->getPrefix() . 'moments')->rows(array(
             'content' => $content === '' ? '图片' : $content, 'tags' => null,
             'media' => $media ? json_encode($media, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null,
-            'source' => $channel, 'status' => $status, 'created' => time(),
+            'source' => $channel, 'status' => $status, 'created' => $timestamp,
         )));
         if ($mid < 1) { throw new RuntimeException('Moment storage did not return an ID.'); }
         return array('success' => true, 'mid' => $mid, 'status' => $status, 'kind' => 'published',
@@ -205,7 +205,6 @@ class Enhancement_BotMomentsHelper
             }
             if ($attachments && count($attachments) + count($media) > 9) { return self::failure('一条图文瞬间最多包含 9 张图片。'); }
             if ($mode === 'start') {
-                if ($timestamp < time() - 900) { return self::failure('图文指令已过期，请发送一条新指令。'); }
                 if (count($attachments) + count($media) > 9) { return self::failure('一条图文瞬间最多包含 9 张图片。'); }
                 $next = array('draft_id' => bin2hex(random_bytes(16)), 'identity' => $identity, 'created' => $timestamp, 'body' => $body, 'status' => $command['status'],
                     'attachments' => $attachments, 'state' => 'pending');
@@ -221,7 +220,7 @@ class Enhancement_BotMomentsHelper
             }
             if (!self::stillAuthorized($channel, $message, $identity)) { return self::failure('发布权限或机器人绑定已变化，未发布瞬间。'); }
             Enhancement_MomentsHelper::ensureTable();
-            return self::insertMoment($db, $channel, $content, array_merge($media, $received), $command['status']);
+            return self::insertMoment($db, $channel, $content, array_merge($media, $received), $command['status'], $timestamp);
         }
         if (!$draft) { return self::failure('没有有效的图文草稿，请先发送“图文瞬间 正文”或“私密图文瞬间 正文”。'); }
         $unique = array();
@@ -263,7 +262,7 @@ class Enhancement_BotMomentsHelper
         }
         $claimedRow['value'] = json_encode($committing, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         try {
-            $result = self::insertMoment($db, $channel, $content, array_merge($media, $received), $draft['status']);
+            $result = self::insertMoment($db, $channel, $content, array_merge($media, $received), $draft['status'], $timestamp);
         } catch (Throwable $exception) {
             $committing['state'] = 'uncertain';
             self::changeDraft($db, $scope, $claimedRow, $committing);
@@ -304,7 +303,7 @@ class Enhancement_BotMomentsHelper
             $draft = $draftRow ? json_decode((string)$draftRow['value'], true) : array();
             $draft = is_array($draft) ? $draft : array();
             if ((($draft['identity'] ?? '') !== $identity && ($draft['state'] ?? '') !== 'committing')
-                || (!in_array($draft['state'] ?? '', array('publishing', 'committing', 'uncertain'), true) && (int)($draft['created'] ?? 0) < time() - 900)) {
+                || (!in_array($draft['state'] ?? '', array('publishing', 'committing', 'uncertain'), true) && (int)($draft['created'] ?? 0) < $timestamp - 900)) {
                 $draft = array();
             }
             // Ordinary pictures never create a moment or a draft by themselves.

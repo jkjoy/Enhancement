@@ -81,7 +81,7 @@ class Enhancement_WeixinNotifyHelper
 
     private static function baseInfo(): array
     {
-        return array('channel_version' => self::VERSION, 'bot_agent' => 'TypechoEnhancement/1.10.0');
+        return array('channel_version' => self::VERSION, 'bot_agent' => 'TypechoEnhancement/1.11.0');
     }
 
     private static function request(?callable $transport, string $method, string $url, array $headers = array(), $payload = null, int $timeout = 6): array
