@@ -78,6 +78,15 @@ class Enhancement_NotifyTransportHelper
         }
     }
 
+    public static function renewLease(string $key, string $token, int $seconds): bool
+    {
+        $current = self::read($key);
+        if (($current['expires_at'] ?? 0) <= time() || !isset($current['token']) || !hash_equals((string)$current['token'], $token)) { return false; }
+        $next = $current;
+        $next['expires_at'] = time() + max(1, min(600, $seconds));
+        return $next === $current || self::compareAndSwap($key, $current, $next);
+    }
+
     public static function request(string $method, string $url, array $headers = array(), ?array $payload = null, int $timeout = 6): array
     {
         if (!function_exists('curl_init')) {

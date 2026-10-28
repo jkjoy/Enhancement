@@ -49,6 +49,49 @@ try {
         case '/bot-moment':
             echo json_encode(Enhancement_BotMomentsHelper::handle((string)($body['channel'] ?? ''), $body['event'] ?? []));
             break;
+        case '/bot-moment-media':
+            $receive = static function (string $channel, array $attachments) use ($directory, $body): array {
+                file_put_contents($directory . '/media-receive.jsonl', json_encode(['channel' => $channel, 'attachments' => $attachments]) . "\n", FILE_APPEND | LOCK_EX);
+                if (!empty($body['receive_failure'])) { throw new RuntimeException('Fixture media download failed.'); }
+                if (!empty($body['cancel_during_receive'])) {
+                    $cancel = $body['event'];
+                    $cancel['id'] = 'cancel-during-receive-' . bin2hex(random_bytes(8));
+                    $cancel['text'] = '取消瞬间';
+                    $cancel['attachments'] = [];
+                    $cancel['timestamp'] = time();
+                    $result = Enhancement_BotMomentsHelper::handle($channel, $cancel);
+                    file_put_contents($directory . '/media-cancel.jsonl', json_encode($result) . "\n", FILE_APPEND | LOCK_EX);
+                }
+                if (!empty($body['restart_during_receive'])) {
+                    $result = Enhancement_BotMomentsHelper::handle($channel, $body['restart_during_receive']);
+                    file_put_contents($directory . '/media-restart.jsonl', json_encode($result) . "\n", FILE_APPEND | LOCK_EX);
+                }
+                if (!empty($body['settings_during_receive'])) {
+                    Enhancement_ConfigStorageHelper::configHandle($body['settings_during_receive'], false);
+                }
+                if (!empty($body['reactivate_during_receive'])) {
+                    $before = Enhancement_NotifyTransportHelper::read('bot_moments_gate');
+                    Enhancement_ConfigStorageHelper::configHandle([$channel . '_moments_enabled' => '0'], false);
+                    $disabled = Enhancement_NotifyTransportHelper::read('bot_moments_gate');
+                    Enhancement_ConfigStorageHelper::configHandle([$channel . '_moments_enabled' => '1'], false);
+                    $after = Enhancement_NotifyTransportHelper::read('bot_moments_gate');
+                    $after[$channel]['enabled_at'] = $before[$channel]['enabled_at'];
+                    Enhancement_NotifyTransportHelper::write('bot_moments_gate', $after);
+                    file_put_contents($directory . '/media-reactivate.jsonl', json_encode([
+                        'before' => $before[$channel], 'disabled' => $disabled[$channel] ?? [], 'after' => $after[$channel]
+                    ]) . "\n", FILE_APPEND | LOCK_EX);
+                }
+                foreach ($body['state_during_receive'] ?? [] as $key => $record) {
+                    Enhancement_NotifyTransportHelper::write($key, $record);
+                }
+                $media = [];
+                foreach ($attachments as $index => $attachment) {
+                    $media[] = ['type' => 'PHOTO', 'url' => 'https://fixture.invalid/photo-' . ($index + 1) . '.png'];
+                }
+                return $media;
+            };
+            echo json_encode(Enhancement_BotMomentsHelper::handle((string)($body['channel'] ?? ''), $body['event'] ?? [], $receive));
+            break;
         case '/api/v1/memos':
             require_once dirname(__DIR__, 2) . '/Memos/Action.php';
             Typecho_Widget::widget('Enhancement_Memos_Action')->action();

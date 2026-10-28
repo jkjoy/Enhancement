@@ -239,8 +239,9 @@ class Enhancement_QqDirectNotifyHelper
     {
         $type = array('C2C_MESSAGE_CREATE' => 'c2c', 'GROUP_AT_MESSAGE_CREATE' => 'group')[$event['t']] ?? '';
         $data = $event['d'];
+        $content = $data['content'] ?? '';
         if ($type === '' || !is_string($data['id'] ?? null) || !preg_match('/\A[\x21-\x7e]{1,512}\z/D', $data['id'])
-            || !is_string($data['content'] ?? null) || !is_array($data['author'] ?? null)) {
+            || !is_string($content) || !is_array($data['author'] ?? null)) {
             return;
         }
         $sender = $type === 'group' ? ($data['author']['member_openid'] ?? null) : ($data['author']['user_openid'] ?? null);
@@ -249,7 +250,7 @@ class Enhancement_QqDirectNotifyHelper
             || !is_string($conversation) || !preg_match('/\A[A-Za-z0-9_-]{1,128}\z/D', $conversation)) {
             return;
         }
-        $text = preg_replace('/\A\s*(?:<@!?[A-Za-z0-9_-]+>\s*)*/u', '', $data['content']);
+        $text = preg_replace('/\A\s*(?:<@!?[A-Za-z0-9_-]+>\s*)*/u', '', $content);
         if (!is_string($text)) {
             return;
         }
@@ -259,8 +260,19 @@ class Enhancement_QqDirectNotifyHelper
         } else {
             $timestamp = is_string($timestamp) && strlen($timestamp) <= 64 ? (strtotime($timestamp) ?: 0) : 0;
         }
-        $result = Enhancement_BotMomentsHelper::handle('qq', array('id' => $data['id'], 'sender' => $sender,
-            'conversation' => $conversation, 'conversation_type' => $type, 'text' => $text, 'timestamp' => $timestamp, 'account' => $config['qq_app_id']));
+        $message = array('id' => $data['id'], 'sender' => $sender, 'conversation' => $conversation,
+            'conversation_type' => $type, 'text' => $text, 'timestamp' => $timestamp, 'account' => $config['qq_app_id']);
+        $attachments = array();
+        foreach (is_array($data['attachments'] ?? null) ? $data['attachments'] : array() as $attachment) {
+            if (!is_array($attachment)) { continue; }
+            $mime = $attachment['content_type'] ?? null;
+            if ((is_string($mime) && stripos(trim($mime), 'image/') === 0)
+                || (!isset($attachment['content_type']) && is_string($attachment['url'] ?? null) && $attachment['url'] !== '')) {
+                $attachments[] = $attachment;
+            }
+        }
+        if ($attachments !== array()) { $message['attachments'] = $attachments; }
+        $result = Enhancement_BotMomentsHelper::handle('qq', $message);
         if ($result === null || !empty($result['replayed']) || !is_string($result['message'] ?? null) || $result['message'] === '') {
             return;
         }

@@ -196,7 +196,7 @@ class Enhancement_S3Upload_S3Client
         }
     }
 
-    public function putObject($path, $file)
+    public function putObject($path, $file, $timeout = 120)
     {
         $this->ensureReady();
         $objectKey = $this->buildObjectKey($path);
@@ -267,8 +267,8 @@ class Enhancement_S3Upload_S3Client
             CURLOPT_SSL_VERIFYPEER => $this->sslVerifyEnabled(),
             CURLOPT_SSL_VERIFYHOST => $this->sslVerifyEnabled() ? 2 : 0,
             CURLOPT_HEADER => true,
-            CURLOPT_CONNECTTIMEOUT => 15,
-            CURLOPT_TIMEOUT => 120,
+            CURLOPT_CONNECTTIMEOUT => min(15, max(1, min(120, (int)$timeout))),
+            CURLOPT_TIMEOUT => max(1, min(120, (int)$timeout)),
             CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1
         ));
 

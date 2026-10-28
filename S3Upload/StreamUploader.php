@@ -45,7 +45,13 @@ class Enhancement_S3Upload_StreamUploader
         }
 
         $path = $this->s3Client->generatePath($file);
-        $result = $this->s3Client->putObject($path, $file['tmp_name']);
+        $timeout = $file['timeout'] ?? 120;
+        if (isset($file['deadline'])) {
+            $remaining = is_numeric($file['deadline']) ? (int)floor((float)$file['deadline'] - microtime(true)) : 0;
+            if ($remaining < 1) { throw new Exception('上传处理已超过时间限制'); }
+            $timeout = min(max(1, min(120, (int)$timeout)), $remaining);
+        }
+        $result = $this->s3Client->putObject($path, $file['tmp_name'], $timeout);
 
         if ($this->shouldSaveLocal()) {
             $this->saveLocalCopy($file, $path);

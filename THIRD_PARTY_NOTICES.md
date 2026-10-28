@@ -1,15 +1,18 @@
 # Third-party notices
 
-The Weixin HTTP protocol integration in `WeixinNotifyHelper.php` is adapted from
-Tencent's `@tencent-weixin/openclaw-weixin` version 2.4.10:
+The Weixin HTTP protocol integration in `WeixinNotifyHelper.php` and encrypted
+image reception in `BotMomentsMediaHelper.php` follow Tencent's
+`@tencent-weixin/openclaw-weixin` version 2.4.10:
 
 - Source: https://github.com/Tencent/openclaw-weixin
 - Package: https://www.npmjs.com/package/@tencent-weixin/openclaw-weixin/v/2.4.10
 - Protocol reference: https://github.com/Tencent/openclaw-weixin/blob/main/docs/protocol_zh_CN.md
 
 This Typecho PHP adaptation implements QR authentication, inbound recipient
-discovery, and text delivery. It does not include the OpenClaw runtime or its AI
-agent. It follows the PHP implementation in SBlog's `comment-push` plugin.
+discovery, text delivery, and CDN image download/decryption. Authentication and
+text delivery follow the PHP implementation in SBlog's `comment-push` plugin;
+image reception follows the upstream Weixin media protocol using PHP's cURL and
+OpenSSL extensions. It does not include the OpenClaw runtime or its AI agent.
 The upstream copyright and license are reproduced below.
 
 ---

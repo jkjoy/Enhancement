@@ -38,7 +38,7 @@ class Enhancement_NotificationConfigHelper
         $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
             'qq_moments_enabled', array('1' => _t('启用'), '0' => _t('禁用')), '0',
             _t('通过 QQ 发布瞬间'),
-            _t('仅官方 QQ 直连支持，须先完成事件回调和接收人绑定。私聊仅允许已绑定接收人；群聊仅允许已绑定群内下方白名单中的成员，发送命令时须 @机器人。频道不支持。只执行启用并保存后的新消息，不读取旧聊天。')
+            _t('仅官方 QQ 直连支持，须先完成事件回调和接收人绑定。私聊仅允许已绑定接收人；群聊仅允许已绑定群内下方白名单中的成员，每次发命令或图片均须 @机器人。频道不支持。只执行启用并保存后的新消息，不读取旧聊天。')
         ));
         $form->addInput(new Typecho_Widget_Helper_Form_Element_Textarea(
             'qq_moments_allowed_senders', null, '', _t('QQ 群瞬间发布者 OpenID'),
@@ -66,7 +66,9 @@ class Enhancement_NotificationConfigHelper
             . '<button type="button" class="btn" data-action="qq-binding-status">检查绑定状态</button></div>'
             . '<p data-role="events"></p><p data-role="last-result"></p><p data-role="message" role="status" aria-live="polite"></p>'
             . '<p>自动绑定只填写接收 ID，不会自动启用通知。当前 PHP 需要启用 sodium 扩展以验证官方回调签名；手动填写接收 ID 的发送功能不依赖该扩展。</p>'
-            . '<p>开启“通过 QQ 发布瞬间”后，发送 <code>瞬间 内容</code> 或 <code>发瞬间 内容</code> 发布公开瞬间；发送 <code>私密瞬间 内容</code> 发布私密瞬间。正文支持多行和 Markdown 图片 URL（例如 <code>![图片](https://example.com/photo.jpg)</code>），不会自动接收聊天图片附件。</p>'
+            . '<p>开启“通过 QQ 发布瞬间”后，发送 <code>瞬间 内容</code> 或 <code>发瞬间 内容</code> 发布公开瞬间；发送 <code>私密瞬间 内容</code> 发布私密瞬间。正文支持多行、Markdown 图片 URL，以及同条命令携带的图片附件。</p>'
+            . '<p>多图分步发布：发送 <code>图文瞬间 正文</code>（公开）或 <code>私密图文瞬间 正文</code>，正文可空；接着连续发送图片，最后发送 <code>发布瞬间</code> 合并发布，或用 <code>取消瞬间</code> 放弃。草稿有效 15 分钟，最多 9 张图片，每张最多 10 MiB；未建立草稿的纯图片消息会忽略。群聊每一步均须 @机器人。</p>'
+            . '<p>图片在确认发布时才下载并保存到站点本地或已配置的 S3。下载期间可取消，进入保存阶段后暂时不能取消；若结果待核对，先查看后台瞬间，确认后再取消重建。私密瞬间的正文和 API 按私密处理；图片文件 URL 沿用现有媒体存储的公开规则，不提供额外的文件访问鉴权。</p>'
             . '<noscript>请启用 JavaScript 以生成绑定码和检查绑定状态。</noscript></section>'
         );
     }
@@ -120,7 +122,9 @@ class Enhancement_NotificationConfigHelper
             . '<button type="button" class="btn" data-action="weixin-disconnect" disabled>退出微信登录</button></div>'
             . '<p data-role="last-result"></p><p data-role="message" role="status" aria-live="polite"></p>'
             . '<p>测试使用已保存的设置；服务受理后请在微信中核对实际送达。会话过期或通知失败时，请给机器人发送一条消息，再同步接收人。退出登录会清除本地登录凭证和接收人。</p>'
-            . '<p>开启“通过微信发布瞬间”后，发送 <code>瞬间 内容</code> 或 <code>发瞬间 内容</code> 发布公开瞬间；发送 <code>私密瞬间 内容</code> 发布私密瞬间。正文支持多行和 Markdown 图片 URL，不会自动接收聊天图片附件。接收器停止时不会自动接收命令；恢复接收或在后台同步后才会处理符合条件的新消息。</p>'
+            . '<p>开启“通过微信发布瞬间”后，发送 <code>瞬间 内容</code> 或 <code>发瞬间 内容</code> 发布公开瞬间；发送 <code>私密瞬间 内容</code> 发布私密瞬间。正文支持多行、Markdown 图片 URL，以及同条命令携带的图片附件。</p>'
+            . '<p>多图分步发布：发送 <code>图文瞬间 正文</code>（公开）或 <code>私密图文瞬间 正文</code>，正文可空；接着连续发送图片，最后发送 <code>发布瞬间</code> 合并发布，或用 <code>取消瞬间</code> 放弃。草稿有效 15 分钟，最多 9 张图片，每张最多 10 MiB；没有草稿时忽略纯图片。图片在确认发布时才下载、解密并保存到站点本地或已配置的 S3。</p>'
+            . '<p>下载期间可取消，进入保存阶段后暂时不能取消；若结果待核对，先查看后台瞬间，确认后再取消重建。私密瞬间的正文和 API 按私密处理；图片文件 URL 沿用现有媒体存储的公开规则，不提供额外的文件访问鉴权。接收器停止时不会自动接收命令；恢复接收或在后台同步后才会处理符合条件的新消息。</p>'
             . '<noscript>请启用 JavaScript 以扫码登录、同步接收人和发送测试通知。</noscript></section>' . $scripts
         );
     }

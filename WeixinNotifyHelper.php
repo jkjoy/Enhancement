@@ -81,7 +81,7 @@ class Enhancement_WeixinNotifyHelper
 
     private static function baseInfo(): array
     {
-        return array('channel_version' => self::VERSION, 'bot_agent' => 'TypechoEnhancement/1.8.0');
+        return array('channel_version' => self::VERSION, 'bot_agent' => 'TypechoEnhancement/1.9.0');
     }
 
     private static function request(?callable $transport, string $method, string $url, array $headers = array(), $payload = null, int $timeout = 6): array
@@ -287,7 +287,7 @@ class Enhancement_WeixinNotifyHelper
     public static function sync(?callable $transport = null): array
     {
         $lease = Enhancement_NotifyTransportHelper::acquireLease('weixin_sync_lock', 180);
-        $counts = array('moments_published' => 0, 'moments_failed' => 0, 'moments_replies_skipped' => 0);
+        $counts = array('moments_published' => 0, 'moments_failed' => 0, 'moments_drafts' => 0, 'moments_replies_skipped' => 0);
         if ($lease === null) {
             return array('status' => 'busy', 'message' => '微信消息正在同步，请稍后重试。', 'candidates' => array()) + $counts;
         }
@@ -343,19 +343,26 @@ class Enhancement_WeixinNotifyHelper
                     continue;
                 }
                 $text = array();
+                $attachments = array();
                 foreach (is_array($message['item_list'] ?? null) ? $message['item_list'] : array() as $item) {
                     if (is_array($item) && in_array($item['type'] ?? null, array(1, '1'), true)
                         && is_array($item['text_item'] ?? null) && is_string($item['text_item']['text'] ?? null)) {
                         $text[] = $item['text_item']['text'];
                     }
+                    if (is_array($item) && in_array($item['type'] ?? null, array(2, '2'), true)
+                        && is_array($item['image_item'] ?? null)) {
+                        $attachments[] = $item['image_item'];
+                    }
                 }
-                if ($text !== array()) {
+                if ($text !== array() || $attachments !== array()) {
                     $id = $message['message_id'] ?? '';
                     $created = $message['create_time_ms'] ?? 0;
-                    $commands[] = array('id' => is_string($id) || is_int($id) ? (string)$id : '',
+                    $command = array('id' => is_string($id) || is_int($id) ? (string)$id : '',
                         'sender' => $from, 'conversation' => $from, 'text' => implode("\n", $text),
                         'timestamp' => is_numeric($created) ? (int)floor((float)$created / 1000) : 0,
                         'account' => $account['account_id']);
+                    if ($attachments !== array()) { $command['attachments'] = $attachments; }
+                    $commands[] = $command;
                 }
             }
             $sync['context_tokens'] = array_slice($context, -20, null, true);
@@ -364,11 +371,14 @@ class Enhancement_WeixinNotifyHelper
             Enhancement_NotifyTransportHelper::write('weixin_sync', $sync);
             $replies = 0;
             foreach ($commands as $command) {
+                if (!Enhancement_NotifyTransportHelper::renewLease('weixin_sync_lock', $lease, 180)) {
+                    throw new RuntimeException('微信消息同步锁已失效，请重新同步。');
+                }
                 $result = Enhancement_BotMomentsHelper::handle('weixin', $command);
                 if ($result === null || !empty($result['replayed'])) {
                     continue;
                 }
-                $counts[!empty($result['success']) ? 'moments_published' : 'moments_failed']++;
+                $counts[empty($result['success']) ? 'moments_failed' : (($result['kind'] ?? '') === 'draft' ? 'moments_drafts' : 'moments_published')]++;
                 if ($replies < 10) {
                     self::send((string)$result['message'], $settings, $transport);
                     $replies++;

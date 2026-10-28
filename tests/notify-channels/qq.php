@@ -217,6 +217,33 @@ if (function_exists('sodium_crypto_sign_seed_keypair')) {
     notifyCheck($calls[0]['url'] === 'https://api.bot.qq.com/v2/groups/PUBLISHING_GROUP/messages'
         && $calls[0]['payload']['msg_id'] === 'group.message-1', 'QQ replies to actual group conversation and message');
 
+    $imageEvent = $event;
+    $imageEvent['d']['id'] = 'group.image-1';
+    unset($imageEvent['d']['content']);
+    $qqImage = array('url' => '//gchat.qpic.cn/image-1', 'content_type' => 'image/jpeg', 'filename' => 'image.jpg', 'size' => 1234);
+    $qqDownload = array('url' => 'https://multimedia.nt.qq.com.cn/download?fixture=1');
+    $imageEvent['d']['attachments'] = array($qqImage, $qqDownload,
+        array('url' => 'https://example.test/movie.mp4', 'content_type' => 'video/mp4'),
+        array('url' => 'https://example.test/pretend.jpg', 'content_type' => 'application/pdf'), 'invalid');
+    list($body, $headers) = notifyQqSigned($imageEvent);
+    $calls = array();
+    $result = Enhancement_QqDirectNotifyHelper::webhook($body, $headers, notifyQqTransport($calls, array(array('id' => 'image-receipt'))));
+    notifyCheck($result['status'] === 200 && end($normalized)['message']['text'] === ''
+        && end($normalized)['message']['attachments'] === array($qqImage, $qqDownload),
+        'QQ passes image-only events with raw image metadata and MIME-less multimedia URLs to the shared handler');
+    notifyCheck(count($calls) === 1 && $calls[0]['payload']['msg_id'] === 'group.image-1', 'QQ image receipts retain the original conversation and message reference');
+    $imageEvent['d']['content'] = '<@123456> 图文瞬间 相册';
+    list($body, $headers) = notifyQqSigned($imageEvent);
+    $calls = array();
+    Enhancement_QqDirectNotifyHelper::webhook($body, $headers, notifyQqTransport($calls, array(array('id' => 'mixed-image-receipt'))));
+    notifyCheck(end($normalized)['message']['text'] === '图文瞬间 相册' && end($normalized)['message']['attachments'] === array($qqImage, $qqDownload),
+        'QQ preserves text and raw images from the same message without interpreting the command');
+    $imageEvent['d']['attachments'] = array(array('url' => 'https://example.test/a.mp4', 'content_type' => 'video/mp4'));
+    list($body, $headers) = notifyQqSigned($imageEvent);
+    $calls = array();
+    Enhancement_QqDirectNotifyHelper::webhook($body, $headers, notifyQqTransport($calls, array(array('id' => 'text-only-receipt'))));
+    notifyCheck(!array_key_exists('attachments', end($normalized)['message']), 'QQ omits the attachment key when no incoming image remains');
+
     foreach (array('missing-id', 'missing-member', 'invalid-group', 'unsupported-event') as $case) {
         $invalid = $event;
         if ($case === 'missing-id') { unset($invalid['d']['id']); }

@@ -311,10 +311,14 @@ $momentSync = Enhancement_WeixinNotifyHelper::sync(static function ($method, $ur
     notifyCheck($payload['msg']['item_list'][0]['text_item']['text'] === '瞬间已发布。', 'Weixin replies with the shared publisher result');
     return array('status' => 200, 'data' => array('ret' => 0));
 });
-notifyCheck(count($momentCalls) === 1 && $momentCalls[0] === array('weixin', array('id' => 'moment-normalized', 'sender' => 'scanner@im.wechat',
-    'conversation' => 'scanner@im.wechat', 'text' => "瞬间 第一段\n第二段 ![](https://example.test/a.jpg)", 'timestamp' => 1700000000, 'account' => 'fixture-bot')),
-    'Weixin normalizes only bound-owner private text items and preserves linked Markdown images');
-notifyCheck($momentReplyCalls === 1 && $momentSync['moments_published'] === 1 && $momentSync['moments_failed'] === 0
+notifyCheck(count($momentCalls) === 2 && $momentCalls[0] === array('weixin', array('id' => 'moment-normalized', 'sender' => 'scanner@im.wechat',
+    'conversation' => 'scanner@im.wechat', 'text' => "瞬间 第一段\n第二段 ![](https://example.test/a.jpg)", 'timestamp' => 1700000000, 'account' => 'fixture-bot',
+    'attachments' => array(array('media' => 'encrypted-private-media')))),
+    'Weixin normalizes bound-owner text and raw image items while preserving linked Markdown images');
+notifyCheck($momentCalls[1][1]['id'] === 'image-only' && $momentCalls[1][1]['text'] === ''
+    && $momentCalls[1][1]['attachments'] === array(array('media' => 'encrypted-private-media')),
+    'Weixin forwards image-only messages to the shared handler');
+notifyCheck($momentReplyCalls === 2 && $momentSync['moments_published'] === 2 && $momentSync['moments_failed'] === 0
     && Enhancement_NotifyTransportHelper::read('weixin_sync')['get_updates_buf'] === 'moments-normalized', 'A handled Weixin moment advances the batch cursor');
 $momentStatus = Enhancement_WeixinNotifyHelper::status();
 notifyCheck($momentStatus['moments_enabled'] && $momentStatus['moments_last_poll'] > 0
@@ -322,8 +326,40 @@ notifyCheck($momentStatus['moments_enabled'] && $momentStatus['moments_last_poll
 
 notifySettings(array('weixin_moments_enabled' => '0'));
 Enhancement_WeixinNotifyHelper::sync(weixinResponse(array('msgs' => array(weixinMomentMessage('disabled')))));
-notifyCheck(count($momentCalls) === 1 && !Enhancement_WeixinNotifyHelper::status()['moments_enabled'], 'Disabled Weixin moment receiving never calls the publisher');
+notifyCheck(count($momentCalls) === 2 && !Enhancement_WeixinNotifyHelper::status()['moments_enabled'], 'Disabled Weixin moment receiving never calls the publisher');
 notifySettings(array('weixin_moments_enabled' => '1'));
+
+$imageItem = array('media' => array('encrypt_query_param' => 'fixture-encrypted-query', 'aes_key' => 'fixture-aes-key', 'encrypt_type' => 1), 'mid_size' => 64);
+$draftCalls = array();
+Enhancement_BotMomentsHelper::$handler = static function ($channel, $message) use (&$draftCalls): ?array {
+    $draftCalls[$message['id']] = $message;
+    $result = array('success' => $message['id'] !== 'draft-failed', 'message' => '已处理。');
+    if ($message['id'] !== 'legacy-text') { $result['kind'] = $message['id'] === 'image-published' ? 'published' : 'draft'; }
+    return $result;
+};
+$draftReplies = 0;
+$draftSync = Enhancement_WeixinNotifyHelper::sync(static function ($method, $url) use ($imageItem, &$draftReplies): array {
+    if (strpos($url, '/getupdates') !== false) {
+        return array('status' => 200, 'data' => array('get_updates_buf' => 'draft-batch', 'msgs' => array(
+            weixinMomentMessage('draft-start', array('item_list' => array(array('type' => 1, 'text_item' => array('text' => '图文瞬间 相册'))))),
+            weixinMomentMessage('image-draft', array('item_list' => array(array('type' => '2', 'image_item' => $imageItem)))),
+            weixinMomentMessage('image-published', array('item_list' => array(
+                array('type' => 1, 'text_item' => array('text' => '瞬间 带图片发布')),
+                array('type' => 2, 'image_item' => $imageItem), array('type' => 2, 'image_item' => $imageItem),
+                array('type' => 2, 'image_item' => 'invalid'), array('type' => 3, 'image_item' => $imageItem),
+            ))), weixinMomentMessage('legacy-text'), weixinMomentMessage('draft-failed'),
+        )));
+    }
+    $draftReplies++;
+    return array('status' => 200, 'data' => array('ret' => 0));
+});
+notifyCheck($draftSync['moments_drafts'] === 2 && $draftSync['moments_published'] === 2 && $draftSync['moments_failed'] === 1 && $draftReplies === 5,
+    'Weixin counts accepted drafts separately from published moments and failures while preserving legacy text results');
+notifyCheck($draftCalls['image-draft']['text'] === '' && $draftCalls['image-draft']['attachments'] === array($imageItem)
+    && $draftCalls['image-published']['attachments'] === array($imageItem, $imageItem) && $draftCalls['image-published']['text'] === '瞬间 带图片发布',
+    'Weixin merges raw image items with text and ignores malformed or non-image item types');
+notifyCheck(!array_key_exists('attachments', $draftCalls['legacy-text']) && !array_key_exists('attachments', $draftCalls['draft-start']),
+    'Weixin text-only messages keep their existing normalized shape');
 
 $momentReplyCalls = 0;
 Enhancement_BotMomentsHelper::$handler = static function ($channel, $message): ?array {
@@ -390,6 +426,43 @@ $bulk = Enhancement_WeixinNotifyHelper::sync(static function ($method, $url) use
 });
 notifyCheck($bulkHandled === 101 && $bulk['moments_published'] === 101 && $bulkReceipts === 10 && $bulk['moments_replies_skipped'] === 91
     && Enhancement_NotifyTransportHelper::read('weixin_sync')['get_updates_buf'] === 'all-bulk-handled', 'Large Weixin batches publish every command and bound receipt work without losing the cursor');
+
+$renewedLeases = array();
+Enhancement_BotMomentsHelper::$handler = static function () use (&$renewedLeases): ?array {
+    $current = Enhancement_NotifyTransportHelper::read('weixin_sync_lock');
+    $renewedLeases[] = ($current['expires_at'] ?? 0) > time() + 170;
+    if (count($renewedLeases) === 1) {
+        $current['expires_at'] = time() + 5;
+        Enhancement_NotifyTransportHelper::write('weixin_sync_lock', $current);
+    }
+    return null;
+};
+Enhancement_WeixinNotifyHelper::sync(weixinResponse(array('get_updates_buf' => 'lease-renewed', 'msgs' => array(
+    weixinMomentMessage('renew-first'), weixinMomentMessage('renew-second'),
+))));
+notifyCheck($renewedLeases === array(true, true) && Enhancement_NotifyTransportHelper::read('weixin_sync')['get_updates_buf'] === 'lease-renewed',
+    'Weixin renews its synchronization lease before each potentially slow image command');
+
+$lostLeaseCommands = 0;
+$replacementLease = str_repeat('f', 32);
+Enhancement_BotMomentsHelper::$handler = static function () use (&$lostLeaseCommands, $replacementLease): ?array {
+    $lostLeaseCommands++;
+    Enhancement_NotifyTransportHelper::write('weixin_sync_lock', array('token' => $replacementLease, 'expires_at' => time() + 180));
+    return null;
+};
+$leaseFailure = '';
+try {
+    Enhancement_WeixinNotifyHelper::sync(weixinResponse(array('get_updates_buf' => 'lost-lease-must-not-advance', 'msgs' => array(
+        weixinMomentMessage('lost-first'), weixinMomentMessage('lost-second'),
+    ))));
+} catch (RuntimeException $exception) {
+    $leaseFailure = $exception->getMessage();
+}
+notifyCheck($leaseFailure === '微信消息同步锁已失效，请重新同步。' && $lostLeaseCommands === 1
+    && Enhancement_NotifyTransportHelper::read('weixin_sync')['get_updates_buf'] === 'lease-renewed'
+    && Enhancement_NotifyTransportHelper::read('weixin_sync_lock')['token'] === $replacementLease,
+    'Losing a Weixin lease stops the batch, retains the cursor and preserves the replacement worker lock');
+Enhancement_NotifyTransportHelper::releaseLease('weixin_sync_lock', $replacementLease);
 
 foreach (array('disconnect', 'relogin-token', 'relogin-account', 'expired') as $accountChange) {
     weixinConnect();

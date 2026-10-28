@@ -93,7 +93,7 @@ try {
     botState('bot_moments_gate', $oldGate);
     botUnchanged(botEvent('瞬间 昨天旧消息', ['timestamp' => time() - 86401]), 'QQ messages older than 24 hours are ignored even with an older activation gate');
     botState('bot_moments_gate', $gate);
-    botUnchanged(botEvent('瞬间 未来消息', ['timestamp' => time() + 301]), 'QQ messages with an implausible future time cannot publish');
+    botUnchanged(botEvent('瞬间 未来消息', ['timestamp' => time() + 600]), 'QQ messages with an implausible future time cannot publish');
     botUnchanged(botEvent('瞬间 无有效时间', ['timestamp' => 'not-a-timestamp']), 'QQ messages with invalid time cannot publish');
 
     $event = botEvent("瞬间 今天的天空\n![傍晚](https://example.test/evening.jpg)");

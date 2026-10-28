@@ -19,6 +19,7 @@ class Enhancement_S3Upload_FileHandler
             if (class_exists('Enhancement_Plugin') && Enhancement_Plugin::s3UploadEnabled()) {
                 Enhancement_S3Upload_Utils::log('S3 上传未生效：配置不完整或服务器环境不满足，已回退本地上传', 'warning');
             }
+            if (isset($file['bytes']) && is_string($file['bytes'])) { unset($file['tmp_name']); }
             return self::localUploadHandle($file);
         }
 

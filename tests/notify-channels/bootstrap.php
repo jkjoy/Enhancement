@@ -43,6 +43,14 @@ class Enhancement_NotifyTransportHelper
         $current = self::read($key);
         if (($current['token'] ?? '') === $token) { self::write($key, array()); }
     }
+    public static function renewLease(string $key, string $token, int $seconds): bool
+    {
+        $current = self::read($key);
+        if (($current['expires_at'] ?? 0) <= time() || ($current['token'] ?? '') !== $token) { return false; }
+        $current['expires_at'] = time() + $seconds;
+        self::write($key, $current);
+        return true;
+    }
     public static function request(string $method, string $url, array $headers = array(), ?array $payload = null, int $timeout = 6): array
     {
         if (!is_callable(self::$transport)) { throw new RuntimeException('Live network is disabled in notification tests.'); }
