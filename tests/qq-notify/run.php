@@ -34,7 +34,13 @@ function qqAddress(): string
 function qqStartServer(string $address, string $router, array $env, string $log): void
 {
     global $processes;
-    $process = proc_open([PHP_BINARY, '-d', 'display_errors=0', '-d', 'error_reporting=32767', '-S', $address, $router],
+    $command = [PHP_BINARY, '-d', 'display_errors=0', '-d', 'error_reporting=32767'];
+    if (!empty($env['ENHANCEMENT_QQ_TEST_NO_SODIUM'])) {
+        $command[] = '-d';
+        $command[] = 'disable_functions=sodium_crypto_sign_seed_keypair,sodium_crypto_sign_publickey,sodium_crypto_sign_secretkey,sodium_crypto_sign_detached,sodium_crypto_sign_verify_detached';
+    }
+    $command = array_merge($command, ['-S', $address, $router]);
+    $process = proc_open($command,
         [['pipe', 'r'], ['file', $log, 'a'], ['file', $log, 'a']], $pipes, __DIR__, $env, ['bypass_shell' => true]);
     if (!is_resource($process)) { throw new RuntimeException('Could not start fixture server.'); }
     $processes[] = $process;
@@ -215,6 +221,8 @@ try {
     qqCheck($form['status'] === 200 && strpos($form['body'], 'name="qq_app_id"') !== false
         && strpos($form['body'], 'name="qq_app_secret"') !== false && strpos($form['body'], $secret) === false,
         'Settings render AppID and an empty AppSecret without exposing the secret', $form['status']);
+    qqCheck(strpos($form['body'], '无需额外启用 PHP 扩展') !== false && strpos($form['body'], '需启用 sodium 扩展') === false,
+        'QQ setup describes bundled signature verification without requiring an extension');
     foreach (array_keys($obsolete) as $name) {
         qqCheck(strpos($form['body'], 'name="' . $name . '"') === false, 'Obsolete field is absent from the settings form: ' . $name);
     }
@@ -246,6 +254,8 @@ try {
     qqCheck($response['status'] === 200 && !empty($response['json']['data']['configured'])
         && empty($response['json']['data']['bound']) && !empty($response['json']['data']['moments_enabled'])
         && strpos($response['body'], $secret) === false, 'QQ status shows saved credentials and publication switch without the secret', $response);
+    qqCheck(!empty($response['json']['data']['available']) && ($response['json']['data']['crypto_backend'] ?? '') === 'compat',
+        'QQ status uses bundled pure PHP signature verification without a native extension', $response);
     $pending = qqAction($admin, 'qq-binding-start');
     qqCheck($pending['status'] === 200 && preg_match('/^[A-F0-9]{16}$/D', $pending['json']['data']['code'] ?? '') === 1
         && ($pending['json']['data']['expires_at'] ?? 0) > time() + 590, 'Administrator creates a ten-minute private binding command', $pending);

@@ -1,8 +1,9 @@
 <?php
 /** QQ platform -> signed public Typecho HTTP action -> isolated SQLite + mocked QQ replies. */
 declare(strict_types=1);
-if (!function_exists('sodium_crypto_sign_seed_keypair')) {
-    fwrite(STDERR, "PHP sodium is required for official QQ Webhook signature tests.\n");
+require_once dirname(__DIR__, 2) . '/QqCryptoHelper.php';
+if (!Enhancement_QqCryptoHelper::available()) {
+    fwrite(STDERR, "Official QQ signature implementation is unavailable.\n");
     exit(2);
 }
 define('ENHANCEMENT_QQ_FIXTURE_LIBRARY', true);
@@ -10,7 +11,7 @@ require dirname(__DIR__) . '/qq-notify/run.php';
 
 function qmKeypair(string $secret): string
 {
-    return sodium_crypto_sign_seed_keypair(substr(str_repeat($secret, (int)ceil(32 / strlen($secret))), 0, 32));
+    return Enhancement_QqCryptoHelper::keypair(substr(str_repeat($secret, (int)ceil(32 / strlen($secret))), 0, 32));
 }
 function qmEvent(string $text = '瞬间 QQ发布瞬间测试!~', array $changes = []): array
 {
@@ -24,8 +25,8 @@ function qmSend($payload, array $options = []): array
     global $base, $settings;
     $raw = is_string($payload) ? $payload : json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     $stamp = $options['timestamp'] ?? (string)time();
-    $signature = bin2hex(sodium_crypto_sign_detached($stamp . $raw,
-        sodium_crypto_sign_secretkey(qmKeypair($options['secret'] ?? $settings['qq_app_secret']))));
+    $signature = bin2hex(Enhancement_QqCryptoHelper::sign($stamp . $raw,
+        Enhancement_QqCryptoHelper::secretKey(qmKeypair($options['secret'] ?? $settings['qq_app_secret']))));
     $headers = ['Content-Type: application/json', 'X-Signature-Timestamp: ' . $stamp,
         'X-Signature-Ed25519: ' . $signature];
     if (empty($options['omit_app_id'])) { $headers[] = 'X-Bot-Appid: ' . ($options['app_id'] ?? $settings['qq_app_id']); }
@@ -112,9 +113,9 @@ try {
     $response = qmSend($challenge);
     $challengeSignature = hex2bin($response['json']['signature'] ?? '');
     qqCheck($response['status'] === 200 && ($response['json']['plain_token'] ?? '') === $challenge['d']['plain_token']
-        && strlen($challengeSignature) === SODIUM_CRYPTO_SIGN_BYTES
-        && sodium_crypto_sign_verify_detached($challengeSignature, $challenge['d']['event_ts'] . $challenge['d']['plain_token'],
-            sodium_crypto_sign_publickey(qmKeypair($settings['qq_app_secret']))),
+        && strlen($challengeSignature) === 64
+        && Enhancement_QqCryptoHelper::verify($challengeSignature, $challenge['d']['event_ts'] . $challenge['d']['plain_token'],
+            Enhancement_QqCryptoHelper::publicKey(qmKeypair($settings['qq_app_secret']))),
         'Official challenge is signed correctly without website login', $response);
     qqCheck(($response['headers']['cache-control'] ?? '') === 'no-store' && qmCalls() === [], 'Challenge cannot be cached and does not call QQ API');
 

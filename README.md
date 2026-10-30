@@ -333,7 +333,7 @@ php BotMoments/worker.php --loop
 
 ### 官方 QQ Bot（Webhook）
 
-QQ 由插件直接接入官方接口，后台只需填写 AppID 和 AppSecret。服务器需要 PHP cURL 与 sodium 扩展，QQ 事件回调须能通过公网 HTTPS 访问。
+QQ 由插件直接接入官方接口，后台只需填写 AppID 和 AppSecret。服务器需要 PHP cURL，QQ 事件回调须能通过公网 HTTPS 访问。签名处理默认使用插件自带的 sodium_compat 纯 PHP 实现，无需安装或启用 sodium 扩展。
 
 1. 在 [QQ 开放平台](https://q.qq.com/) 创建机器人，取得 AppID / AppSecret，开通私聊消息及所需发送权限，并按控制台要求设置测试成员、出口 IP 和消息域名。
 2. 在插件「QQ」分组选择官方 QQ Bot，填写 AppID 和 AppSecret 并保存。AppSecret 保存后不回显，留空保留原值。
@@ -349,7 +349,7 @@ QQ 回调直接验证官方 Ed25519 签名并响应平台挑战，无需登录�
 
 没有回复时，在后台点击「检查绑定状态」，检查 AppID / AppSecret、接收人绑定、最近官方事件与最近发送结果；若事件时间没有更新，检查开放平台订阅和公网 HTTPS 回调是否可达。已发布但没有回复时，先在「管理 → 瞬间」核对内容，再点击「重试发布结果回复」。
 
-开发验证：`php tests/qq-notify/run.php` 验证配置、通知与旧配置清理；`php tests/qq-moments/run.php` 验证真实官方签名 HTTP 回调、私聊绑定、实际瞬间入库和被动回复；`php tests/bot-moments/qq-official.php` 验证图文草稿与授权变化。测试使用隔离数据库与模拟 QQ 接口，不向真实 QQ 发送消息。
+开发验证：`php tests/qq-notify/run.php` 验证配置、通知与旧配置清理；`php tests/qq-moments/run.php` 验证真实官方签名 HTTP 回调、私聊绑定、实际瞬间入库和被动回复；`php tests/qq-crypto/run.php` 验证原生与纯 PHP 签名实现的兼容性；`php tests/bot-moments/qq-official.php` 验证图文草稿与授权变化。测试使用隔离数据库与模拟 QQ 接口，不向真实 QQ 发送消息。
 
 ### 评论防御
 

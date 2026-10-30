@@ -1,0 +1,2 @@
+# Preserve upstream bytes and whitespace exactly as recorded in UPSTREAM.json.
+/vendor/sodium_compat/** -text -whitespace

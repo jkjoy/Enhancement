@@ -88,7 +88,7 @@
 
     function render(data) {
       state = data || {};
-      role(qq, 'state').textContent = !state.available ? 'PHP sodium 扩展不可用，无法验证 QQ 官方签名。'
+      role(qq, 'state').textContent = !state.available ? 'QQ 官方签名验证组件尚未就绪，请更新完整插件后重试。'
         : state.provider !== 'official' ? '请先选择官方 QQ 机器人，填写 AppID 和 AppSecret 并保存。'
           : !state.configured ? '请先填写有效的 AppID 和 AppSecret 并保存。'
             : state.bound ? (state.target_type === 'group' ? '已绑定 QQ 群通知接收人。' : '已绑定 QQ 私聊接收人。')
@@ -100,8 +100,10 @@
         ? (state.binding.target_type === 'group' ? '在目标群内 @机器人发送此命令' : '在机器人 QQ 私聊发送此命令')
           + '，有效期至 ' + date(state.binding.expires_at) + '。发送后点击“检查绑定状态”。'
         : '';
+      const cryptoLabels = { compat: '内置 PHP 验证', unavailable: '组件未就绪' };
       role(qq, 'events').textContent = '最近回调验证：' + date(state.last_challenge_at)
-        + ' · 最近 QQ 消息：' + date(state.last_event_at) + '。';
+        + ' · 最近 QQ 消息：' + date(state.last_event_at)
+        + ' · 签名验证：' + (cryptoLabels[state.crypto_backend] || '正在检查') + '。';
       role(qq, 'moments-state').textContent = state.moments_enabled
         ? state.bound_user ? '瞬间发布已启用；请在已绑定的 QQ 私聊发送“瞬间 内容”。'
           : '瞬间发布已启用，等待绑定 QQ 私聊接收人。'

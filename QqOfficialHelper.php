@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/QqCryptoHelper.php';
+
 /** Official QQ Bot API and signed Webhook, hosted by this plugin. */
 class Enhancement_QqOfficialHelper
 {
@@ -125,10 +127,10 @@ class Enhancement_QqOfficialHelper
 
     private static function keypair(string $secret): string
     {
-        if (!function_exists('sodium_crypto_sign_seed_keypair')) { throw new RuntimeException(_t('QQ Webhook 需要 PHP sodium 扩展')); }
+        if (!Enhancement_QqCryptoHelper::available()) { throw new RuntimeException(_t('QQ 签名组件缺失，请更新完整插件')); }
         if ($secret === '') { throw new RuntimeException(_t('请先保存 QQ AppID 和 AppSecret')); }
         $seed = str_repeat($secret, (int)ceil(32 / strlen($secret)));
-        return sodium_crypto_sign_seed_keypair(substr($seed, 0, 32));
+        return Enhancement_QqCryptoHelper::keypair(substr($seed, 0, 32));
     }
 
     public static function status($settings = null): array
@@ -143,7 +145,7 @@ class Enhancement_QqOfficialHelper
             || !in_array($pending['target_type'] ?? '', array('c2c', 'group'), true)) { $pending = array(); }
         $binding = self::binding($config);
         $stored = Enhancement_NotifyTransportHelper::read('qq_result');
-        return array('available' => function_exists('sodium_crypto_sign_verify_detached'),
+        return array('available' => Enhancement_QqCryptoHelper::available(), 'crypto_backend' => Enhancement_QqCryptoHelper::backend(),
             'provider' => $config['qq_notify_provider'], 'configured' => $config['qq_app_id'] !== '' && $config['qq_app_secret'] !== '',
             'bound' => !empty($binding), 'bound_user' => ($binding['target_type'] ?? '') === 'c2c', 'target_type' => $binding['target_type'] ?? '',
             'moments_enabled' => $config['qq_moments_enabled'] === '1',
@@ -295,7 +297,7 @@ class Enhancement_QqOfficialHelper
         try {
             $config = self::settings();
             self::validateSettings($config);
-            if ($config['qq_notify_provider'] !== 'official' || !function_exists('sodium_crypto_sign_verify_detached')) { return $failure(503); }
+            if ($config['qq_notify_provider'] !== 'official' || !Enhancement_QqCryptoHelper::available()) { return $failure(503); }
             $event = json_decode($body, true, 32, JSON_BIGINT_AS_STRING);
             if (!is_array($event) || !is_int($event['op'] ?? null) || !is_array($event['d'] ?? null)) { return $failure(400); }
             $headers = array_change_key_case($headers, CASE_LOWER);
@@ -312,7 +314,7 @@ class Enhancement_QqOfficialHelper
                 if (!is_string($timestamp)
                     || !preg_match('/\A[0-9]{1,12}\z/D', $timestamp) || abs(time() - (int)$timestamp) > 300
                     || !is_string($signature) || !preg_match('/\A[a-fA-F0-9]{128}\z/D', $signature)
-                    || !sodium_crypto_sign_verify_detached(hex2bin($signature), $timestamp . $body, sodium_crypto_sign_publickey($keypair))) { return $failure(403); }
+                    || !Enhancement_QqCryptoHelper::verify(hex2bin($signature), $timestamp . $body, Enhancement_QqCryptoHelper::publicKey($keypair))) { return $failure(403); }
             }
             $state = Enhancement_NotifyTransportHelper::read('qq_webhook');
             if (($state['identity'] ?? '') !== self::credentialsIdentity($config)) { $state = array('identity' => self::credentialsIdentity($config)); }
@@ -325,7 +327,7 @@ class Enhancement_QqOfficialHelper
                 $state['last_challenge_at'] = time();
                 Enhancement_NotifyTransportHelper::write('qq_webhook', $state);
                 return array('status' => 200, 'body' => array('plain_token' => $plain,
-                    'signature' => bin2hex(sodium_crypto_sign_detached($eventTs . $plain, sodium_crypto_sign_secretkey($keypair)))));
+                    'signature' => bin2hex(Enhancement_QqCryptoHelper::sign($eventTs . $plain, Enhancement_QqCryptoHelper::secretKey($keypair)))));
             }
             if ($event['op'] !== 0 || !is_string($event['t'] ?? null)) { return $failure(400); }
             if (!self::bindEvent($event, $config)) { self::momentEvent($event, $config, $transport); }

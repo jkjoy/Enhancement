@@ -60,7 +60,7 @@ class Enhancement_NotificationConfigHelper
             . '<button type="button" class="btn" data-action="qq-retry-replies" disabled>重试发布结果回复</button></div>'
             . '<p data-role="events"></p><p data-role="moments-state"></p><p data-role="last-result"></p>'
             . '<p data-role="message" role="status" aria-live="polite"></p>'
-            . '<p>绑定从已验签的 QQ 消息自动取得 OpenID，无需填写 QQ 号或接收 ID。群通知绑定时请在群内 @机器人发送命令；每次绑定替换当前接收人，发布瞬间请绑定私聊。当前 PHP 需启用 sodium 扩展以验证官方签名。</p>'
+            . '<p>绑定从已验签的 QQ 消息自动取得 OpenID，无需填写 QQ 号或接收 ID。群通知绑定时请在群内 @机器人发送命令；每次绑定替换当前接收人，发布瞬间请绑定私聊。QQ 官方签名使用插件内置的纯 PHP 组件验证，无需额外启用 PHP 扩展。</p>'
             . '<p>发送 <code>瞬间 内容</code>、<code>私密瞬间 内容</code> 发布；正文支持多行、QQ 表情文字、Markdown 图片 URL 和同条图片附件。分步多图发送 <code>图文瞬间 正文</code>，接着发图，最后发送 <code>发布瞬间</code>，或发送 <code>取消瞬间</code> 放弃；草稿消息发送时间间隔最多 15 分钟。</p>'
             . '<noscript>请启用 JavaScript 以生成绑定码和检查绑定状态。</noscript></section>'
         );
