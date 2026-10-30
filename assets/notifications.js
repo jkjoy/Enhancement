@@ -66,6 +66,82 @@
     }
   }
 
+  const qq = document.getElementById('enhancement-qq-binding');
+  if (qq) {
+    let state = null;
+    const command = document.getElementById('enhancement-qq-binding-command');
+    const appId = document.querySelector('[name="qq_app_id"]');
+    const appSecret = document.querySelector('[name="qq_app_secret"]');
+    const provider = () => document.querySelector('[name="qq_notify_provider"]:checked');
+    const savedProvider = document.querySelector('[name="qq_notify_provider"][checked]');
+    const credentialsChanged = () => (appId && appId.value !== appId.defaultValue)
+      || (appSecret && appSecret.value !== '')
+      || (provider() ? provider().value : '') !== (savedProvider ? savedProvider.value : '');
+
+    qq.updateButtons = () => {
+      const ready = state && state.available && state.configured && state.provider === 'official';
+      qq.querySelectorAll('[data-action="qq-binding-start"]').forEach((item) => { item.disabled = !ready; });
+      button(qq, 'qq-binding-cancel').disabled = !(state && state.binding && state.binding.code);
+      button(qq, 'qq-disconnect').disabled = !(state && state.bound);
+      button(qq, 'qq-retry-replies').disabled = !(state && state.bound);
+    };
+
+    function render(data) {
+      state = data || {};
+      role(qq, 'state').textContent = !state.available ? 'PHP sodium 扩展不可用，无法验证 QQ 官方签名。'
+        : state.provider !== 'official' ? '请先选择官方 QQ 机器人，填写 AppID 和 AppSecret 并保存。'
+          : !state.configured ? '请先填写有效的 AppID 和 AppSecret 并保存。'
+            : state.bound ? (state.target_type === 'group' ? '已绑定 QQ 群通知接收人。' : '已绑定 QQ 私聊接收人。')
+              : '尚未绑定 QQ 接收人，请生成绑定码并在机器人私聊发送。';
+      const pending = state.binding && typeof state.binding.code === 'string' && state.binding.code;
+      role(qq, 'binding').hidden = !pending;
+      command.value = pending ? '绑定通知 ' + state.binding.code : '';
+      role(qq, 'binding-hint').textContent = pending
+        ? (state.binding.target_type === 'group' ? '在目标群内 @机器人发送此命令' : '在机器人 QQ 私聊发送此命令')
+          + '，有效期至 ' + date(state.binding.expires_at) + '。发送后点击“检查绑定状态”。'
+        : '';
+      role(qq, 'events').textContent = '最近回调验证：' + date(state.last_challenge_at)
+        + ' · 最近 QQ 消息：' + date(state.last_event_at) + '。';
+      role(qq, 'moments-state').textContent = state.moments_enabled
+        ? state.bound_user ? '瞬间发布已启用；请在已绑定的 QQ 私聊发送“瞬间 内容”。'
+          : '瞬间发布已启用，等待绑定 QQ 私聊接收人。'
+        : '瞬间发布未启用；修改开关后须保存生效。';
+      lastResult(qq, state.last_result);
+    }
+
+    async function refresh() {
+      const result = await request(qq, 'qq-binding-status');
+      render(result.data);
+    }
+
+    qq.addEventListener('click', (event) => {
+      const clicked = event.target.closest('button[data-action]');
+      if (!clicked || !qq.contains(clicked)) return;
+      const action = clicked.dataset.action;
+      perform(qq, async () => {
+        if (action === 'qq-binding-status') {
+          await refresh();
+          message(qq, 'QQ 绑定状态已更新。');
+          return;
+        }
+        if (action === 'qq-binding-start' && credentialsChanged()) {
+          throw new Error('请先保存当前 QQ 通知方式、AppID 和 AppSecret，再生成绑定码。');
+        }
+        const values = action === 'qq-binding-start' ? { target_type: clicked.dataset.targetType || 'c2c' } : {};
+        const result = await request(qq, action, values);
+        if (action === 'qq-retry-replies' && result.data && result.data.success === false) {
+          throw new Error('QQ 消息正在处理，请稍后重试发布结果回复。');
+        }
+        await refresh();
+        message(qq, action === 'qq-retry-replies'
+          ? '本次已补发 ' + Number(result.data && result.data.sent || 0) + ' 条发布结果回复，请在 QQ 中核对。'
+          : result.message || '操作完成，请核对 QQ 绑定状态。');
+      });
+    });
+
+    perform(qq, async () => { await refresh(); message(qq, ''); });
+  }
+
   const weixin = document.getElementById('enhancement-weixin');
   if (weixin) {
     let state = null;

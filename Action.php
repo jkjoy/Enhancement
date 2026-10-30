@@ -593,6 +593,11 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         Enhancement_FriendPostsHelper::validateSettings($settings);
         Enhancement_WeixinNotifyHelper::validateSettings($settings);
         Enhancement_BotMomentsHelper::validateSettings($settings);
+        if (Enhancement_QqOfficialHelper::credentialsIdentity($this->collectPluginSettings()) !== Enhancement_QqOfficialHelper::credentialsIdentity($settings)) {
+            foreach (array('qq_binding', 'qq_binding_pending', 'qq_token') as $key) {
+                Enhancement_NotifyTransportHelper::write($key, array());
+            }
+        }
         Enhancement_BotMomentsHelper::syncActivation($settings);
         $storedValue = $this->encodeStoredPluginSettingsValue($settings);
 
@@ -1786,7 +1791,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         );
         $result = Enhancement_QqNotifyHelper::sendTestMessage($message, $settings);
         if (!empty($result['success'])) {
-            $message = _t('测试通知已进入 Bot 服务队列，通知 ID：%s。可在服务中查询投递结果；接收方需允许主动消息且满足 QQ 官方额度。', $result['id']);
+            $message = _t('QQ 官方接口已接受测试通知，消息 ID：%s，请检查 QQ 是否收到。', $result['id']);
             $this->testActionResponse(true, $message, 200);
             return;
         }
@@ -1803,6 +1808,26 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         }
         try {
             switch ((string)$this->request->get('do')) {
+                case 'qq-binding-start':
+                    $type = $this->request->get('target_type', $this->request->get('type', 'c2c'));
+                    if (!is_string($type)) { throw new RuntimeException(_t('QQ 绑定类型无效')); }
+                    $data = Enhancement_QqOfficialHelper::startBinding($type);
+                    break;
+                case 'qq-binding-cancel':
+                    $data = Enhancement_QqOfficialHelper::cancelBinding();
+                    break;
+                case 'qq-binding-status':
+                    $data = Enhancement_QqOfficialHelper::status();
+                    break;
+                case 'qq-disconnect':
+                    $data = Enhancement_QqOfficialHelper::disconnect();
+                    break;
+                case 'qq-retry-replies':
+                    $data = Enhancement_QqOfficialHelper::retryReplies();
+                    $data['message'] = !empty($data['success'])
+                        ? _t('已重新发送 %d 条发布结果回复，请在 QQ 核对接收结果', (int)$data['sent'])
+                        : _t('QQ 正在处理消息，请稍后重试回复');
+                    break;
                 case 'weixin-login-start':
                     $data = Enhancement_WeixinNotifyHelper::startLogin();
                     break;
@@ -1843,66 +1868,25 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $this->response->throwJson(array('success' => true, 'message' => (string)($data['message'] ?? _t('状态已更新')), 'data' => $data));
     }
 
-    /** QQ signatures are verified by the official service; this hop has its own shared secret. */
-    private function qqMomentsWebhook()
+    private function qqOfficialWebhook()
     {
         ini_set('display_errors', '0');
         $this->response->setHeader('Cache-Control', 'no-store');
         if (!$this->request->isPost()) {
             $this->response->setStatus(405);
             $this->response->setHeader('Allow', 'POST');
-            $this->response->throwJson(array('ok' => false, 'error' => 'method_not_allowed'));
+            $this->response->throwJson(array('op' => 12, 'd' => 1));
             return;
         }
-        $config = Enhancement_Plugin::runtimeSettings();
-        $secret = $config->qq_moments_secret ?? '';
-        $timestamp = $this->request->getHeader('X-Enhancement-Timestamp', '');
-        $signature = $this->request->getHeader('X-Enhancement-Signature', '');
-        $raw = file_get_contents('php://input', false, null, 0, 65537);
-        if (!is_string($raw) || strlen($raw) > 65536) {
-            $this->response->setStatus(413);
-            $this->response->throwJson(array('ok' => false, 'error' => 'payload_too_large'));
-            return;
+        $headers = array();
+        foreach (array('X-Bot-Appid', 'X-Signature-Timestamp', 'X-Signature-Ed25519') as $header) {
+            $value = $this->request->getHeader($header, '');
+            if ($value !== '') { $headers[$header] = $value; }
         }
-        if (!is_string($secret) || !preg_match('/\A[\x21-\x7e]{32,1024}\z/D', $secret)
-            || !is_string($timestamp) || !preg_match('/\A[0-9]{1,12}\z/D', $timestamp)
-            || abs(time() - (int)$timestamp) > 300 || !is_string($signature)
-            || !preg_match('/\A[a-f0-9]{64}\z/D', $signature)
-            || !hash_equals(hash_hmac('sha256', $timestamp . "\n" . $raw, $secret), $signature)) {
-            $this->response->setStatus(401);
-            $this->response->throwJson(array('ok' => false, 'error' => 'invalid_signature'));
-            return;
-        }
-        $payload = json_decode($raw, true, 16);
-        $message = is_array($payload) ? ($payload['message'] ?? null) : null;
-        $valid = ($payload['version'] ?? null) === 1 && is_array($message)
-            && is_string($message['id'] ?? null) && preg_match('/\A[\x21-\x7e]{1,256}\z/D', $message['id'])
-            && is_string($message['account'] ?? null) && preg_match('/\A[0-9]{1,32}\z/D', $message['account'])
-            && is_string($message['sender'] ?? null) && preg_match('/\A[A-Za-z0-9_-]{1,128}\z/D', $message['sender'])
-            && ($message['conversation'] ?? null) === $message['sender'] && ($message['conversation_type'] ?? null) === 'private'
-            && is_int($message['timestamp'] ?? null) && $message['timestamp'] > 0
-            && is_string($message['text'] ?? null) && strlen($message['text']) <= 20000
-            && is_array($message['aliases'] ?? null) && count($message['aliases']) <= 100
-            && array_values($message['aliases']) === $message['aliases']
-            && (!isset($message['attachments']) || is_array($message['attachments']));
-        if ($valid) {
-            foreach ($message['aliases'] as $alias) {
-                if (!is_string($alias) || !preg_match('/\A[A-Za-z0-9_-]{1,64}\z/D', $alias)) { $valid = false; break; }
-            }
-        }
-        if (!$valid) {
-            $this->response->setStatus(400);
-            $this->response->throwJson(array('ok' => false, 'error' => 'invalid_message'));
-            return;
-        }
-        try {
-            $result = Enhancement_BotMomentsHelper::handle('qq', $message);
-        } catch (Throwable $exception) {
-            $this->response->setStatus(503);
-            $this->response->throwJson(array('ok' => false, 'error' => 'processing_failed'));
-            return;
-        }
-        $this->response->throwJson(array('ok' => true, 'result' => $result, 'reply' => (string)($result['message'] ?? '')));
+        $body = file_get_contents('php://input', false, null, 0, 65537);
+        $result = Enhancement_QqOfficialHelper::webhook(is_string($body) ? $body : '', $headers);
+        $this->response->setStatus($result['status']);
+        $this->response->throwJson($result['body']);
     }
 
     private function botMomentsCron()
@@ -3339,8 +3323,8 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $this->prefix = $this->db->getPrefix();
         $this->options = Typecho_Widget::widget('Widget_Options');
 
-        if ($this->request->is('do=qq-moments-webhook')) {
-            $this->qqMomentsWebhook();
+        if ($this->request->is('do=qq-webhook')) {
+            $this->qqOfficialWebhook();
             return;
         }
 
@@ -3361,6 +3345,11 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             'restore-settings' => 'restorePluginSettings',
             'delete-backup' => 'deletePluginSettingsBackup',
             'qq-test-notify' => 'sendQqTestNotify',
+            'qq-binding-start' => 'notificationChannelAction',
+            'qq-binding-cancel' => 'notificationChannelAction',
+            'qq-binding-status' => 'notificationChannelAction',
+            'qq-disconnect' => 'notificationChannelAction',
+            'qq-retry-replies' => 'notificationChannelAction',
             'weixin-login-start' => 'notificationChannelAction',
             'weixin-login-poll' => 'notificationChannelAction',
             'weixin-sync' => 'notificationChannelAction',

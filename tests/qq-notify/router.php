@@ -20,6 +20,24 @@ $db->addServer(['file' => $directory . '/fixture.sqlite'], Typecho\Db::READ | Ty
 Typecho\Db::set($db);
 Typecho\Widget::widget('Widget_Init');
 require_once dirname(__DIR__, 2) . '/Plugin.php';
+// Every QQ API call is intercepted; this fixture can never send a real QQ message.
+$qqTransport = new ReflectionProperty('Enhancement_QqOfficialHelper', 'transport');
+$qqTransport->setAccessible(true);
+$qqTransport->setValue(null, static function (string $method, string $url, array $headers = [], ?array $payload = null, int $timeout = 6) use ($directory): array {
+    $config = Enhancement_NotifyTransportHelper::read('fixture_qq_api');
+    if (empty($config['enabled'])) { throw new RuntimeException('Real QQ network is disabled in fixtures.'); }
+    if (strpos($url, 'https://api.bot.qq.com/') !== 0) { throw new RuntimeException('Unexpected QQ API host.'); }
+    file_put_contents($directory . '/qq-api.jsonl', json_encode(compact('method', 'url', 'headers', 'payload', 'timeout')) . "\n", FILE_APPEND | LOCK_EX);
+    if (!empty($config['responses'])) {
+        $response = array_shift($config['responses']);
+        Enhancement_NotifyTransportHelper::write('fixture_qq_api', $config);
+        if (!empty($response['throw'])) { throw new RuntimeException('Simulated QQ transport failure.'); }
+        return $response;
+    }
+    return ['status' => 200, 'data' => substr($url, -22) === '/app/getAppAccessToken'
+        ? ['access_token' => 'fixture-access-token', 'expires_in' => 3600]
+        : ['id' => 'fixture-qq-' . bin2hex(random_bytes(8))]];
+});
 Typecho\Plugin::init(['activated' => [], 'handles' => []]);
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $body = json_decode(file_get_contents('php://input'), true) ?: [];
@@ -111,7 +129,8 @@ try {
                 throw new RuntimeException('Invalid fixture user.', 400);
             }
             $actions = [];
-            foreach (['weixin-login-start', 'weixin-login-poll',
+            foreach (['qq-binding-start', 'qq-binding-cancel', 'qq-binding-status', 'qq-disconnect', 'qq-retry-replies',
+                'weixin-login-start', 'weixin-login-poll',
                 'weixin-sync', 'weixin-bind', 'weixin-disconnect', 'weixin-status', 'weixin-test-notify'] as $action) {
                 $actions[$action] = Helper::security()->getIndex('/action/enhancement-edit?do=' . $action);
             }

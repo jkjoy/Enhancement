@@ -2,6 +2,70 @@
 
 class Enhancement_NotificationConfigHelper
 {
+    public static function addQqInputs(Typecho_Widget_Helper_Form $form)
+    {
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Text(
+            'qq_app_id', null, '', _t('QQ 机器人 AppID'),
+            _t('填写 QQ 开放平台机器人正式环境的 AppID。')
+        ));
+        $secret = new class(
+            'qq_app_secret', null, '', _t('QQ 机器人 AppSecret'),
+            _t('填写对应机器人的 AppSecret。保存后不回显，留空保留已保存密钥；修改 AppID 时须同时填写新 AppSecret。')
+        ) extends Typecho_Widget_Helper_Form_Element_Password {
+            protected function inputValue($value)
+            {
+                $this->value = '';
+                $this->input->removeAttribute('value');
+            }
+        };
+        $secret->input->setAttribute('autocomplete', 'new-password');
+        $form->addInput($secret);
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
+            'qq_official_include_links', array('1' => _t('包含链接'), '0' => _t('省略链接')), '1',
+            _t('QQ 通知中的链接'),
+            _t('消息域名未在 QQ 开放平台报备时可选择省略链接；通知正文自动按 UTF-8 安全截短。')
+        ));
+        $form->addInput(new class(
+            'qq_moments_enabled', array('1' => _t('启用'), '0' => _t('禁用')), '0',
+            _t('通过 QQ 发布瞬间'),
+            _t('保存后可在已绑定的 QQ 私聊发送“瞬间 内容”发布。可以先启用再绑定；仅已绑定私聊用户可以发布，群聊不支持发布。只处理启用并保存后发送、且发送至今不超过 24 小时的消息。')
+        ) extends Typecho_Widget_Helper_Form_Element_Radio {
+            protected function inputValue($value)
+            {
+                $settings = Enhancement_Plugin::runtimeSettings();
+                parent::inputValue(($settings->qq_notify_provider ?? '') === 'official' ? $value : '0');
+            }
+        });
+
+        $options = Typecho_Widget::widget('Widget_Options');
+        $callback = Typecho_Common::url('/action/enhancement-edit?do=qq-webhook', $options->index);
+        self::addPanel($form, 'enhancement_qq_binding_panel',
+            '<section id="enhancement-qq-binding"' . self::actionAttributes(array('qq-binding-start', 'qq-binding-cancel', 'qq-binding-status', 'qq-disconnect', 'qq-retry-replies')) . '>'
+            . '<h4>QQ 官方 Webhook 与接收人绑定</h4>'
+            . '<label for="enhancement-qq-webhook-url">QQ 官方 Webhook 回调地址</label>'
+            . '<input id="enhancement-qq-webhook-url" type="text" readonly spellcheck="false" style="width:100%;margin:8px 0" value="' . self::escape($callback) . '">'
+            . '<p>将此地址填入 <a href="https://q.qq.com/" target="_blank" rel="noopener noreferrer">QQ 开放平台</a>机器人的 Webhook URL，完成回调验证。须为公网可访问的 HTTPS 地址，并保持插件启用；私聊订阅 <code>C2C_MESSAGE_CREATE</code>，群通知订阅 <code>GROUP_AT_MESSAGE_CREATE</code>。</p>'
+            . '<ol><li>选择官方 QQ 机器人，填写 AppID 和 AppSecret 并保存。</li>'
+            . '<li>点击“生成私聊绑定码”，在机器人私聊发送绑定命令；绑定码有效期 10 分钟。</li>'
+            . '<li>点击“检查绑定状态”确认绑定，随后可发送通知测试或发布瞬间。</li></ol>'
+            . '<p data-role="state" aria-live="polite">正在读取绑定状态……</p>'
+            . '<div data-role="binding" hidden><label for="enhancement-qq-binding-command">一次性绑定命令</label>'
+            . '<input id="enhancement-qq-binding-command" type="text" readonly spellcheck="false" style="width:100%;margin:8px 0">'
+            . '<p data-role="binding-hint"></p></div>'
+            . '<div class="enhancement-action-row"><button type="button" class="btn" data-action="qq-binding-start" disabled>生成私聊绑定码</button> '
+            . '<button type="button" class="btn" data-action="qq-binding-start" data-target-type="group" disabled>生成群通知绑定码</button> '
+            . '<button type="button" class="btn" data-action="qq-binding-cancel" disabled>取消本次绑定</button> '
+            . '<button type="button" class="btn" data-action="qq-binding-status">检查绑定状态</button> '
+            . '<button type="button" class="btn" data-action="qq-disconnect" disabled>解除当前绑定</button> '
+            . '<button type="button" class="btn" data-action="qq-retry-replies" disabled>重试发布结果回复</button></div>'
+            . '<p data-role="events"></p><p data-role="moments-state"></p><p data-role="last-result"></p>'
+            . '<p data-role="message" role="status" aria-live="polite"></p>'
+            . '<p>绑定从已验签的 QQ 消息自动取得 OpenID，无需填写 QQ 号或接收 ID。群通知绑定时请在群内 @机器人发送命令；每次绑定替换当前接收人，发布瞬间请绑定私聊。当前 PHP 需启用 sodium 扩展以验证官方签名。</p>'
+            . '<p>发送 <code>瞬间 内容</code>、<code>私密瞬间 内容</code> 发布；正文支持多行、QQ 表情文字、Markdown 图片 URL 和同条图片附件。分步多图发送 <code>图文瞬间 正文</code>，接着发图，最后发送 <code>发布瞬间</code>，或发送 <code>取消瞬间</code> 放弃；草稿消息发送时间间隔最多 15 分钟。</p>'
+            . '<noscript>请启用 JavaScript 以生成绑定码和检查绑定状态。</noscript></section>'
+        );
+    }
+
     public static function addWeixinInputs(Typecho_Widget_Helper_Form $form)
     {
         $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(

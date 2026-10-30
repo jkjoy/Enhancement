@@ -1,10 +1,11 @@
 <?php
 
 require_once __DIR__ . '/NotifyTransportHelper.php';
+require_once __DIR__ . '/QqOfficialHelper.php';
 
 class Enhancement_QqNotifyHelper
 {
-    public const OFFICIAL_QUEUE_PREFIX = '__ENHANCEMENT_QQ_OFFICIAL_V1__:';
+    public const OFFICIAL_QUEUE_PREFIX = '__ENHANCEMENT_QQ_API_V2__:';
     private static $queueProcessed = false;
     private static $queueEnsured = false;
 
@@ -15,28 +16,36 @@ class Enhancement_QqNotifyHelper
 
     public static function normalizeSettings(array $settings): array
     {
-        if (($settings['qq_notify_provider'] ?? '') === 'standalone') {
-            unset($settings['qq_official_url'], $settings['qq_official_token'], $settings['qq_official_targets'], $settings['qq_official_include_links']);
+        $provider = $settings['qq_notify_provider'] ?? 'none';
+        $hasCredentials = is_scalar($settings['qq_app_id'] ?? null) && (string)$settings['qq_app_id'] !== ''
+            && is_scalar($settings['qq_app_secret'] ?? null) && (string)$settings['qq_app_secret'] !== '';
+        $hasService = isset($settings['qq_official_url']) || isset($settings['qq_official_token']) || isset($settings['qq_official_targets']);
+        if ($provider === 'direct') {
+            $settings['qq_notify_provider'] = $hasCredentials ? 'official' : 'none';
+            unset($settings['qq_moments_enabled']);
+            if (isset($settings['qq_direct_include_links'])) { $settings['qq_official_include_links'] = $settings['qq_direct_include_links']; }
+        } elseif (($provider === 'official' && $hasService && !$hasCredentials)
+            || in_array($provider, array('legacy', 'openclaw', 'hermes', 'standalone'), true)) {
+            $settings['qq_notify_provider'] = 'none';
+            unset($settings['qq_moments_enabled']);
+        } elseif (!isset($settings['qq_notify_provider'])) {
+            $settings['qq_notify_provider'] = 'none';
+            unset($settings['qq_moments_enabled']);
         }
-        // Old installations and backups must never select a replacement transport automatically.
         unset($settings['qq'], $settings['qqboturl'], $settings['qq_async_queue'],
             $settings['qq_agent_url'], $settings['qq_agent_token'], $settings['qq_agent_target'],
             $settings['qq_agent_account'], $settings['qq_agent_include_links'],
             $settings['qq_agent_commands'], $settings['qq_agent_command_secret'], $settings['qq_agent_allowed_senders'], $settings['qq_agent_admin_uid'],
-            $settings['qq_app_id'], $settings['qq_app_secret'], $settings['qq_target_type'], $settings['qq_target_id'],
-            $settings['qq_direct_include_links'], $settings['qq_moments_allowed_senders']);
-        if (!isset($settings['qq_notify_provider']) || in_array($settings['qq_notify_provider'], array('legacy', 'openclaw', 'hermes', 'direct', 'standalone'), true)) {
-            $settings['qq_notify_provider'] = 'none';
-            unset($settings['qq_moments_enabled']);
-        }
+            $settings['qq_target_type'], $settings['qq_target_id'], $settings['qq_direct_include_links'], $settings['qq_moments_allowed_senders'],
+            $settings['qq_official_url'], $settings['qq_official_token'], $settings['qq_official_targets'],
+            $settings['qq_moments_secret'], $settings['qq_moments_targets']);
         return $settings;
     }
 
     public static function validateSettings(array $settings)
     {
         $settings = self::normalizeSettings($settings);
-        foreach (array('qq_notify_provider', 'qq_official_url', 'qq_official_token', 'qq_official_targets', 'qq_official_include_links',
-            'qq_moments_enabled', 'qq_moments_secret', 'qq_moments_targets') as $key) {
+        foreach (array('qq_notify_provider', 'qq_app_id', 'qq_app_secret', 'qq_official_include_links', 'qq_moments_enabled') as $key) {
             if (isset($settings[$key]) && !is_scalar($settings[$key])) {
                 throw new Typecho_Widget_Exception(_t('QQ Bot 配置项必须是文本或开关值'), 400);
             }
@@ -50,34 +59,12 @@ class Enhancement_QqNotifyHelper
         }
         $momentsEnabled = ($settings['qq_moments_enabled'] ?? '0') == '1';
         if ($momentsEnabled && $provider !== 'official') {
-            throw new Typecho_Widget_Exception(_t('通过 QQ 发布瞬间需要先配置官方 QQ Bot 服务（Webhook）'), 400);
+            throw new Typecho_Widget_Exception(_t('通过 QQ 发布瞬间需要先配置官方 QQ Bot 的 AppID 和 AppSecret'), 400);
         }
         if ($provider !== 'official') {
             return;
         }
-        $error = self::officialConfigurationError((object)$settings);
-        if ($error !== '') {
-            throw new Typecho_Widget_Exception($error, 400);
-        }
-        if ($momentsEnabled) {
-            $secret = (string)($settings['qq_moments_secret'] ?? '');
-            if (!preg_match('/\A[\x21-\x7e]{32,1024}\z/D', $secret)) {
-                throw new Typecho_Widget_Exception(_t('QQ 瞬间回调密钥须为 32 至 1024 位非空白 ASCII 字符'), 400);
-            }
-            if (hash_equals((string)($settings['qq_official_token'] ?? ''), $secret)) {
-                throw new Typecho_Widget_Exception(_t('QQ 瞬间回调密钥须与官方 QQ Bot 服务访问令牌不同'), 400);
-            }
-            $value = trim((string)($settings['qq_moments_targets'] ?? ''));
-            $targets = $value === '' ? array() : array_values(array_unique(array_map('trim', preg_split('/\r\n|\r|\n/', $value))));
-            if (count($targets) < 1 || count($targets) > 20) {
-                throw new Typecho_Widget_Exception(_t('请填写 1 至 20 个允许发布瞬间的 QQ 私聊别名，每行一个'), 400);
-            }
-            foreach ($targets as $target) {
-                if (!preg_match('/\A[A-Za-z0-9_-]{1,64}\z/D', $target)) {
-                    throw new Typecho_Widget_Exception(_t('QQ 瞬间发布别名仅支持 1 至 64 位英文字母、数字、下划线和连字符'), 400);
-                }
-            }
-        }
+        Enhancement_QqOfficialHelper::validateSettings($settings);
     }
 
     private static function provider($settings): string
@@ -85,40 +72,12 @@ class Enhancement_QqNotifyHelper
         return ($settings->qq_notify_provider ?? '') === 'official' ? 'official' : 'none';
     }
 
-    private static function officialUrl($settings): string
-    {
-        return isset($settings->qq_official_url) && is_scalar($settings->qq_official_url)
-            ? rtrim(trim((string)$settings->qq_official_url), '/') : '';
-    }
-
-    private static function officialTargets($settings): array
-    {
-        $value = isset($settings->qq_official_targets) && is_scalar($settings->qq_official_targets) ? trim((string)$settings->qq_official_targets) : '';
-        return $value === '' ? array() : array_values(array_unique(array_map('trim', preg_split('/\r\n|\r|\n/', $value))));
-    }
-
     private static function officialConfigurationError($settings): string
     {
-        $url = self::officialUrl($settings);
-        $parts = parse_url($url);
-        if ($url === '' || filter_var($url, FILTER_VALIDATE_URL) === false || !is_array($parts)
-            || !isset($parts['scheme'], $parts['host']) || !in_array(strtolower($parts['scheme']), array('http', 'https'), true)
-            || isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment'])) {
-            return _t('请填写有效的官方 QQ Bot 服务地址（http/https，不含用户名、密码、查询参数或片段）');
-        }
-        $token = isset($settings->qq_official_token) && is_scalar($settings->qq_official_token) ? (string)$settings->qq_official_token : '';
-        if (!preg_match('/\A[\x21-\x7e]{32,1024}\z/D', $token)) {
-            return _t('官方 QQ Bot 服务访问令牌须为 32 至 1024 位非空白 ASCII 字符');
-        }
-        $targets = self::officialTargets($settings);
-        if (count($targets) < 1 || count($targets) > 20) {
-            return _t('请填写 1 至 20 个已绑定的 QQ Bot 接收别名，每行一个');
-        }
-        foreach ($targets as $target) {
-            if (!preg_match('/\A[A-Za-z0-9_-]{1,64}\z/D', $target)) {
-                return _t('QQ Bot 接收别名仅支持 1 至 64 位英文字母、数字、下划线和连字符');
-            }
-        }
+        $config = is_object($settings) && method_exists($settings, 'toArray') ? $settings->toArray() : (array)$settings;
+        try { Enhancement_QqOfficialHelper::validateSettings($config); }
+        catch (Throwable $exception) { return $exception->getMessage(); }
+        if (Enhancement_QqOfficialHelper::binding($settings) === array()) { return _t('请先在后台生成绑定码，并在 QQ 中发送绑定指令'); }
         return '';
     }
 
@@ -130,9 +89,9 @@ class Enhancement_QqNotifyHelper
             if ($error !== '') {
                 return array('success' => false, 'error' => $error);
             }
-            return self::sendOfficial(self::officialEnvelope($message, $settings), $settings);
+            return Enhancement_QqOfficialHelper::send($message, $settings);
         }
-        return array('success' => false, 'error' => _t('请先选择并配置官方 QQ Bot 服务（Webhook）'));
+        return array('success' => false, 'error' => _t('请先选择官方 QQ Bot 并保存 AppID 和 AppSecret'));
     }
 
     public static function mark($comment, $edit, $status)
@@ -331,7 +290,7 @@ class Enhancement_QqNotifyHelper
             $envelope = json_decode(substr((string)$row['message'], strlen(self::OFFICIAL_QUEUE_PREFIX)), true);
             if (!is_array($envelope) || ($envelope['provider'] ?? '') !== 'official') {
                 $db->query($db->update($table)->rows(array('status' => 2, 'retries' => 5, 'updated' => time(),
-                    'last_error' => _t('此 QQ 通知方式已移除，停止投递；仅支持官方 QQ Bot 服务（Webhook）')))
+                    'last_error' => _t('此 QQ 通知方式已移除，停止投递；请配置官方 QQ Bot 的 AppID 和 AppSecret')))
                     ->where('qid = ?', $row['qid'])->where('status = ?', 0));
             }
         }
@@ -422,13 +381,13 @@ class Enhancement_QqNotifyHelper
             if ($encoded === false) {
                 return;
             }
-            // Persist the idempotency key before contacting the service, then hand off now.
+            // Persist the recipient and credential identity before calling the official API.
             $qid = self::enqueue(self::OFFICIAL_QUEUE_PREFIX . $encoded);
             $result = self::sendOfficial($envelope, $settings);
             if ($qid > 0) {
                 self::recordOfficialResult($qid, $result);
             } elseif (empty($result['success'])) {
-                error_log('[Enhancement][QQBot] 服务投递和本地重试队列均失败，请检查数据库及 Bot 服务。');
+                error_log('[Enhancement][QQBot] 官方接口发送和本地重试队列均失败，请检查数据库及 QQ 配置。');
             }
             return;
         }
@@ -551,8 +510,8 @@ class Enhancement_QqNotifyHelper
         return array(
             'provider' => self::provider($settings),
             'message' => self::prepareMessage($message, !isset($settings->qq_official_include_links) || $settings->qq_official_include_links == '1'),
-            'targets' => self::officialTargets($settings),
-            'serviceURL' => self::officialUrl($settings),
+            'identity' => Enhancement_QqOfficialHelper::credentialsIdentity($settings),
+            'binding' => Enhancement_QqOfficialHelper::binding($settings),
             'requestId' => bin2hex(random_bytes(20))
         );
     }
@@ -569,107 +528,21 @@ class Enhancement_QqNotifyHelper
                 ))
                 ->where('qid = ?', $qid));
         } catch (Exception $e) {
-            // A later retry uses the same service idempotency key.
+            // A later retry keeps the original recipient snapshot.
         }
     }
 
     private static function sendOfficial($envelope, $settings): array
     {
-        $result = array('success' => false, 'error' => '', 'provider' => self::provider($settings));
-        $error = self::officialConfigurationError($settings);
-        if ($error !== '') {
-            $result['error'] = $error;
-            return $result;
+        $failure = array('success' => false, 'error' => _t('QQ 凭证或接收人绑定已变化，旧通知停止投递'));
+        if (self::provider($settings) !== 'official' || !is_array($envelope)
+            || ($envelope['provider'] ?? '') !== 'official' || !is_string($envelope['message'] ?? null)
+            || !is_array($envelope['binding'] ?? null) || empty($envelope['binding'])
+            || !is_string($envelope['identity'] ?? null)
+            || !hash_equals(Enhancement_QqOfficialHelper::credentialsIdentity($settings), $envelope['identity'])
+            || Enhancement_QqOfficialHelper::binding($settings) !== $envelope['binding']) {
+            return $failure;
         }
-        if (!is_array($envelope) || !isset($envelope['provider'], $envelope['message'], $envelope['targets'], $envelope['serviceURL'], $envelope['requestId'])
-            || $envelope['provider'] !== 'official' || !is_string($envelope['message']) || !is_array($envelope['targets'])
-            || !is_string($envelope['serviceURL']) || !is_string($envelope['requestId'])
-            || !preg_match('/\A[a-f0-9]{40}\z/D', $envelope['requestId'])) {
-            $result['error'] = _t('官方 QQ Bot 本地队列记录无效');
-            return $result;
-        }
-        if ($envelope['serviceURL'] !== self::officialUrl($settings)) {
-            $result['error'] = _t('Bot 服务地址已更改，旧队列不会向原地址发送当前访问令牌；请恢复地址后重试或清空旧队列');
-            return $result;
-        }
-        if (count($envelope['targets']) < 1 || count($envelope['targets']) > 20) {
-            $result['error'] = _t('官方 QQ Bot 队列接收别名无效');
-            return $result;
-        }
-        foreach ($envelope['targets'] as $target) {
-            if (!is_string($target) || !preg_match('/\A[A-Za-z0-9_-]{1,64}\z/D', $target)) {
-                $result['error'] = _t('官方 QQ Bot 队列接收别名无效');
-                return $result;
-            }
-        }
-        if (!function_exists('curl_init')) {
-            $result['error'] = _t('当前环境缺少 cURL 扩展');
-            return $result;
-        }
-        $payload = json_encode(array(
-            'message' => $envelope['message'],
-            'targets' => $envelope['targets'],
-            'idempotency_key' => $envelope['requestId']
-        ), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        if ($payload === false) {
-            $result['error'] = _t('QQ Bot 消息必须是有效的 UTF-8 文本');
-            return $result;
-        }
-
-        $ch = curl_init();
-        $response = '';
-        $curlOptions = array(
-            CURLOPT_URL => $envelope['serviceURL'] . '/api/notifications',
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $payload,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CONNECTTIMEOUT => 3,
-            CURLOPT_TIMEOUT => 5,
-            CURLOPT_FOLLOWLOCATION => false,
-            CURLOPT_MAXREDIRS => 0,
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_SSL_VERIFYHOST => 2,
-            CURLOPT_HTTPHEADER => array(
-                'Content-Type: application/json; charset=UTF-8',
-                'Accept: application/json',
-                'Authorization: Bearer ' . $settings->qq_official_token
-            ),
-            CURLOPT_WRITEFUNCTION => static function ($handle, $chunk) use (&$response) {
-                if (strlen($response) + strlen($chunk) > 65536) {
-                    return 0;
-                }
-                $response .= $chunk;
-                return strlen($chunk);
-            }
-        );
-        if (defined('CURLOPT_PROTOCOLS_STR')) {
-            $curlOptions[CURLOPT_PROTOCOLS_STR] = 'http,https';
-        } elseif (defined('CURLOPT_PROTOCOLS')) {
-            $curlOptions[CURLOPT_PROTOCOLS] = CURLPROTO_HTTP | CURLPROTO_HTTPS;
-        }
-        if (defined('CURLOPT_NOSIGNAL')) {
-            $curlOptions[CURLOPT_NOSIGNAL] = true;
-        }
-        curl_setopt_array($ch, $curlOptions);
-        curl_exec($ch);
-        $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $errno = curl_errno($ch);
-        curl_close($ch);
-        if ($errno !== 0) {
-            $result['error'] = _t('Bot 服务连接失败（cURL %d），请检查服务地址和网络连接', $errno);
-            return $result;
-        }
-        $decoded = json_decode($response, true);
-        if ($httpCode >= 200 && $httpCode < 300 && is_array($decoded) && isset($decoded['ok'], $decoded['status'], $decoded['id'])
-            && $decoded['ok'] === true && in_array($decoded['status'], array('queued', 'sent'), true)
-            && is_string($decoded['id']) && preg_match('/\A[A-Za-z0-9_-]{1,128}\z/D', $decoded['id'])) {
-            $result['success'] = true;
-            $result['status'] = $decoded['status'];
-            $result['id'] = $decoded['id'];
-            return $result;
-        }
-        // Never echo or persist the service response body: it may contain secrets.
-        $result['error'] = _t('Bot 服务未接受通知（HTTP %d），请检查服务日志、接收别名和访问令牌', $httpCode);
-        return $result;
+        return Enhancement_QqOfficialHelper::send($envelope['message'], $settings);
     }
 }

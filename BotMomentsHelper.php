@@ -3,21 +3,11 @@
 /** Authenticated bot messages may publish only after an administrator opts in. */
 class Enhancement_BotMomentsHelper
 {
-    private static function qqTargets(array $settings): array
-    {
-        $value = $settings['qq_moments_targets'] ?? '';
-        return is_scalar($value) ? array_values(array_unique(array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', (string)$value)),
-            static function ($target) { return $target !== ''; }))) : array();
-    }
-
     private static function identity(string $channel, array $settings): string
     {
         if ($channel === 'qq') {
-            $targets = self::qqTargets($settings);
-            sort($targets);
-            return hash('sha256', serialize(array($settings['qq_notify_provider'] ?? '',
-                rtrim(trim((string)($settings['qq_official_url'] ?? '')), '/'), $settings['qq_official_token'] ?? '',
-                $settings['qq_moments_secret'] ?? '', $targets)));
+            return hash('sha256', serialize(array(Enhancement_QqOfficialHelper::credentialsIdentity($settings),
+                Enhancement_QqOfficialHelper::binding($settings))));
         }
         $account = Enhancement_NotifyTransportHelper::read('weixin_account');
         $recipient = Enhancement_NotifyTransportHelper::read('weixin_recipient');
@@ -53,13 +43,10 @@ class Enhancement_BotMomentsHelper
         if ($channel === 'qq') {
             if (($settings['qq_notify_provider'] ?? '') !== 'official' || ($message['conversation_type'] ?? '') !== 'private'
                 || $conversation !== $sender || !is_string($message['account'] ?? null) || $message['account'] === '') { return false; }
-            try { Enhancement_QqNotifyHelper::validateSettings($settings); } catch (Throwable $exception) { return false; }
-            $aliases = $message['aliases'] ?? null;
-            if (!is_array($aliases) || array_values($aliases) !== $aliases) { return false; }
-            foreach ($aliases as $alias) {
-                if (!is_string($alias) || !preg_match('/\A[A-Za-z0-9_-]{1,64}\z/D', $alias)) { return false; }
-            }
-            return array_intersect($aliases, self::qqTargets($settings)) !== array();
+            try { Enhancement_QqOfficialHelper::validateSettings($settings); } catch (Throwable $exception) { return false; }
+            $binding = Enhancement_QqOfficialHelper::binding($settings);
+            return ($binding['target_type'] ?? '') === 'c2c' && ($binding['target_id'] ?? '') === $sender
+                && $message['account'] === ($settings['qq_app_id'] ?? '');
         }
         $account = Enhancement_NotifyTransportHelper::read('weixin_account');
         $recipient = Enhancement_NotifyTransportHelper::read('weixin_recipient');

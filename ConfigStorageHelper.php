@@ -54,8 +54,14 @@ class Enhancement_ConfigStorageHelper
         $current = Enhancement_SettingsHelper::decodePluginConfigValue($currentValue);
         $current = Enhancement_QqNotifyHelper::normalizeSettings(self::normalizeSettingsForStorage($current));
 
+        if (isset($incoming['qq_app_id']) && $incoming['qq_app_id'] !== ($current['qq_app_id'] ?? '')
+            && ($current['qq_app_id'] ?? '') !== '' && ($incoming['qq_app_id'] ?? '') !== ''
+            && ($current['qq_app_secret'] ?? '') !== '' && ($incoming['qq_app_secret'] ?? '') === '') {
+            throw new Typecho_Widget_Exception(_t('修改 QQ 机器人 AppID 时须同时填写对应的新 AppSecret'), 400);
+        }
+
         // The password input stays empty in HTML; an empty save keeps its secret.
-        foreach (array('qq_official_token', 'qq_moments_secret') as $secretKey) {
+        foreach (array('qq_app_secret') as $secretKey) {
             if (isset($incoming[$secretKey]) && $incoming[$secretKey] === '') {
                 unset($incoming[$secretKey]);
             }
@@ -67,6 +73,11 @@ class Enhancement_ConfigStorageHelper
         Enhancement_WeixinNotifyHelper::validateSettings($merged, $current);
         Enhancement_BotMomentsHelper::validateSettings($merged);
         Enhancement_BotMomentsSchedulerHelper::validateSettings($merged);
+        if (Enhancement_QqOfficialHelper::credentialsIdentity($current) !== Enhancement_QqOfficialHelper::credentialsIdentity($merged)) {
+            foreach (array('qq_binding', 'qq_binding_pending', 'qq_token') as $key) {
+                Enhancement_NotifyTransportHelper::write($key, array());
+            }
+        }
         Enhancement_BotMomentsHelper::syncActivation($merged);
         $storedValue = Enhancement_SettingsHelper::encodePluginConfigValue($merged);
 

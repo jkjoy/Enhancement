@@ -10,4 +10,4 @@ php tests/notify-channels/run.php
 
 覆盖微信扫码、验证码、跨区跳转、扫码人绑定、会话同步、发送受理、登录失效和通知触发隔离。
 
-Typecho 实际表单、密钥保存、数据库状态、管理员权限和官方 QQ Bot 服务通知队列另运行 `php tests/qq-notify/run.php`。
+Typecho 实际表单、密钥保存、数据库状态、管理员权限和官方 QQ 通知队列另运行 `php tests/qq-notify/run.php`。
