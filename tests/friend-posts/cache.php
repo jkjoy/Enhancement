@@ -38,6 +38,16 @@ class Enhancement_FriendFeedHelper {
         ]];
     }
 }
+class Enhancement_FriendPostsNotifyHelper {
+    public static $calls = [];
+    public static $fail = false;
+    public static $result = null;
+    public static function observe(array $feeds, array $activeFeeds): array {
+        self::$calls[] = [$feeds, $activeFeeds];
+        if (self::$fail) throw new RuntimeException('fixture-secret-not-for-output');
+        return self::$result ?? ['success' => true, 'sent' => count($feeds), 'failed' => 0];
+    }
+}
 require_once dirname(__DIR__, 2) . '/FriendPostsHelper.php';
 
 $testDirectory = sys_get_temp_dir() . '/enhancement-friends-tests-' . bin2hex(random_bytes(6));
@@ -123,4 +133,46 @@ Enhancement_Plugin::$values['enable_friend_posts'] = '0';
 $disabled = Enhancement_FriendPostsHelper::getPosts();
 check(!$disabled['enabled'] && !$disabled['items'] && !Enhancement_FriendPostsHelper::refresh(1, 1)['success'], 'disabled feature neither exposes nor refreshes articles');
 check(count(Enhancement_FriendFeedHelper::$calls) === $callCount, 'disabled calls do not fetch');
+foreach (['enable_friend_posts_by_qq', 'enable_friend_posts_by_weixin'] as $key) {
+    check(invalidSettings([$key => ['1']]) && invalidSettings([$key => 'yes']), 'notification switches reject invalid values');
+}
+Enhancement_Plugin::$values['enable_friend_posts'] = '1';
+Enhancement_Plugin::$values['enable_friend_posts_by_qq'] = '1';
+$beforeFetch = count(Enhancement_FriendFeedHelper::$calls);
+$result = Enhancement_FriendPostsHelper::refresh(100);
+check($result['success'] && count(Enhancement_FriendFeedHelper::$calls) === $beforeFetch
+    && Enhancement_FriendPostsNotifyHelper::$calls[0][0] === [] && count(Enhancement_FriendPostsNotifyHelper::$calls[0][1]) === 1,
+    'fresh feeds still process pending notifications without another network fetch');
+$result = Enhancement_FriendPostsHelper::refresh(1, 1);
+$observed = end(Enhancement_FriendPostsNotifyHelper::$calls);
+$expectedKey = hash('sha256', "1\0https://one.test/\0https://one.test/custom.xml");
+check($result['success'] && count($observed[0]) === 1 && $observed[0][0]['key'] === $expectedKey
+    && $observed[0][0]['friend']['name'] === 'one' && count($observed[0][0]['items']) === 4,
+    'successful refresh forwards all cached articles and stable feed identity to the notifier');
+$cached = json_decode(file_get_contents($cacheDirectory . '/' . $expectedKey . '.json'), true);
+check($cached['items'] === $observed[0][0]['items'], 'cache is persisted before notification observation');
+Enhancement_FriendFeedHelper::$fail = true;
+$result = Enhancement_FriendPostsHelper::refresh(1, 1);
+check(!$result['success'] && end(Enhancement_FriendPostsNotifyHelper::$calls)[0] === [], 'failed fetch never becomes a new notification observation');
+Enhancement_FriendFeedHelper::$fail = false;
+Enhancement_FriendPostsNotifyHelper::$fail = true;
+$result = Enhancement_FriendPostsHelper::refresh(1, 1);
+check(!$result['success'] && strpos($result['message'], 'fixture-secret') === false
+    && json_decode(file_get_contents($cacheDirectory . '/' . $expectedKey . '.json'), true)['error'] === '',
+    'notification failure is reported safely while retaining the successful feed cache');
+Enhancement_FriendPostsNotifyHelper::$fail = false;
+Enhancement_FriendPostsNotifyHelper::$result = ['success' => false, 'sent' => 0, 'failed' => 1,
+    'message' => 'QQ 朋友文章通知未就绪，请先配置并绑定官方 QQ 机器人接收人。'];
+$result = Enhancement_FriendPostsHelper::refresh(100);
+check(!$result['success'] && strpos($result['message'], '绑定官方 QQ 机器人接收人') !== false,
+    'administrator refresh preserves actionable notification diagnostics');
+Enhancement_FriendPostsNotifyHelper::$result = null;
+Enhancement_Plugin::$values['friend_posts_feeds'] = 'https://one.test/|-';
+Enhancement_FriendPostsHelper::refresh(100);
+check(end(Enhancement_FriendPostsNotifyHelper::$calls) === [[], []], 'excluded feeds are removed from the active notification set even without due jobs');
+Enhancement_Plugin::$values['enable_friend_posts_by_qq'] = '0';
+Enhancement_Plugin::$values['enable_friend_posts_by_weixin'] = '1';
+Enhancement_FriendPostsHelper::refresh(100);
+check(end(Enhancement_FriendPostsNotifyHelper::$calls) === [[], []], 'Weixin-only notification settings also run the notification pipeline');
+
 echo "Passed $passed friend article cache checks.\n";

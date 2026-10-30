@@ -599,6 +599,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             }
         }
         Enhancement_BotMomentsHelper::syncActivation($settings);
+        Enhancement_FriendPostsNotifyHelper::syncActivation($settings);
         $storedValue = $this->encodeStoredPluginSettingsValue($settings);
 
         $row = $this->db->fetchRow(

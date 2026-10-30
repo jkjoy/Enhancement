@@ -8,18 +8,19 @@ class Enhancement_WeixinNotifyHelper
 
     public static function validateSettings(array $settings, ?array $previous = null): void
     {
-        foreach (array('enable_comment_by_weixin', 'enable_link_submit_by_weixin', 'weixin_include_links', 'weixin_moments_enabled') as $key) {
+        foreach (array('enable_comment_by_weixin', 'enable_link_submit_by_weixin', 'enable_friend_posts_by_weixin', 'weixin_include_links', 'weixin_moments_enabled') as $key) {
             if (isset($settings[$key]) && (!is_scalar($settings[$key]) || !in_array((string)$settings[$key], array('0', '1'), true))) {
                 throw new Typecho_Widget_Exception(_t('微信通知开关值无效'), 400);
             }
         }
-        if (empty($settings['enable_comment_by_weixin']) && empty($settings['enable_link_submit_by_weixin']) && empty($settings['weixin_moments_enabled'])) {
+        if (empty($settings['enable_comment_by_weixin']) && empty($settings['enable_link_submit_by_weixin']) && empty($settings['enable_friend_posts_by_weixin']) && empty($settings['weixin_moments_enabled'])) {
             return;
         }
         // An expired session must not block saving unrelated settings.
         if ($previous !== null
             && ((string)($settings['enable_comment_by_weixin'] ?? '0') !== '1' || ($previous['enable_comment_by_weixin'] ?? '0') == '1')
             && ((string)($settings['enable_link_submit_by_weixin'] ?? '0') !== '1' || ($previous['enable_link_submit_by_weixin'] ?? '0') == '1')
+            && ((string)($settings['enable_friend_posts_by_weixin'] ?? '0') !== '1' || ($previous['enable_friend_posts_by_weixin'] ?? '0') == '1')
             && ((string)($settings['weixin_moments_enabled'] ?? '0') !== '1' || ($previous['weixin_moments_enabled'] ?? '0') == '1')) {
             return;
         }
@@ -243,7 +244,7 @@ class Enhancement_WeixinNotifyHelper
                 throw new RuntimeException('微信返回的登录凭证不完整，请重新扫码。');
             }
             $accountBase = self::baseUrl(is_string($data['baseurl'] ?? null) && $data['baseurl'] !== '' ? $data['baseurl'] : $base);
-            Enhancement_ConfigStorageHelper::configHandle(array('enable_comment_by_weixin' => '0', 'enable_link_submit_by_weixin' => '0', 'weixin_moments_enabled' => '0'), false);
+            Enhancement_ConfigStorageHelper::configHandle(array('enable_comment_by_weixin' => '0', 'enable_link_submit_by_weixin' => '0', 'enable_friend_posts_by_weixin' => '0', 'weixin_moments_enabled' => '0'), false);
             Enhancement_NotifyTransportHelper::write('weixin_account', array('token' => $token, 'account_id' => $accountId, 'owner_id' => $owner, 'base_url' => $accountBase, 'connected_at' => time(), 'expired' => false));
             Enhancement_NotifyTransportHelper::write('weixin_sync', array());
             Enhancement_NotifyTransportHelper::write('weixin_recipient', array());
@@ -430,7 +431,7 @@ class Enhancement_WeixinNotifyHelper
 
     public static function disconnect(): array
     {
-        Enhancement_ConfigStorageHelper::configHandle(array('enable_comment_by_weixin' => '0', 'enable_link_submit_by_weixin' => '0', 'weixin_moments_enabled' => '0'), false);
+        Enhancement_ConfigStorageHelper::configHandle(array('enable_comment_by_weixin' => '0', 'enable_link_submit_by_weixin' => '0', 'enable_friend_posts_by_weixin' => '0', 'weixin_moments_enabled' => '0'), false);
         foreach (array('weixin_account', 'weixin_login', 'weixin_sync', 'weixin_recipient', 'weixin_result') as $key) {
             Enhancement_NotifyTransportHelper::write($key, array());
         }
@@ -457,7 +458,7 @@ class Enhancement_WeixinNotifyHelper
             if (is_string($context) && $context !== '') {
                 $msg['context_token'] = $context;
             }
-            // A timeout can occur after acceptance. Each notification is attempted once.
+            // A timeout can occur after acceptance. This call makes one attempt.
             $response = self::request($transport, 'POST', $account['base_url'] . '/ilink/bot/sendmessage', self::headers($account['token']), array('msg' => $msg, 'base_info' => self::baseInfo()));
             if (self::failed($response)) {
                 throw self::error($response);
@@ -466,7 +467,7 @@ class Enhancement_WeixinNotifyHelper
             $id = $data['message_id'] ?? '';
             $validId = is_scalar($id) && preg_match('/\A[0-9]{1,24}\z/', (string)$id);
             if (!array_key_exists('ret', $data) && !array_key_exists('errcode', $data) && !$validId) {
-                throw new RuntimeException('微信接口未返回发送受理状态，请检查连接；为避免重复通知，不会自动重发。');
+                throw new RuntimeException('微信接口未返回发送受理状态，请检查连接并在接收端核对是否送达。');
             }
             $result['success'] = true;
             $result['id'] = $validId ? (string)$id : $clientId;

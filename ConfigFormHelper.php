@@ -64,6 +64,7 @@ class Enhancement_ConfigFormHelper
             _t('默认从已审核友链自动发现 RSS 2.0 / Atom 订阅。一行一条：友链地址|订阅地址，例如 https://friend.example/|https://friend.example/feed/；填写 友链地址|- 可排除该站，空行忽略。缓存保存在服务器临时目录，无需修改数据表。')
         );
         $form->addInput($friendPostsFeeds);
+        Enhancement_NotificationConfigHelper::addFriendPostsInputs($form);
 
         $momentsToken = new Typecho_Widget_Helper_Form_Element_Text(
             'moments_token',

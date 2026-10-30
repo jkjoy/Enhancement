@@ -79,6 +79,7 @@ class Enhancement_ConfigStorageHelper
             }
         }
         Enhancement_BotMomentsHelper::syncActivation($merged);
+        Enhancement_FriendPostsNotifyHelper::syncActivation($merged);
         $storedValue = Enhancement_SettingsHelper::encodePluginConfigValue($merged);
 
         try {

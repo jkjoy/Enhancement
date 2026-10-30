@@ -79,6 +79,12 @@ function qqSettings(): array
     global $pdo;
     return unserialize($pdo->query("SELECT value FROM typecho_options WHERE name = 'plugin:Enhancement' AND user = 0")->fetchColumn(), ['allowed_classes' => false]);
 }
+function qqPrivateState(string $key, ?array $record = null): array
+{
+    $values = ['key' => $key];
+    if ($record !== null) { $values += ['operation' => 'write', 'record' => $record]; }
+    return qqCall('/state', $values)['json']['record'] ?? [];
+}
 function qqQueue(): array
 {
     global $pdo;
@@ -223,6 +229,19 @@ try {
         'Settings render AppID and an empty AppSecret without exposing the secret', $form['status']);
     qqCheck(strpos($form['body'], '无需额外启用 PHP 扩展') !== false && strpos($form['body'], '需启用 sodium 扩展') === false,
         'QQ setup describes bundled signature verification without requiring an extension');
+    qqCheck(preg_match('/<input[^>]*id="enable_friend_posts_by_qq-0"[^>]*checked=/', $form['body']) === 1
+        && preg_match('/<input[^>]*id="enable_friend_posts_by_weixin-0"[^>]*checked=/', $form['body']) === 1,
+        'Friend article QQ and Weixin notification switches both default to disabled');
+    $friendWorker = str_replace('\\', '/', dirname(__DIR__, 2)) . '/FriendPosts/worker.php';
+    qqCheck(preg_match('/id="enhancement-friend-posts-worker-path"[^>]*value="([^"]+)"/', $form['body'], $workerMatch) === 1
+        && html_entity_decode($workerMatch[1] ?? '', ENT_QUOTES, 'UTF-8') === $friendWorker,
+        'Friend article task displays the deployed absolute worker path');
+    foreach (['enhancement-friend-posts-1panel-command' => 'FriendPosts', 'enhancement-weixin-1panel-command' => 'BotMoments'] as $id => $worker) {
+        qqCheck(preg_match('/<textarea[^>]*id="' . $id . '"[^>]*>(.*?)<\/textarea>/s', $form['body'], $commandMatch) === 1
+            && html_entity_decode($commandMatch[1] ?? '', ENT_QUOTES, 'UTF-8')
+                === "docker exec --user '<PHP运行用户>' '<PHP容器名>' php '/容器内站点路径/usr/plugins/Enhancement/" . $worker . "/worker.php' --once",
+            '1Panel task shows an escaped container command for ' . $worker);
+    }
     foreach (array_keys($obsolete) as $name) {
         qqCheck(strpos($form['body'], 'name="' . $name . '"') === false, 'Obsolete field is absent from the settings form: ' . $name);
     }
@@ -419,6 +438,12 @@ try {
     $beforeSettings = qqSettings();
     $response = qqConfig(['enable_comment_by_weixin' => '1']);
     qqCheck($response['status'] === 400 && qqSettings() === $beforeSettings, 'Weixin notification cannot be enabled before login', $response);
+    $response = qqConfig(['enable_friend_posts_by_weixin' => '1']);
+    qqCheck($response['status'] === 400 && qqSettings() === $beforeSettings,
+        'Config save cannot enable friend article Weixin notifications before login', $response);
+    $response = qqCall('/restore', array_replace($beforeSettings, ['enable_friend_posts_by_weixin' => '1']));
+    qqCheck($response['status'] === 400 && qqSettings() === $beforeSettings,
+        'Settings restore cannot enable friend article Weixin notifications before login', $response);
     $privateToken = 'fixture-weixin-private-token';
     $privateContext = 'fixture-weixin-private-context';
     qqCall('/state', ['key' => 'weixin_account', 'operation' => 'write', 'record' => ['token' => $privateToken,
@@ -437,6 +462,113 @@ try {
     qqCheck(($response['json']['data']['logged_in'] ?? false) === true && ($response['json']['data']['has_context'] ?? false) === true
         && ($response['json']['data']['user_id'] ?? '') === 'fixture-owner' && strpos($response['body'], $privateToken) === false
         && strpos($response['body'], $privateContext) === false, 'Weixin status exposes readiness without login token or context token', $response);
+
+    // Exercise both real persistence paths without refreshing a feed or sending a notification.
+    $friendRequests = count(qqRequests());
+    qqBind($admin);
+    $response = qqConfig(['enable_friend_posts' => '1', 'enable_friend_posts_by_qq' => '1',
+        'enable_friend_posts_by_weixin' => '1', 'qq_moments_enabled' => '0', 'weixin_moments_enabled' => '0']);
+    $friendStates = ['qq' => qqPrivateState('friend_posts_qq'), 'weixin' => qqPrivateState('friend_posts_weixin')];
+    qqCheck($response['status'] === 200 && qqSettings()['enable_friend_posts_by_qq'] === '1'
+        && qqSettings()['enable_friend_posts_by_weixin'] === '1' && qqSettings()['qq_moments_enabled'] === '0'
+        && qqSettings()['weixin_moments_enabled'] === '0'
+        && preg_match('/^[a-f0-9]{32}$/D', $friendStates['qq']['activation'] ?? '') === 1
+        && preg_match('/^[a-f0-9]{32}$/D', $friendStates['weixin']['activation'] ?? '') === 1,
+        'Config save persists independent friend article switches and creates both activations with moment publishing disabled', $response);
+    foreach ($friendStates as $channel => $state) {
+        $state['feeds'] = ['fixture-feed' => ['seen' => ['fixture-article' => 1]]];
+        $state['delivered'] = ['fixture-delivered' => 1];
+        $friendStates[$channel] = qqPrivateState('friend_posts_' . $channel, $state);
+    }
+    $response = qqConfig(['friend_posts_interval' => '15']);
+    qqCheck($response['status'] === 200 && qqPrivateState('friend_posts_qq') === $friendStates['qq']
+        && qqPrivateState('friend_posts_weixin') === $friendStates['weixin'],
+        'Unrelated config save preserves both friend article activations and their durable notification history', $response);
+    foreach (['qq', 'weixin'] as $channel) {
+        $other = $channel === 'qq' ? 'weixin' : 'qq';
+        $before = qqPrivateState('friend_posts_' . $channel);
+        $otherBefore = qqPrivateState('friend_posts_' . $other);
+        $response = qqConfig(['enable_friend_posts_by_' . $channel => '0']);
+        qqCheck($response['status'] === 200 && qqSettings()['enable_friend_posts_by_' . $channel] === '0'
+            && qqPrivateState('friend_posts_' . $channel) === [] && qqPrivateState('friend_posts_' . $other) === $otherBefore,
+            'Config save disables only its own friend article channel: ' . $channel, $response);
+        $response = qqConfig(['enable_friend_posts_by_' . $channel => '1']);
+        $after = qqPrivateState('friend_posts_' . $channel);
+        qqCheck($response['status'] === 200 && qqSettings()['enable_friend_posts_by_' . $channel] === '1'
+            && !empty($after['activation']) && $after['activation'] !== ($before['activation'] ?? '')
+            && ($after['identity'] ?? '') === ($before['identity'] ?? '')
+            && ($after['feeds'] ?? null) === [] && ($after['delivered'] ?? null) === [],
+            'Re-enabling friend article notifications starts a fresh baseline for ' . $channel, $response);
+    }
+    $friendEnabledSettings = qqSettings();
+    $friendBeforeRestore = ['qq' => qqPrivateState('friend_posts_qq'), 'weixin' => qqPrivateState('friend_posts_weixin')];
+    $response = qqCall('/restore', array_replace($friendEnabledSettings, ['enable_friend_posts_by_qq' => '0', 'enable_friend_posts_by_weixin' => '0']));
+    qqCheck($response['status'] === 200 && qqSettings()['enable_friend_posts_by_qq'] === '0'
+        && qqSettings()['enable_friend_posts_by_weixin'] === '0' && qqPrivateState('friend_posts_qq') === []
+        && qqPrivateState('friend_posts_weixin') === [], 'Settings restore disables and clears both friend article channels', $response);
+    $response = qqCall('/restore', $friendEnabledSettings);
+    $friendAfterRestore = ['qq' => qqPrivateState('friend_posts_qq'), 'weixin' => qqPrivateState('friend_posts_weixin')];
+    qqCheck($response['status'] === 200 && qqSettings()['enable_friend_posts_by_qq'] === '1'
+        && qqSettings()['enable_friend_posts_by_weixin'] === '1'
+        && !empty($friendAfterRestore['qq']['activation']) && !empty($friendAfterRestore['weixin']['activation'])
+        && $friendAfterRestore['qq']['activation'] !== $friendBeforeRestore['qq']['activation']
+        && $friendAfterRestore['weixin']['activation'] !== $friendBeforeRestore['weixin']['activation'],
+        'Settings restore re-enables friend article switches using new activations instead of revoked baselines', $response);
+    $response = qqCall('/restore', $friendEnabledSettings);
+    qqCheck($response['status'] === 200 && qqPrivateState('friend_posts_qq') === $friendAfterRestore['qq']
+        && qqPrivateState('friend_posts_weixin') === $friendAfterRestore['weixin'],
+        'Restoring unchanged friend article settings preserves the active baselines', $response);
+    foreach (['config', 'restore'] as $path) {
+        $before = qqPrivateState('friend_posts_qq');
+        $weixinBefore = qqPrivateState('friend_posts_weixin');
+        $rotatedSecret = 'friend-notify-' . $path . '-secret';
+        $response = $path === 'config' ? qqConfig(['qq_app_secret' => $rotatedSecret])
+            : qqCall('/restore', array_replace(qqSettings(), ['qq_app_secret' => $rotatedSecret]));
+        qqCheck($response['status'] === 200 && qqSettings()['qq_app_secret'] === $rotatedSecret
+            && qqSettings()['enable_friend_posts_by_qq'] === '1' && qqPrivateState('qq_binding') === []
+            && qqPrivateState('friend_posts_qq') === [] && qqPrivateState('friend_posts_weixin') === $weixinBefore,
+            'QQ credential rotation through ' . $path . ' revokes its friend article activation without changing Weixin', $response);
+        qqBind($admin, 'FRIEND_QQ_' . strtoupper($path));
+        $response = $path === 'config' ? qqConfig(['friend_posts_interval' => '15']) : qqCall('/restore', qqSettings());
+        $after = qqPrivateState('friend_posts_qq');
+        qqCheck($response['status'] === 200 && !empty($after['activation']) && $after['activation'] !== ($before['activation'] ?? '')
+            && ($after['identity'] ?? '') !== ($before['identity'] ?? '') && ($after['feeds'] ?? null) === [],
+            'QQ rebind followed by ' . $path . ' creates a fresh authorized friend article activation', $response);
+        qqBind($admin, 'FRIEND_QQ_NEW_RECIPIENT_' . strtoupper($path));
+        $response = $path === 'config' ? qqConfig(['friend_posts_interval' => '15']) : qqCall('/restore', qqSettings());
+        $recipientState = qqPrivateState('friend_posts_qq');
+        qqCheck($response['status'] === 200 && !empty($recipientState['activation']) && $recipientState['activation'] !== $after['activation']
+            && $recipientState['identity'] !== $after['identity'] && ($recipientState['feeds'] ?? null) === []
+            && qqPrivateState('friend_posts_weixin') === $weixinBefore,
+            'Changed QQ recipient rebuilds its friend article baseline through ' . $path, $response);
+    }
+    $qqBeforeWeixinChanges = qqPrivateState('friend_posts_qq');
+    $weixinBeforeCredentials = qqPrivateState('friend_posts_weixin');
+    $originalAccount = qqPrivateState('weixin_account');
+    qqPrivateState('weixin_account', array_replace($originalAccount, ['token' => 'fixture-replacement-weixin-token']));
+    $response = qqCall('/restore', qqSettings());
+    $weixinAfterCredentials = qqPrivateState('friend_posts_weixin');
+    qqCheck($response['status'] === 200 && !empty($weixinAfterCredentials['activation'])
+        && $weixinAfterCredentials['activation'] !== $weixinBeforeCredentials['activation']
+        && $weixinAfterCredentials['identity'] !== $weixinBeforeCredentials['identity']
+        && ($weixinAfterCredentials['feeds'] ?? null) === [] && qqPrivateState('friend_posts_qq') === $qqBeforeWeixinChanges,
+        'Restoring settings after Weixin credential replacement rebuilds only its friend article activation', $response);
+    qqPrivateState('weixin_account', array_replace(qqPrivateState('weixin_account'), ['owner_id' => 'replacement-owner']));
+    qqPrivateState('weixin_sync', ['candidates' => ['replacement-owner'], 'context_tokens' => ['replacement-owner' => 'replacement-context']]);
+    qqPrivateState('weixin_recipient', ['user_id' => 'replacement-owner']);
+    $response = qqConfig(['friend_posts_interval' => '15']);
+    $weixinAfterRecipient = qqPrivateState('friend_posts_weixin');
+    qqCheck($response['status'] === 200 && !empty($weixinAfterRecipient['activation'])
+        && $weixinAfterRecipient['activation'] !== $weixinAfterCredentials['activation']
+        && $weixinAfterRecipient['identity'] !== $weixinAfterCredentials['identity']
+        && ($weixinAfterRecipient['feeds'] ?? null) === [] && qqPrivateState('friend_posts_qq') === $qqBeforeWeixinChanges,
+        'Changed Weixin recipient rebuilds only its friend article baseline on config save', $response);
+    qqPrivateState('weixin_account', $originalAccount);
+    qqPrivateState('weixin_sync', ['candidates' => ['fixture-owner'], 'context_tokens' => ['fixture-owner' => $privateContext]]);
+    qqPrivateState('weixin_recipient', ['user_id' => 'fixture-owner']);
+    qqConfig(['friend_posts_interval' => '15']);
+    $replacementSecret = qqSettings()['qq_app_secret'];
+    qqCheck(count(qqRequests()) === $friendRequests, 'Friend article activation persistence checks never send a QQ notification');
 
     $form = fixtureRequest($base, '/form');
     qqCheck($form['status'] === 200 && preg_match('/<input[^>]*id="qq_notify_provider-official"[^>]*checked=/', $form['body']) === 1,
@@ -461,8 +593,9 @@ try {
     qqCheck($response['status'] === 200 && (qqCall('/state', ['key' => 'weixin_account'])['json']['record'] ?? null) === []
         && (qqCall('/state', ['key' => 'weixin_sync'])['json']['record'] ?? null) === []
         && (qqCall('/state', ['key' => 'weixin_recipient'])['json']['record'] ?? null) === []
-        && qqSettings()['enable_comment_by_weixin'] === '0' && qqSettings()['enable_link_submit_by_weixin'] === '0',
-        'Weixin disconnect action clears private login, context and recipient state', $response);
+        && qqSettings()['enable_comment_by_weixin'] === '0' && qqSettings()['enable_link_submit_by_weixin'] === '0'
+        && qqSettings()['enable_friend_posts_by_weixin'] === '0' && qqPrivateState('friend_posts_weixin') === [],
+        'Weixin disconnect action clears private login and recipient state and disables friend article notifications', $response);
 
     foreach (['typecho.log'] as $file) {
         $log = file_get_contents($directory . '/' . $file);

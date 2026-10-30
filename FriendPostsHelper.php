@@ -8,6 +8,8 @@ class Enhancement_FriendPostsHelper
         $settings = Enhancement_Plugin::runtimeSettings();
         return (object) array(
             'enable_friend_posts' => !isset($settings->enable_friend_posts) || (string)$settings->enable_friend_posts === '1',
+            'enable_friend_posts_by_qq' => ($settings->enable_friend_posts_by_qq ?? '0') == '1',
+            'enable_friend_posts_by_weixin' => ($settings->enable_friend_posts_by_weixin ?? '0') == '1',
             'friend_posts_interval' => max(5, min(1440, isset($settings->friend_posts_interval) ? (int)$settings->friend_posts_interval : 60)),
             'friend_posts_per_friend' => max(1, min(20, isset($settings->friend_posts_per_friend) ? (int)$settings->friend_posts_per_friend : 5)),
             'friend_posts_feeds' => isset($settings->friend_posts_feeds) ? (string)$settings->friend_posts_feeds : ''
@@ -23,9 +25,10 @@ class Enhancement_FriendPostsHelper
                 throw new Typecho_Widget_Exception(_t('朋友文章设置：%s 必须为 %d 到 %d 之间的整数。', $key, $range[0], $range[1]));
             }
         }
-        if (isset($settings['enable_friend_posts']) && (!is_scalar($settings['enable_friend_posts'])
-            || !in_array((string)$settings['enable_friend_posts'], array('0', '1'), true))) {
-            throw new Typecho_Widget_Exception(_t('朋友文章开关无效。'));
+        foreach (array('enable_friend_posts', 'enable_friend_posts_by_qq', 'enable_friend_posts_by_weixin') as $key) {
+            if (isset($settings[$key]) && (!is_scalar($settings[$key]) || !in_array((string)$settings[$key], array('0', '1'), true))) {
+                throw new Typecho_Widget_Exception(_t('朋友文章开关无效。'));
+            }
         }
         if (isset($settings['friend_posts_feeds'])) {
             if (!is_string($settings['friend_posts_feeds']) || strlen($settings['friend_posts_feeds']) > 200000) {
@@ -102,7 +105,12 @@ class Enhancement_FriendPostsHelper
 
     private static function cacheFile(array $friend)
     {
-        return self::cacheDirectory() . '/' . hash('sha256', $friend['lid'] . "\0" . $friend['url'] . "\0" . $friend['feed']) . '.json';
+        return self::cacheDirectory() . '/' . self::friendKey($friend) . '.json';
+    }
+
+    private static function friendKey(array $friend): string
+    {
+        return hash('sha256', $friend['lid'] . "\0" . $friend['url'] . "\0" . $friend['feed']);
     }
 
     private static function readCache($file)
@@ -152,7 +160,7 @@ class Enhancement_FriendPostsHelper
             $order = (int)$left['cache']['checked'] <=> (int)$right['cache']['checked'];
             return $order !== 0 ? $order : $left['friend']['lid'] <=> $right['friend']['lid'];
         });
-        if (!$jobs) {
+        if (!$jobs && ((int)$lid > 0 || (!$settings->enable_friend_posts_by_qq && !$settings->enable_friend_posts_by_weixin))) {
             return array('success' => (int)$lid === 0, 'message' => (int)$lid > 0 ? '友链不存在、尚未审核或已排除。' : '订阅缓存均在有效期内。');
         }
         $lockPath = self::cacheDirectory() . '/refresh.lock';
@@ -169,7 +177,9 @@ class Enhancement_FriendPostsHelper
             return array('success' => false, 'message' => '其他请求正在更新订阅，请稍后重试。');
         }
         $success = true;
-        $message = '订阅已更新。';
+        $message = $jobs ? '订阅已更新。' : '订阅缓存均在有效期内。';
+        $feeds = array();
+        $notifications = array('success' => true, 'sent' => 0, 'failed' => 0);
         try {
             foreach (array_slice($jobs, 0, max(1, min(100, (int)$limit))) as $job) {
                 $cache = self::readCache($job['file']);
@@ -177,6 +187,7 @@ class Enhancement_FriendPostsHelper
                     continue;
                 }
                 $cache['checked'] = time();
+                $fetched = false;
                 try {
                     // Remember discovered feeds, but rediscover after a failed attempt.
                     $feed = $job['friend']['feed'];
@@ -188,6 +199,7 @@ class Enhancement_FriendPostsHelper
                     $cache['items'] = array_slice($result['items'], 0, 50);
                     $cache['updated'] = time();
                     $cache['error'] = '';
+                    $fetched = true;
                 } catch (Throwable $error) {
                     // A temporarily broken feed must not erase the last successful result.
                     $message = strip_tags($error->getMessage());
@@ -196,12 +208,25 @@ class Enhancement_FriendPostsHelper
                     $message = $cache['error'];
                 }
                 self::writeCache($job['file'], $cache);
+                if ($fetched) {
+                    $feeds[] = array('key' => self::friendKey($job['friend']), 'friend' => $job['friend'], 'items' => $cache['items']);
+                }
+            }
+            if ($settings->enable_friend_posts_by_qq || $settings->enable_friend_posts_by_weixin) {
+                try {
+                    $notifications = Enhancement_FriendPostsNotifyHelper::observe($feeds, array_map(array(__CLASS__, 'friendKey'), $friends));
+                } catch (Throwable $error) {
+                    $notifications = array('success' => false, 'sent' => 0, 'failed' => 1);
+                }
             }
         } finally {
             @flock($lock, LOCK_UN);
             fclose($lock);
         }
-        return array('success' => $success, 'message' => $message);
+        if (empty($notifications['success'])) {
+            $message .= ' ' . ($notifications['message'] ?? '更新通知发送失败，请检查 QQ/微信连接和最近发送结果。');
+        }
+        return array('success' => $success && !empty($notifications['success']), 'message' => $message, 'notifications' => $notifications);
     }
 
     private static function isDue(array $cache, $settings)
