@@ -21,14 +21,6 @@ Typecho\Db::set($db);
 Typecho\Widget::widget('Widget_Init');
 require_once dirname(__DIR__, 2) . '/Plugin.php';
 Typecho\Plugin::init(['activated' => [], 'handles' => []]);
-if (getenv('ENHANCEMENT_QQ_COMMAND_HOOKS') === '1') {
-    Typecho_Plugin::factory('Widget_Comments_Edit')->mark = static function ($comment, $editor, $status) use ($directory) {
-        file_put_contents($directory . '/hooks.jsonl', json_encode(['hook' => 'mark', 'id' => $comment['coid'], 'status' => $status]) . "\n", FILE_APPEND);
-    };
-    Typecho_Plugin::factory('Widget_Comments_Edit')->finishComment = static function ($comment) use ($directory) {
-        file_put_contents($directory . '/hooks.jsonl', json_encode(['hook' => 'finish', 'id' => $comment->coid]) . "\n", FILE_APPEND);
-    };
-}
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $body = json_decode(file_get_contents('php://input'), true) ?: [];
 try {
@@ -119,7 +111,7 @@ try {
                 throw new RuntimeException('Invalid fixture user.', 400);
             }
             $actions = [];
-            foreach (['qq-binding-start', 'qq-binding-cancel', 'qq-binding-status', 'weixin-login-start', 'weixin-login-poll',
+            foreach (['weixin-login-start', 'weixin-login-poll',
                 'weixin-sync', 'weixin-bind', 'weixin-disconnect', 'weixin-status', 'weixin-test-notify'] as $action) {
                 $actions[$action] = Helper::security()->getIndex('/action/enhancement-edit?do=' . $action);
             }

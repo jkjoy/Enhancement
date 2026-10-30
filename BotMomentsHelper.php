@@ -3,21 +3,21 @@
 /** Authenticated bot messages may publish only after an administrator opts in. */
 class Enhancement_BotMomentsHelper
 {
-    private static function senders(array $settings): array
+    private static function qqTargets(array $settings): array
     {
-        return array_values(array_unique(preg_split('/\s+/', trim((string)($settings['qq_moments_allowed_senders'] ?? '')), -1, PREG_SPLIT_NO_EMPTY)));
+        $value = $settings['qq_moments_targets'] ?? '';
+        return is_scalar($value) ? array_values(array_unique(array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', (string)$value)),
+            static function ($target) { return $target !== ''; }))) : array();
     }
 
     private static function identity(string $channel, array $settings): string
     {
         if ($channel === 'qq') {
-            $senders = self::senders($settings);
-            sort($senders);
-            $parts = array();
-            foreach (array('qq_notify_provider', 'qq_app_id', 'qq_app_secret', 'qq_target_type', 'qq_target_id') as $key) {
-                $parts[] = trim((string)($settings[$key] ?? ''));
-            }
-            return hash('sha256', serialize(array($parts, $senders)));
+            $targets = self::qqTargets($settings);
+            sort($targets);
+            return hash('sha256', serialize(array($settings['qq_notify_provider'] ?? '',
+                rtrim(trim((string)($settings['qq_official_url'] ?? '')), '/'), $settings['qq_official_token'] ?? '',
+                $settings['qq_moments_secret'] ?? '', $targets)));
         }
         $account = Enhancement_NotifyTransportHelper::read('weixin_account');
         $recipient = Enhancement_NotifyTransportHelper::read('weixin_recipient');
@@ -26,46 +26,21 @@ class Enhancement_BotMomentsHelper
 
     public static function validateSettings(array $settings): void
     {
-        foreach (array('qq_moments_enabled', 'weixin_moments_enabled') as $key) {
-            if (isset($settings[$key]) && (!is_scalar($settings[$key]) || !in_array((string)$settings[$key], array('0', '1'), true))) {
-                throw new Typecho_Widget_Exception(_t('机器人发布瞬间的开关值无效'), 400);
-            }
-        }
-        if (isset($settings['qq_moments_allowed_senders']) && !is_scalar($settings['qq_moments_allowed_senders'])) {
-            throw new Typecho_Widget_Exception(_t('QQ群瞬间发布者必须逐行填写 OpenID'), 400);
-        }
-        $senders = self::senders($settings);
-        if (count($senders) > 50 || strlen((string)($settings['qq_moments_allowed_senders'] ?? '')) > 8192) {
-            throw new Typecho_Widget_Exception(_t('QQ群瞬间发布者最多填写 50 个 OpenID'), 400);
-        }
-        foreach ($senders as $sender) {
-            if (!preg_match('/\A[A-Za-z0-9_-]{1,128}\z/D', $sender)) {
-                throw new Typecho_Widget_Exception(_t('QQ群瞬间发布者 OpenID 格式无效'), 400);
-            }
-        }
-        if (($settings['qq_moments_enabled'] ?? '0') == '1') {
-            $type = trim((string)($settings['qq_target_type'] ?? ''));
-            if (($settings['qq_notify_provider'] ?? '') !== 'direct' || trim((string)($settings['qq_app_id'] ?? '')) === ''
-                || trim((string)($settings['qq_app_secret'] ?? '')) === '' || trim((string)($settings['qq_target_id'] ?? '')) === ''
-                || !in_array($type, array('c2c', 'group'), true) || ($type === 'group' && !$senders)) {
-                throw new Typecho_Widget_Exception(_t('请先配置并绑定 QQ 直连机器人；群聊还须填写允许发布的成员 OpenID，频道暂不支持发布瞬间'), 400);
-            }
+        if (isset($settings['weixin_moments_enabled']) && (!is_scalar($settings['weixin_moments_enabled'])
+            || !in_array((string)$settings['weixin_moments_enabled'], array('0', '1'), true))) {
+            throw new Typecho_Widget_Exception(_t('微信发布瞬间的开关值无效'), 400);
         }
     }
 
     public static function syncActivation(array $settings): void
     {
         $gates = Enhancement_NotifyTransportHelper::read('bot_moments_gate');
-        $next = $gates;
+        $next = array();
         foreach (array('qq', 'weixin') as $channel) {
-            if (($settings[$channel . '_moments_enabled'] ?? '0') != '1') {
-                unset($next[$channel]);
-                continue;
-            }
+            if (($settings[$channel . '_moments_enabled'] ?? '0') != '1') { continue; }
             $identity = self::identity($channel, $settings);
-            if (($gates[$channel]['identity'] ?? '') !== $identity || empty($gates[$channel]['enabled_at'])) {
-                $next[$channel] = array('identity' => $identity, 'enabled_at' => time(), 'activation_id' => bin2hex(random_bytes(16)));
-            }
+            $next[$channel] = ($gates[$channel]['identity'] ?? '') === $identity && !empty($gates[$channel]['enabled_at'])
+                ? $gates[$channel] : array('identity' => $identity, 'enabled_at' => time(), 'activation_id' => bin2hex(random_bytes(16)));
         }
         if ($next !== $gates) { Enhancement_NotifyTransportHelper::write('bot_moments_gate', $next); }
     }
@@ -76,10 +51,15 @@ class Enhancement_BotMomentsHelper
         $conversation = $message['conversation'] ?? '';
         if (!is_string($sender) || $sender === '' || !is_string($conversation)) { return false; }
         if ($channel === 'qq') {
-            $type = trim((string)($settings['qq_target_type'] ?? ''));
-            if (($settings['qq_notify_provider'] ?? '') !== 'direct' || ($message['account'] ?? '') !== trim((string)($settings['qq_app_id'] ?? ''))
-                || $conversation !== trim((string)($settings['qq_target_id'] ?? '')) || ($message['conversation_type'] ?? '') !== $type) { return false; }
-            return ($type === 'c2c' && $sender === $conversation) || ($type === 'group' && in_array($sender, self::senders($settings), true));
+            if (($settings['qq_notify_provider'] ?? '') !== 'official' || ($message['conversation_type'] ?? '') !== 'private'
+                || $conversation !== $sender || !is_string($message['account'] ?? null) || $message['account'] === '') { return false; }
+            try { Enhancement_QqNotifyHelper::validateSettings($settings); } catch (Throwable $exception) { return false; }
+            $aliases = $message['aliases'] ?? null;
+            if (!is_array($aliases) || array_values($aliases) !== $aliases) { return false; }
+            foreach ($aliases as $alias) {
+                if (!is_string($alias) || !preg_match('/\A[A-Za-z0-9_-]{1,64}\z/D', $alias)) { return false; }
+            }
+            return array_intersect($aliases, self::qqTargets($settings)) !== array();
         }
         $account = Enhancement_NotifyTransportHelper::read('weixin_account');
         $recipient = Enhancement_NotifyTransportHelper::read('weixin_recipient');

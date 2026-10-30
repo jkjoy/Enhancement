@@ -507,7 +507,7 @@ class Enhancement_ConfigFormHelper
             array('1' => _t('启用'), '0' => _t('禁用')),
             '0',
             _t('<h3 class="enhancement-title">QQ 通知设置</h3><hr/>QQ评论通知'),
-            _t('评论通过时通过 QQ 机器人推送通知')
+            _t('评论通过时通过官方 QQ Bot 服务（Webhook）推送通知')
         );
         $form->addInput($enableCommentByQQ);
 
@@ -516,36 +516,33 @@ class Enhancement_ConfigFormHelper
             array('1' => _t('启用'), '0' => _t('禁用')),
             '0',
             _t('友情链接申请通知'),
-            _t('前台提交新的友情链接申请时，通过 QQ 机器人推送通知')
+            _t('前台提交新的友情链接申请时，通过官方 QQ Bot 服务（Webhook）推送通知')
         );
         $form->addInput($enableLinkSubmitByQQ);
 
         $qqNotifyProvider = new class(
             'qq_notify_provider',
-            array('none' => _t('未配置 / 关闭通知'), 'direct' => _t('官方 QQ Bot 直连（无需额外服务，推荐）'),
-                'standalone' => _t('独立 QQ 通道（无需智能体）'),
-                'official' => _t('官方 QQ Bot 服务（Webhook）')),
+            array('none' => _t('未配置 / 关闭通知'), 'official' => _t('官方 QQ Bot 服务（Webhook）')),
             'none',
             _t('QQ 通知方式'),
-            _t('官方直连只需配置下方 AppID、AppSecret 和接收 ID，插件直接调用腾讯接口。独立 QQ 通道及官方 Bot 服务使用原有 Docker 服务。主动消息受 QQ 平台权限和额度限制。')
+            _t('通过已部署的官方 QQ Bot 服务发送 Webhook 通知。填写下方服务地址、访问令牌和已绑定的接收别名；选择“未配置 / 关闭通知”后停止发送 QQ 通知。主动消息受 QQ 平台权限和额度限制。')
         ) extends Typecho_Widget_Helper_Form_Element_Radio {
             protected function inputValue($value)
             {
-                parent::inputValue(in_array($value, array('none', 'direct', 'standalone', 'official'), true) ? $value : 'none');
+                parent::inputValue(in_array($value, array('none', 'official'), true) ? $value : 'none');
             }
         };
         $form->addInput($qqNotifyProvider);
-        Enhancement_NotificationConfigHelper::addQqInputs($form);
 
         $qqOfficialUrl = new Typecho_Widget_Helper_Form_Element_Text(
-            'qq_official_url', null, '', _t('独立 QQ / 官方 Bot 服务地址'),
-            _t('独立 QQ 通道和官方 Webhook 模式共用此项。填写服务根地址，例如 http://127.0.0.1:8080；公网部署使用 HTTPS。AppID 与 AppSecret 仅在服务中配置。')
+            'qq_official_url', null, '', _t('官方 QQ Bot 服务地址'),
+            _t('填写官方 QQ Bot Webhook 服务的根地址，例如 http://127.0.0.1:8080；公网部署使用 HTTPS。AppID 与 AppSecret 仅在服务中配置。')
         );
         $form->addInput($qqOfficialUrl);
 
         $qqOfficialToken = new class(
-            'qq_official_token', null, '', _t('独立 QQ / 官方 Bot 服务访问令牌'),
-            _t('与 Bot 服务 BOT_API_TOKEN 一致，至少 32 位非空白 ASCII 字符。保存后不显示，留空保留已保存令牌。')
+            'qq_official_token', null, '', _t('官方 QQ Bot 服务访问令牌'),
+            _t('与官方 QQ Bot Webhook 服务的 BOT_API_TOKEN 一致，至少 32 位非空白 ASCII 字符。保存后不显示，留空保留已保存令牌。')
         ) extends Typecho_Widget_Helper_Form_Element_Password {
             protected function inputValue($value)
             {
@@ -557,21 +554,34 @@ class Enhancement_ConfigFormHelper
         $form->addInput($qqOfficialToken);
 
         $qqOfficialTargets = new Typecho_Widget_Helper_Form_Element_Textarea(
-            'qq_official_targets', null, '', _t('独立 QQ / 官方 Bot 接收别名'),
-            _t('每行一个已在 Bot 服务绑定的别名，可同时填写私聊与群聊目标；最多 20 个。仅支持 1 至 64 位英文字母、数字、下划线和连字符，不能直接填写 QQ 号或群号。')
+            'qq_official_targets', null, '', _t('官方 QQ Bot 接收别名'),
+            _t('每行一个已在官方 QQ Bot Webhook 服务绑定的别名，可同时填写私聊与群聊目标；最多 20 个。仅支持 1 至 64 位英文字母、数字、下划线和连字符，不能直接填写 QQ 号或群号。')
         );
         $form->addInput($qqOfficialTargets);
 
         $qqOfficialIncludeLinks = new Typecho_Widget_Helper_Form_Element_Radio(
             'qq_official_include_links', array('1' => _t('包含链接'), '0' => _t('省略链接')), '1',
-            _t('独立 QQ / 官方 Bot 通知中的链接'),
-            _t('未在 QQ 开放平台报备消息域名时可选择省略链接，文章、友链和审核地址等 URL 将被移除。官方消息会按 UTF-8 安全截短到 1800 字节。')
+            _t('官方 QQ Bot 通知中的链接'),
+            _t('未在 QQ 开放平台报备消息域名时可选择省略链接，发送至官方 QQ Bot Webhook 服务的文章、友链和审核地址等 URL 将被移除。消息会按 UTF-8 安全截短到 1800 字节。')
         );
         $form->addInput($qqOfficialIncludeLinks);
 
-        $qqCommandSecret = new class(
-            'qq_agent_command_secret', null, '', _t('QQ 指令回调密钥'),
-            _t('与服务访问令牌使用不同的随机密钥，至少 32 位。独立服务填入相同的 ENHANCEMENT_COMMAND_SECRET。保存后不回显，留空保留。')
+        $qqMomentsEnabled = new class(
+            'qq_moments_enabled', array('1' => _t('启用'), '0' => _t('禁用')), '0',
+            _t('通过 QQ 发布瞬间'),
+            _t('通过官方 QQ Bot Webhook 服务接收发布指令。仅允许下方白名单中已绑定的私聊别名发布，群聊不支持；须保存启用后再发送“瞬间 内容”。')
+        ) extends Typecho_Widget_Helper_Form_Element_Radio {
+            protected function inputValue($value)
+            {
+                $settings = Enhancement_Plugin::runtimeSettings();
+                parent::inputValue(($settings->qq_notify_provider ?? '') === 'official' ? $value : '0');
+            }
+        };
+        $form->addInput($qqMomentsEnabled);
+
+        $qqMomentsSecret = new class(
+            'qq_moments_secret', null, '', _t('QQ 瞬间回调密钥'),
+            _t('填写独立的 32 至 1024 位非空白 ASCII 密钥，并在官方 QQ Bot 服务设置相同的 ENHANCEMENT_COMMAND_SECRET；须与 BOT_API_TOKEN 不同。保存后不回显，留空保留已保存密钥。')
         ) extends Typecho_Widget_Helper_Form_Element_Password {
             protected function inputValue($value)
             {
@@ -579,28 +589,28 @@ class Enhancement_ConfigFormHelper
                 $this->input->removeAttribute('value');
             }
         };
-        $qqCommandSecret->input->setAttribute('autocomplete', 'new-password');
-        $form->addInput($qqCommandSecret);
-        $qqCommands = new class(
-            'qq_agent_commands', array('1' => _t('启用'), '0' => _t('关闭')), '0',
-            _t('允许 QQ 侧管理博客'),
-            _t('独立 QQ 通道使用固定指令，无需技能或模型。支持评论查询、审核、回复和友链审核；只接受签名且来自白名单用户的指令。')
-        ) extends Typecho_Widget_Helper_Form_Element_Radio {
-            protected function inputValue($value)
-            {
-                $settings = Enhancement_Plugin::runtimeSettings();
-                parent::inputValue(Enhancement_QqCommandSettingsHelper::commandsSupported($settings) ? $value : '0');
-            }
-        };
-        $form->addInput($qqCommands);
+        $qqMomentsSecret->input->setAttribute('autocomplete', 'new-password');
+        $form->addInput($qqMomentsSecret);
+
         $form->addInput(new Typecho_Widget_Helper_Form_Element_Textarea(
-            'qq_agent_allowed_senders', null, '', _t('允许 QQ 指令的用户 OpenID'),
-            _t('每行一个站长 QQ 用户 OpenID，最多 20 个，不支持通配符。独立服务还需配置 QQ_ALLOWED_USERS，群指令另配 QQ_ALLOWED_GROUPS。')
+            'qq_moments_targets', null, '', _t('QQ 瞬间发布私聊别名'),
+            _t('每行一个已在官方 QQ Bot 服务绑定的私聊别名，允许 1 至 20 个；仅支持 1 至 64 位英文字母、数字、下划线和连字符。此白名单独立于通知接收别名，不能填写 QQ 号、群号或用户 OpenID。')
         ));
-        $form->addInput(new Typecho_Widget_Helper_Form_Element_Text(
-            'qq_agent_admin_uid', null, '1', _t('QQ 指令执行身份 UID'),
-            _t('填写 Typecho 管理员的数字 UID。每次指令都会检查该账号仍属于 administrator；回复以该账号署名。')
-        ));
+        $options = Typecho_Widget::widget('Widget_Options');
+        $qqMomentsCallback = Typecho_Common::url('/action/enhancement-edit?do=qq-moments-webhook', $options->index);
+        $qqMomentsCallbackRow = new Typecho_Widget_Helper_Form_Element_Fake('qq_moments_callback', null);
+        $qqMomentsCallbackRow->setAttribute('class', 'typecho-option enhancement-option-no-bullet');
+        $qqMomentsCallbackRow->input->setAttribute('type', 'hidden');
+        $qqMomentsCallbackRow->description(
+            '<label for="enhancement-qq-moments-webhook-url">QQ 瞬间回调地址</label>'
+            . '<input id="enhancement-qq-moments-webhook-url" type="text" readonly spellcheck="false" style="width:100%;margin:8px 0" value="' . htmlspecialchars($qqMomentsCallback, ENT_QUOTES, 'UTF-8') . '">'
+            . '<p>先在官方 QQ Bot 服务中绑定私聊别名，填入上方白名单并启用“通过 QQ 发布瞬间”；将回调地址填入服务的 <code>ENHANCEMENT_WEBHOOK_URL</code>，回调密钥填入 <code>ENHANCEMENT_COMMAND_SECRET</code>。回调地址须可由 Bot 服务访问；公网连接使用 HTTPS，同机或内网可使用 HTTP。</p>'
+        );
+        if (isset($qqMomentsCallbackRow->container)) {
+            $qqMomentsCallbackRow->container->setAttribute('style', 'list-style:none;margin:0;padding:0;');
+        }
+        $form->addInput($qqMomentsCallbackRow);
+
         $qqTestNotifyUrl = Helper::security()->getIndex('/action/enhancement-edit?do=qq-test-notify');
         $qqActionRow = new Typecho_Widget_Helper_Form_Element_Fake('qq_action_row', null);
         $qqActionRow->setAttribute('class', 'typecho-option enhancement-option-no-bullet');
@@ -627,7 +637,7 @@ class Enhancement_ConfigFormHelper
             . '<a class="btn enhancement-action-btn" href="' . htmlspecialchars($qqQueueRetryUrl, ENT_QUOTES, 'UTF-8') . '">' . _t('重试失败队列') . '</a>'
             . '<a class="btn enhancement-action-btn" href="' . htmlspecialchars($qqQueueClearUrl, ENT_QUOTES, 'UTF-8') . '" onclick="return window.confirm(\'确定要清空QQ通知队列吗？\');">' . _t('清空QQ队列') . '</a>'
             . '<span class="enhancement-action-note">' . _t(
-                '本地队列：待投递 %d / 失败 %d / 已投递 %d / 总计 %d（官方模式已投递表示服务已接受）',
+                '本地队列：待投递 %d / 失败 %d / 已投递 %d / 总计 %d（已投递表示官方 QQ Bot Webhook 服务已接受）',
                 intval($qqQueueStats['pending']),
                 intval($qqQueueStats['failed']),
                 intval($qqQueueStats['success']),

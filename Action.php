@@ -1743,17 +1743,17 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
     {
         try {
             $table = $this->prefix . 'qq_notify_queue';
-            $affected = $this->db->query(
-                $this->db->update($table)
-                    ->rows(array(
-                        'status' => 0,
-                        'retries' => 0,
-                        'updated' => time()
-                    ))
-                    ->where('status = ?', 2)
-                    ->where('SUBSTR(message, 1, ?) = ?',
-                        strlen(Enhancement_QqNotifyHelper::OFFICIAL_QUEUE_PREFIX), Enhancement_QqNotifyHelper::OFFICIAL_QUEUE_PREFIX)
-            );
+            $rows = $this->db->fetchAll($this->db->select('qid', 'message')->from($table)->where('status = ?', 2)
+                ->where('SUBSTR(message, 1, ?) = ?',
+                    strlen(Enhancement_QqNotifyHelper::OFFICIAL_QUEUE_PREFIX), Enhancement_QqNotifyHelper::OFFICIAL_QUEUE_PREFIX));
+            $affected = 0;
+            foreach ($rows as $row) {
+                $envelope = json_decode(substr((string)$row['message'], strlen(Enhancement_QqNotifyHelper::OFFICIAL_QUEUE_PREFIX)), true);
+                if (!is_array($envelope) || ($envelope['provider'] ?? '') !== 'official') { continue; }
+                $affected += (int)$this->db->query($this->db->update($table)
+                    ->rows(array('status' => 0, 'retries' => 0, 'updated' => time()))
+                    ->where('qid = ?', $row['qid'])->where('status = ?', 2));
+            }
 
             $this->qqQueueResponse(true, _t('已将 %d 条失败记录标记为待重试', intval($affected)), 200);
         } catch (Exception $e) {
@@ -1786,12 +1786,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         );
         $result = Enhancement_QqNotifyHelper::sendTestMessage($message, $settings);
         if (!empty($result['success'])) {
-            $message = isset($result['provider']) && in_array($result['provider'], array('official', 'standalone'), true)
-                ? _t('测试通知已进入 Bot 服务队列，通知 ID：%s。可在服务中查询投递结果；接收方需允许主动消息且满足 QQ 官方额度。', $result['id'])
-                : _t('QQ通知测试发送成功，请检查 QQ 是否收到消息。');
-            if (($result['provider'] ?? '') === 'direct') {
-                $message = _t('QQ 官方接口已接受通知，消息 ID：%s。请检查接收端。', $result['id']);
-            }
+            $message = _t('测试通知已进入 Bot 服务队列，通知 ID：%s。可在服务中查询投递结果；接收方需允许主动消息且满足 QQ 官方额度。', $result['id']);
             $this->testActionResponse(true, $message, 200);
             return;
         }
@@ -1808,15 +1803,6 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         }
         try {
             switch ((string)$this->request->get('do')) {
-                case 'qq-binding-start':
-                    $data = Enhancement_QqDirectNotifyHelper::startBinding();
-                    break;
-                case 'qq-binding-cancel':
-                    $data = Enhancement_QqDirectNotifyHelper::cancelBinding();
-                    break;
-                case 'qq-binding-status':
-                    $data = Enhancement_QqDirectNotifyHelper::status();
-                    break;
                 case 'weixin-login-start':
                     $data = Enhancement_WeixinNotifyHelper::startLogin();
                     break;
@@ -1857,6 +1843,68 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $this->response->throwJson(array('success' => true, 'message' => (string)($data['message'] ?? _t('状态已更新')), 'data' => $data));
     }
 
+    /** QQ signatures are verified by the official service; this hop has its own shared secret. */
+    private function qqMomentsWebhook()
+    {
+        ini_set('display_errors', '0');
+        $this->response->setHeader('Cache-Control', 'no-store');
+        if (!$this->request->isPost()) {
+            $this->response->setStatus(405);
+            $this->response->setHeader('Allow', 'POST');
+            $this->response->throwJson(array('ok' => false, 'error' => 'method_not_allowed'));
+            return;
+        }
+        $config = Enhancement_Plugin::runtimeSettings();
+        $secret = $config->qq_moments_secret ?? '';
+        $timestamp = $this->request->getHeader('X-Enhancement-Timestamp', '');
+        $signature = $this->request->getHeader('X-Enhancement-Signature', '');
+        $raw = file_get_contents('php://input', false, null, 0, 65537);
+        if (!is_string($raw) || strlen($raw) > 65536) {
+            $this->response->setStatus(413);
+            $this->response->throwJson(array('ok' => false, 'error' => 'payload_too_large'));
+            return;
+        }
+        if (!is_string($secret) || !preg_match('/\A[\x21-\x7e]{32,1024}\z/D', $secret)
+            || !is_string($timestamp) || !preg_match('/\A[0-9]{1,12}\z/D', $timestamp)
+            || abs(time() - (int)$timestamp) > 300 || !is_string($signature)
+            || !preg_match('/\A[a-f0-9]{64}\z/D', $signature)
+            || !hash_equals(hash_hmac('sha256', $timestamp . "\n" . $raw, $secret), $signature)) {
+            $this->response->setStatus(401);
+            $this->response->throwJson(array('ok' => false, 'error' => 'invalid_signature'));
+            return;
+        }
+        $payload = json_decode($raw, true, 16);
+        $message = is_array($payload) ? ($payload['message'] ?? null) : null;
+        $valid = ($payload['version'] ?? null) === 1 && is_array($message)
+            && is_string($message['id'] ?? null) && preg_match('/\A[\x21-\x7e]{1,256}\z/D', $message['id'])
+            && is_string($message['account'] ?? null) && preg_match('/\A[0-9]{1,32}\z/D', $message['account'])
+            && is_string($message['sender'] ?? null) && preg_match('/\A[A-Za-z0-9_-]{1,128}\z/D', $message['sender'])
+            && ($message['conversation'] ?? null) === $message['sender'] && ($message['conversation_type'] ?? null) === 'private'
+            && is_int($message['timestamp'] ?? null) && $message['timestamp'] > 0
+            && is_string($message['text'] ?? null) && strlen($message['text']) <= 20000
+            && is_array($message['aliases'] ?? null) && count($message['aliases']) <= 100
+            && array_values($message['aliases']) === $message['aliases']
+            && (!isset($message['attachments']) || is_array($message['attachments']));
+        if ($valid) {
+            foreach ($message['aliases'] as $alias) {
+                if (!is_string($alias) || !preg_match('/\A[A-Za-z0-9_-]{1,64}\z/D', $alias)) { $valid = false; break; }
+            }
+        }
+        if (!$valid) {
+            $this->response->setStatus(400);
+            $this->response->throwJson(array('ok' => false, 'error' => 'invalid_message'));
+            return;
+        }
+        try {
+            $result = Enhancement_BotMomentsHelper::handle('qq', $message);
+        } catch (Throwable $exception) {
+            $this->response->setStatus(503);
+            $this->response->throwJson(array('ok' => false, 'error' => 'processing_failed'));
+            return;
+        }
+        $this->response->throwJson(array('ok' => true, 'result' => $result, 'reply' => (string)($result['message'] ?? '')));
+    }
+
     private function botMomentsCron()
     {
         ini_set('display_errors', '0');
@@ -1893,23 +1941,6 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         } finally {
             while (ob_get_level() > $bufferLevel) { ob_end_clean(); }
         }
-    }
-
-    public function qqOfficialWebhook()
-    {
-        if (strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? '')) !== 'POST') {
-            $this->response->setStatus(405);
-            $this->response->throwJson(array('op' => 12, 'd' => 1));
-            return;
-        }
-        $headers = array();
-        foreach (array('X-Bot-Appid', 'X-Signature-Timestamp', 'X-Signature-Ed25519') as $header) {
-            $headers[$header] = (string)$this->request->getHeader($header, '');
-        }
-        $body = file_get_contents('php://input', false, null, 0, 65537);
-        $result = Enhancement_QqDirectNotifyHelper::webhook(is_string($body) ? $body : '', $headers);
-        $this->response->setStatus($result['status']);
-        $this->response->throwJson($result['body']);
     }
 
     public function sendSmtpTestMail()
@@ -3308,18 +3339,13 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $this->prefix = $this->db->getPrefix();
         $this->options = Typecho_Widget::widget('Widget_Options');
 
+        if ($this->request->is('do=qq-moments-webhook')) {
+            $this->qqMomentsWebhook();
+            return;
+        }
+
         if ($this->request->is('do=bot-moments-cron')) {
             $this->botMomentsCron();
-            return;
-        }
-
-        if ($this->request->is('do=qq-webhook')) {
-            $this->qqOfficialWebhook();
-            return;
-        }
-
-        if ($this->request->is('do=qq-agent-command')) {
-            Enhancement_QqAgentCommandHelper::handle($this);
             return;
         }
 
@@ -3335,9 +3361,6 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             'restore-settings' => 'restorePluginSettings',
             'delete-backup' => 'deletePluginSettingsBackup',
             'qq-test-notify' => 'sendQqTestNotify',
-            'qq-binding-start' => 'notificationChannelAction',
-            'qq-binding-cancel' => 'notificationChannelAction',
-            'qq-binding-status' => 'notificationChannelAction',
             'weixin-login-start' => 'notificationChannelAction',
             'weixin-login-poll' => 'notificationChannelAction',
             'weixin-sync' => 'notificationChannelAction',

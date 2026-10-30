@@ -52,10 +52,10 @@ class Enhancement_ConfigStorageHelper
             Enhancement_SettingsHelper::encodePluginConfigValue(array())
         );
         $current = Enhancement_SettingsHelper::decodePluginConfigValue($currentValue);
-        $current = self::normalizeSettingsForStorage($current);
+        $current = Enhancement_QqNotifyHelper::normalizeSettings(self::normalizeSettingsForStorage($current));
 
         // The password input stays empty in HTML; an empty save keeps its secret.
-        foreach (array('qq_app_secret', 'qq_official_token', 'qq_agent_command_secret') as $secretKey) {
+        foreach (array('qq_official_token', 'qq_moments_secret') as $secretKey) {
             if (isset($incoming[$secretKey]) && $incoming[$secretKey] === '') {
                 unset($incoming[$secretKey]);
             }

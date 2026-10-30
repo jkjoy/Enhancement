@@ -102,19 +102,6 @@ function qqAction(array $session, string $action, array $values = [], string $me
     return fixtureRequest($base, $path, $method, http_build_query($values),
         array_merge($session['headers'], ['Content-Type: application/x-www-form-urlencoded']));
 }
-function qqSignedWebhook(array $event, string $secret, string $appId): array
-{
-    global $base;
-    $seed = $secret;
-    while (strlen($seed) < 32) { $seed .= $secret; }
-    $keypair = sodium_crypto_sign_seed_keypair(substr($seed, 0, 32));
-    $body = json_encode($event, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    $timestamp = (string)time();
-    $signature = bin2hex(sodium_crypto_sign_detached($timestamp . $body, sodium_crypto_sign_secretkey($keypair)));
-    return fixtureRequest($base, '/action/enhancement-edit?do=qq-webhook', 'POST', $body,
-        ['Content-Type: application/json', 'X-Bot-Appid: ' . $appId, 'X-Signature-Timestamp: ' . $timestamp, 'X-Signature-Ed25519: ' . $signature]);
-}
-
 if (defined('ENHANCEMENT_QQ_FIXTURE_LIBRARY') && ENHANCEMENT_QQ_FIXTURE_LIBRARY === true) { return; }
 
 try {
@@ -174,13 +161,21 @@ try {
         && !isset($migrated['qq']) && !isset($migrated['qqboturl']) && !isset($migrated['qq_async_queue']),
         'Restoring old settings cannot revive obsolete transport', $response);
 
-    // Upgrade both retired providers with their complete historical configuration.
-    $retiredSettings = ['qq_agent_url' => $botBase . '/retired-api', 'qq_agent_token' => 'retired-secret-' . str_repeat('z', 32),
+    // Retired providers cannot send even when a complete service configuration is also stored.
+    $retiredSettings = ['qq' => '87654321', 'qqboturl' => $botBase . '/retired-legacy', 'qq_async_queue' => '1',
+        'qq_agent_url' => $botBase . '/retired-api', 'qq_agent_token' => 'retired-secret-' . str_repeat('z', 32),
         'qq_agent_target' => 'qqbot:c2c:retired-owner', 'qq_agent_account' => 'retired-account', 'qq_agent_include_links' => '1',
-        'qq_agent_commands' => '1', 'qq_agent_command_secret' => 'retained-command-secret-' . str_repeat('y', 32),
-        'qq_agent_allowed_senders' => 'retired-owner', 'qq_agent_admin_uid' => '1', 'enable_comment_by_qq' => '1'];
-    $retiredKeys = ['qq_agent_url', 'qq_agent_token', 'qq_agent_target', 'qq_agent_account', 'qq_agent_include_links'];
-    foreach (['openclaw', 'hermes'] as $provider) {
+        'qq_agent_commands' => '1', 'qq_agent_command_secret' => 'retired-command-secret-' . str_repeat('y', 32),
+        'qq_agent_allowed_senders' => 'retired-owner', 'qq_agent_admin_uid' => '1',
+        'qq_app_id' => '987654321', 'qq_app_secret' => 'retired-direct-app-secret', 'qq_target_type' => 'c2c',
+        'qq_target_id' => 'retired-direct-owner', 'qq_direct_include_links' => '1',
+        'qq_moments_enabled' => '1', 'qq_moments_allowed_senders' => 'retired-moment-owner'];
+    $retiredKeys = array_values(array_diff(array_keys($retiredSettings), ['qq_moments_enabled']));
+    $retiredSettings += ['qq_official_url' => $botBase . '/retired-official',
+        'qq_official_token' => 'retired-official-token-' . str_repeat('w', 32), 'qq_official_targets' => 'owner',
+        'qq_official_include_links' => '1', 'enable_comment_by_qq' => '1', 'enable_link_submit_by_qq' => '1'];
+    $sharedServiceKeys = ['qq_official_url', 'qq_official_token', 'qq_official_targets', 'qq_official_include_links'];
+    foreach (['legacy', 'openclaw', 'hermes', 'direct', 'standalone'] as $provider) {
         $historical = $retiredSettings + ['qq_notify_provider' => $provider];
         $pdo->prepare("UPDATE typecho_options SET value=? WHERE name='plugin:Enhancement' AND user=0")
             ->execute([serialize($historical)]);
@@ -195,28 +190,67 @@ try {
         $form = $response['body'];
         qqCheck($response['status'] === 200 && qqSettings() === $historical,
             'Historical provider fields bind safely without changing stored settings: ' . $provider, $response['status']);
-        qqCheck(preg_match('/<input[^>]*id="qq_notify_provider-none"[^>]*checked=/', $form) === 1
-            && preg_match('/<input[^>]*id="qq_agent_commands-0"[^>]*checked=/', $form) === 1,
-            'Retired provider form selects disabled notification and management: ' . $provider);
-        qqCheck(strpos($form, 'value="openclaw"') === false && strpos($form, 'value="hermes"') === false,
-            'Real settings form no longer offers either retired provider');
+        qqCheck(preg_match('/<input[^>]*id="qq_notify_provider-none"[^>]*checked=/', $form) === 1,
+            'Retired provider form selects disabled notification without enabling Webhook: ' . $provider);
+        qqCheck(preg_match('/<input[^>]*id="qq_moments_enabled-0"[^>]*checked=/', $form) === 1,
+            'Retired provider form disables historical QQ moments activation: ' . $provider);
+        qqCheck(preg_match('/id="qq_notify_provider-(?:legacy|openclaw|hermes|direct|standalone)"/', $form) === 0,
+            'Real settings form no longer offers any retired provider');
         foreach ($retiredKeys as $key) {
             qqCheck(strpos($form, 'name="' . $key . '"') === false, 'Removed transport field cannot render or submit: ' . $key);
         }
         qqCheck(strpos($form, $historical['qq_agent_url']) === false && strpos($form, $historical['qq_agent_token']) === false
             && strpos($form, $historical['qq_agent_target']) === false && strpos($form, $historical['qq_agent_account']) === false
-            && strpos($form, $historical['qq_agent_command_secret']) === false, 'Historical transport values and secrets never appear in HTML');
+            && strpos($form, $historical['qq_agent_command_secret']) === false
+            && strpos($form, $historical['qq_app_secret']) === false && strpos($form, $historical['qq_target_id']) === false
+            && strpos($form, $historical['qq_moments_allowed_senders']) === false,
+            'Historical transport values and secrets never appear in HTML');
+        if ($provider === 'standalone') {
+            $newOfficial = ['qq_notify_provider' => 'official', 'qq_official_url' => $botBase . '/fresh-official',
+                'qq_official_targets' => 'fresh-owner', 'qq_official_token' => '', 'qq_official_include_links' => '0'];
+            $response = qqConfig($newOfficial);
+            qqCheck($response['status'] === 400 && qqSettings() === $historical,
+                'Switching standalone to official with a blank password cannot inherit its retired token', $response);
+            $newOfficial['qq_official_token'] = 'fresh-official-token-' . str_repeat('n', 32);
+            $response = qqConfig($newOfficial);
+            $switched = qqSettings();
+            qqCheck($response['status'] === 200 && $switched['qq_notify_provider'] === 'official'
+                && $switched['qq_official_token'] === $newOfficial['qq_official_token']
+                && $switched['qq_official_url'] === $newOfficial['qq_official_url']
+                && $switched['qq_official_targets'] === $newOfficial['qq_official_targets']
+                && $switched['qq_official_include_links'] === '0'
+                && array_intersect($retiredKeys, array_keys($switched)) === [],
+                'Switching standalone to official requires a newly supplied official token and settings', $response);
+            $pdo->prepare("UPDATE typecho_options SET value=? WHERE name='plugin:Enhancement' AND user=0")
+                ->execute([serialize($historical)]);
+        }
         $response = qqConfig(['enable_link_submit_by_qq' => '0']);
         $migrated = qqSettings();
-        qqCheck($response['status'] === 200 && $migrated['qq_notify_provider'] === 'none' && $migrated['qq_agent_commands'] === '0'
-            && array_intersect($retiredKeys, array_keys($migrated)) === []
-            && $migrated['qq_agent_command_secret'] === $historical['qq_agent_command_secret'],
-            'Unrelated save disables retired provider and drops only obsolete transport settings: ' . $provider, $response);
+        qqCheck($response['status'] === 200 && $migrated['qq_notify_provider'] === 'none'
+            && array_intersect($retiredKeys, array_keys($migrated)) === [] && ($migrated['qq_moments_enabled'] ?? '0') === '0',
+            'Unrelated save disables retired provider and drops all obsolete transport and management settings: ' . $provider, $response);
+        if ($provider === 'standalone') {
+            qqCheck(array_intersect($sharedServiceKeys, array_keys($migrated)) === [],
+                'Unrelated save removes standalone URL, token, aliases and link setting');
+        }
         $response = qqCall('/restore', $historical);
         $migrated = qqSettings();
-        qqCheck($response['status'] === 200 && $migrated['qq_notify_provider'] === 'none' && $migrated['qq_agent_commands'] === '0'
-            && array_intersect($retiredKeys, array_keys($migrated)) === [],
+        qqCheck($response['status'] === 200 && $migrated['qq_notify_provider'] === 'none'
+            && array_intersect($retiredKeys, array_keys($migrated)) === [] && ($migrated['qq_moments_enabled'] ?? '0') === '0',
             'Restoring old provider backup cannot revive transport or management: ' . $provider, $response);
+        if ($provider === 'standalone') {
+            qqCheck(array_intersect($sharedServiceKeys, array_keys($migrated)) === [],
+                'Restoring standalone backup removes its shared service URL, token, aliases and link setting');
+        }
+        $response = qqConfig($historical);
+        $migrated = qqSettings();
+        qqCheck($response['status'] === 200 && $migrated['qq_notify_provider'] === 'none'
+            && array_intersect($retiredKeys, array_keys($migrated)) === [] && ($migrated['qq_moments_enabled'] ?? '0') === '0',
+            'Explicit save of retired provider cannot revive transport or management: ' . $provider, $response);
+        if ($provider === 'standalone') {
+            qqCheck(array_intersect($sharedServiceKeys, array_keys($migrated)) === [],
+                'Explicit save of standalone configuration removes its shared service URL, token, aliases and link setting');
+        }
     }
     qqConfig(['enable_comment_by_qq' => '0', 'enable_link_submit_by_qq' => '0']);
     $before = count(qqRequests());
@@ -299,28 +333,36 @@ try {
     qqCheck((int)qqQueue()[0]['status'] === 1, 'Restoring service URL permits safe retry');
     qqClearQueue();
 
-    // Retired Agent envelopes cannot use any credentials or block supported jobs.
+    // Retired envelopes cannot use credentials or block official jobs sharing their prefix.
     foreach (['openclaw', 'hermes'] as $provider) {
         fixtureInsert($pdo, 'qq_notify_queue', ['message' => '__ENHANCEMENT_QQ_AGENT_V1__:' . json_encode([
             'provider' => $provider, 'url' => $botBase . '/retired-api', 'message' => 'Retired notification',
             'target' => 'qqbot:c2c:retired-owner', 'requestId' => str_repeat('a', 40),
         ]), 'status' => 0, 'retries' => 0]);
     }
+    fixtureInsert($pdo, 'qq_notify_queue', ['message' => '__ENHANCEMENT_QQ_OFFICIAL_V1__:' . json_encode([
+        'provider' => 'standalone', 'serviceURL' => $official['qq_official_url'], 'message' => 'Retired standalone notification',
+        'targets' => ['owner'], 'requestId' => str_repeat('b', 40),
+    ]), 'status' => 0, 'retries' => 0]);
     qqRespond(503, ['ok' => false]);
     qqCall('/dispatch', ['message' => 'Supported notification after retired records']);
     $before = count(qqRequests());
     qqRespond();
     qqCall('/process');
     $rows = qqQueue();
-    qqCheck(count($rows) === 3 && (int)$rows[0]['status'] === 2 && (int)$rows[1]['status'] === 2
-        && (int)$rows[0]['retries'] === 5 && (int)$rows[1]['retries'] === 5
-        && strpos($rows[0]['last_error'], '已移除') !== false && strpos($rows[1]['last_error'], '已移除') !== false,
-        'Both retired provider queue records are retained with a terminal removal reason', $rows);
+    qqCheck(count($rows) === 4, 'Retired and official queue records remain visible', $rows);
+    foreach (array_slice($rows, 0, 3) as $row) {
+        qqCheck((int)$row['status'] === 2 && (int)$row['retries'] === 5 && strpos($row['last_error'], '已移除') !== false,
+            'Retired provider queue record is retained with a terminal removal reason', $row);
+    }
     qqCheck(count(qqRequests()) === $before + 1 && qqLastRequest()['path'] === '/official/api/notifications'
-        && (int)$rows[2]['status'] === 1, 'Retired records never send or block supported notification in the same request');
+        && (int)$rows[3]['status'] === 1, 'Retired standalone with the official prefix never sends or blocks official notification');
+    $pdo->exec('UPDATE typecho_qq_notify_queue SET status=2 WHERE qid=' . (int)$rows[3]['qid']);
     $response = fixtureRequest($base, '/retry', 'POST', [], ['X-Requested-With: XMLHttpRequest']);
-    qqCheck(($response['json']['success'] ?? false) === true && (int)qqQueue()[0]['status'] === 2
-        && (int)qqQueue()[1]['status'] === 2, 'Manual retry cannot revive retired Agent records');
+    $rows = qqQueue();
+    qqCheck(($response['json']['success'] ?? false) === true && (int)$rows[0]['status'] === 2
+        && (int)$rows[1]['status'] === 2 && (int)$rows[2]['status'] === 2 && (int)$rows[2]['retries'] === 5
+        && (int)$rows[3]['status'] === 0, 'Manual retry only revives official records and skips standalone sharing its prefix');
     qqClearQueue();
 
     // Historical raw jobs remain visible, but cannot send or block modern jobs.
@@ -388,12 +430,74 @@ try {
     $response = qqConfig(['qq_official_token' => 'short']);
     qqCheck($response['status'] === 400 && qqSettings() === $beforeSettings, 'Invalid saved configuration leaves previous settings intact', $response);
 
+    $beforeMoments = qqSettings();
+    $moments = ['qq_moments_enabled' => '1', 'qq_moments_secret' => 'fixture-moments-secret-' . str_repeat('m', 32),
+        'qq_moments_targets' => "owner\nwriter"];
+    foreach ([
+        ['qq_moments_enabled' => '2'], ['qq_moments_enabled' => ['1']], ['qq_notify_provider' => 'none'],
+        ['qq_moments_secret' => ''], ['qq_moments_secret' => str_repeat('s', 31)],
+        ['qq_moments_secret' => str_repeat('s', 1025)], ['qq_moments_secret' => str_repeat('s', 32) . ' '],
+        ['qq_moments_secret' => str_repeat('s', 32) . "\r\n"], ['qq_moments_secret' => str_repeat('s', 32) . '中'],
+        ['qq_moments_secret' => $newToken], ['qq_moments_secret' => ['invalid']],
+        ['qq_moments_targets' => ''], ['qq_moments_targets' => 'bad alias'], ['qq_moments_targets' => str_repeat('a', 65)],
+        ['qq_moments_targets' => '私聊别名'], ['qq_moments_targets' => "owner\n\nwriter"],
+        ['qq_moments_targets' => implode("\n", array_map(static function ($i) { return 'writer' . $i; }, range(1, 21)))],
+        ['qq_moments_targets' => ['invalid']],
+    ] as $invalid) {
+        $response = qqCall('/validate', array_replace($beforeMoments, $moments, $invalid));
+        qqCheck($response['status'] === 400, 'Invalid QQ moments setting rejected: ' . implode(',', array_keys($invalid)), $response);
+    }
+    $response = qqCall('/validate', ['qq_notify_provider' => 'none', 'qq_moments_enabled' => '0',
+        'qq_moments_secret' => '', 'qq_moments_targets' => '']);
+    qqCheck($response['status'] === 200, 'Disabled QQ moments requires no transport, secret or allowed private aliases', $response);
+    foreach ([str_repeat('s', 32), str_repeat('s', 1024)] as $boundarySecret) {
+        $response = qqCall('/validate', array_replace($beforeMoments, $moments, ['qq_moments_secret' => $boundarySecret,
+            'qq_moments_targets' => str_repeat('a', 64) . "\n" . implode("\n", array_map(static function ($i) { return 'writer' . $i; }, range(1, 19)))]));
+        qqCheck($response['status'] === 200, 'QQ moments accepts valid secret length and 20 allowed alias boundaries', $response);
+    }
+    $response = qqConfig(['qq_moments_enabled' => '1']);
+    qqCheck($response['status'] === 400 && qqSettings() === $beforeMoments,
+        'Enabling QQ moments without callback credentials leaves saved settings intact', $response);
+    $response = qqConfig($moments);
+    qqCheck($response['status'] === 200 && (qqSettings()['qq_moments_enabled'] ?? '') === '1'
+        && (qqSettings()['qq_moments_secret'] ?? '') === $moments['qq_moments_secret']
+        && (qqSettings()['qq_moments_targets'] ?? '') === $moments['qq_moments_targets'],
+        'Official Webhook QQ moments settings save with a dedicated secret and private alias allowlist', $response);
+    $response = qqConfig(['qq_moments_secret' => '']);
+    qqCheck($response['status'] === 200 && (qqSettings()['qq_moments_secret'] ?? '') === $moments['qq_moments_secret'],
+        'Blank QQ moments password preserves the saved callback secret', $response);
+    $form = fixtureRequest($base, '/form');
+    qqCheck($form['status'] === 200 && strpos($form['body'], 'name="qq_moments_secret"') !== false
+        && strpos($form['body'], 'name="qq_moments_targets"') !== false
+        && preg_match('/<input[^>]*id="qq_moments_enabled-1"[^>]*checked=/', $form['body']) === 1
+        && strpos($form['body'], $moments['qq_moments_secret']) === false
+        && strpos($form['body'], $newToken) === false,
+        'QQ moments form renders enabled private alias settings without either saved secret');
+    if (preg_match('/id="enhancement-qq-moments-webhook-url"[^>]*value="([^"]+)"/', $form['body'], $matches)) {
+        qqCheck(html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8') === $base . '/action/enhancement-edit?do=qq-moments-webhook',
+            'QQ moments form exposes the registered public callback without browser CSRF token');
+    } else {
+        qqCheck(false, 'QQ moments form exposes a public callback URL');
+    }
+    $pdo->exec("UPDATE typecho_options SET value='0' WHERE name='rewrite' AND user=0");
+    $form = fixtureRequest($base, '/form');
+    qqCheck($form['status'] === 200 && strpos($form['body'], $base . '/index.php/action/enhancement-edit?do=qq-moments-webhook') !== false,
+        'QQ moments callback includes index.php when URL rewriting is disabled');
+    $pdo->exec("UPDATE typecho_options SET value='1' WHERE name='rewrite' AND user=0");
+    $replacementSecret = 'replacement-moments-secret-' . str_repeat('r', 32);
+    $response = qqConfig(['qq_moments_secret' => $replacementSecret]);
+    qqCheck($response['status'] === 200 && (qqSettings()['qq_moments_secret'] ?? '') === $replacementSecret,
+        'New QQ moments password replaces only the dedicated callback secret', $response);
+    $response = qqCall('/restore', $beforeMoments);
+    qqCheck($response['status'] === 200 && (qqSettings()['qq_moments_enabled'] ?? '0') === '0',
+        'QQ moments fixture restores its previous disabled settings before other channel tests', $response);
+
     $response = qqCall('/notify-format', ['message' => '<b>中文通知</b> https://example.test/post', 'include_links' => false]);
-    qqCheck(($response['json']['text'] ?? '') === '中文通知 [链接已省略]', 'Direct channel formatter strips HTML and optional links');
+    qqCheck(($response['json']['text'] ?? '') === '中文通知 [链接已省略]', 'Weixin formatter strips HTML and optional links');
     $response = qqCall('/notify-format', ['message' => str_repeat('测😀', 400), 'include_links' => true]);
     $formatted = (string)($response['json']['text'] ?? '');
     qqCheck(strlen($formatted) <= 1800 && preg_match('//u', $formatted) === 1 && substr($formatted, -3) === '…',
-        'Direct channel formatter truncates long Chinese and emoji messages without splitting UTF-8');
+        'Weixin formatter truncates long Chinese and emoji messages without splitting UTF-8');
 
     // New channels use shared private options without placing credentials in the public plugin form.
     $record = ['token' => 'fixture-private-state-token', 'nested' => ['中文', 'context']];
@@ -408,91 +512,38 @@ try {
     qqCheck((qqCall('/state', ['operation' => 'cas', 'expected' => $record, 'record' => ['used' => true]])['json']['changed'] ?? null) === false,
         'Consumed private state cannot be consumed a second time');
 
-    $directSecret = 'fixture-direct-app-secret';
-    $direct = ['qq_notify_provider' => 'direct', 'qq_app_id' => '123456789', 'qq_app_secret' => $directSecret,
-        'qq_target_type' => 'c2c', 'qq_target_id' => '', 'enable_comment_by_qq' => '0', 'enable_link_submit_by_qq' => '0'];
-    $response = qqConfig($direct + ['qq_direct_include_links' => '1']);
-    qqCheck($response['status'] === 200 && (qqSettings()['qq_notify_provider'] ?? '') === 'direct',
-        'Direct QQ credentials save before recipient binding while notification switches are disabled', $response);
-    $beforeSettings = qqSettings();
-    $response = qqConfig(['enable_comment_by_qq' => '1']);
-    qqCheck($response['status'] === 400 && qqSettings() === $beforeSettings, 'Direct QQ cannot be enabled without a recipient', $response);
-    qqConfig(['qq_app_secret' => '']);
-    qqCheck((qqSettings()['qq_app_secret'] ?? '') === $directSecret, 'Empty direct QQ password preserves AppSecret');
-
     $admin = qqSession(1);
     $contributor = qqSession(2);
     $guestForm = fixtureRequest($base, '/form');
-    if (preg_match('/data-qq-binding-start="([^"]+)"/', $guestForm['body'], $matches)) {
+    if (preg_match('/data-weixin-bind="([^"]+)"/', $guestForm['body'], $matches)) {
         $guestUrl = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
         $response = fixtureRequest($base, substr($guestUrl, strlen($base)), 'POST', '', ['Referer: ' . $base . '/form']);
-        qqCheck($response['status'] === 302 && (qqCall('/state', ['key' => 'qq_binding'])['json']['record'] ?? null) === [],
-            'Anonymous browser with a valid guest CSRF token still cannot start QQ binding', $response['status']);
+        qqCheck($response['status'] === 302 && (qqCall('/state', ['key' => 'weixin_recipient'])['json']['record'] ?? null) === [],
+            'Anonymous browser with a valid guest CSRF token still cannot bind Weixin recipient', $response['status']);
     } else {
-        qqCheck(false, 'Guest form provides a CSRF-protected binding URL');
+        qqCheck(false, 'Guest form provides a CSRF-protected Weixin binding URL');
     }
     $notificationActions = array_keys($admin['actions']);
+    qqCheck(count($notificationActions) === 7 && count(array_filter($notificationActions, static function ($action) {
+        return strpos($action, 'weixin-') === 0;
+    })) === count($notificationActions), 'Notification session only exposes Weixin actions');
     foreach ($notificationActions as $action) {
         $response = fixtureRequest($base, '/action/enhancement-edit?do=' . $action, 'POST', [], ['X-Requested-With: XMLHttpRequest']);
         qqCheck($response['status'] !== 200 && ($response['json']['success'] ?? false) !== true,
             'Anonymous requests cannot use notification action: ' . $action, $response['status']);
     }
-    foreach (['qq-binding-start', 'weixin-status', 'weixin-disconnect'] as $action) {
+    foreach (['weixin-bind', 'weixin-status', 'weixin-disconnect'] as $action) {
         $response = qqAction($contributor, $action);
         qqCheck($response['status'] === 403, 'Logged-in contributor cannot use administrator notification action: ' . $action, $response);
     }
-    $response = fixtureRequest($base, '/action/enhancement-edit?do=qq-binding-start', 'POST', '', $admin['headers']);
-    qqCheck($response['status'] !== 200, 'Administrator request without CSRF token cannot start a QQ binding', $response['status']);
-    $response = qqAction($admin, 'qq-binding-status', [], 'GET');
+    $response = fixtureRequest($base, '/action/enhancement-edit?do=weixin-bind', 'POST', '', $admin['headers']);
+    qqCheck($response['status'] !== 200, 'Administrator request without CSRF token cannot bind Weixin recipient', $response['status']);
+    $response = qqAction($admin, 'weixin-status', [], 'GET');
     qqCheck($response['status'] === 405, 'Notification status requires POST even with administrator and valid CSRF', $response);
-    $response = qqAction($admin, 'qq-binding-status');
+    $response = qqAction($admin, 'weixin-status');
     qqCheck($response['status'] === 200 && ($response['json']['success'] ?? false) === true
-        && ($response['json']['data']['configured'] ?? false) === true && ($response['json']['data']['target_id'] ?? null) === '',
-        'Authorized status action returns direct QQ configuration without secrets', $response);
-    qqCheck(strpos($response['body'], $directSecret) === false, 'Direct QQ status never returns AppSecret');
-
-    if (function_exists('sodium_crypto_sign_seed_keypair')) {
-        $response = qqAction($admin, 'qq-binding-start');
-        $code = (string)($response['json']['data']['code'] ?? '');
-        qqCheck($response['status'] === 200 && preg_match('/\A[A-F0-9]{16}\z/', $code) === 1,
-            'Authorized QQ binding action creates a one-time code', $response);
-        $response = fixtureRequest($base, '/action/enhancement-edit?do=qq-webhook', 'POST', ['op' => 13, 'd' => []]);
-        qqCheck($response['status'] === 403, 'QQ callback rejects unsigned anonymous requests', $response);
-        $response = qqSignedWebhook(['op' => 13, 'd' => ['plain_token' => 'fixture-challenge', 'event_ts' => (string)time()]], $directSecret, $direct['qq_app_id']);
-        qqCheck($response['status'] === 200 && ($response['json']['plain_token'] ?? '') === 'fixture-challenge'
-            && preg_match('/\A[a-f0-9]{128}\z/', $response['json']['signature'] ?? '') === 1,
-            'Valid signed QQ callback verifies without browser login or CSRF', $response);
-        $event = ['op' => 0, 't' => 'C2C_MESSAGE_CREATE', 'd' => ['content' => '绑定通知 ' . $code, 'author' => ['user_openid' => 'fixture-owner-openid']]];
-        $response = qqSignedWebhook($event, $directSecret, $direct['qq_app_id']);
-        qqCheck($response['status'] === 200 && (qqSettings()['qq_target_id'] ?? '') === 'fixture-owner-openid'
-            && (qqSettings()['qq_app_secret'] ?? '') === $directSecret && qqSettings()['enable_comment_by_qq'] === '0',
-            'Signed binding callback saves recipient without losing secret or enabling notifications', $response);
-        $event['d']['author']['user_openid'] = 'fixture-other-openid';
-        qqSignedWebhook($event, $directSecret, $direct['qq_app_id']);
-        qqCheck((qqSettings()['qq_target_id'] ?? '') === 'fixture-owner-openid', 'Used QQ binding code cannot replace the recipient');
-        $response = qqAction($admin, 'qq-binding-status');
-        qqCheck(empty($response['json']['data']['binding']) && ($response['json']['data']['target_id'] ?? '') === 'fixture-owner-openid'
-            && ($response['json']['data']['last_challenge_at'] ?? 0) > 0 && ($response['json']['data']['last_event_at'] ?? 0) > 0,
-            'Binding status exposes saved recipient and verified callback timestamps after consumption', $response);
-    } else {
-        qqConfig(['qq_target_id' => 'fixture-owner-openid']);
-    }
-    $response = qqConfig(['enable_comment_by_qq' => '1', 'qq_app_secret' => '']);
-    qqCheck($response['status'] === 200 && qqSettings()['qq_app_secret'] === $directSecret,
-        'Bound direct QQ can be enabled with the blank password form value', $response);
-
-    // Existing failed service jobs remain tied to their old provider after selecting direct QQ.
-    qqConfig(['qq_notify_provider' => 'official']);
-    qqClearQueue();
-    qqRespond(503, ['ok' => false]);
-    qqCall('/dispatch', ['message' => '服务通道遗留任务']);
-    $queued = qqQueue();
-    qqConfig(['qq_notify_provider' => 'direct']);
-    $before = count(qqRequests());
-    qqCall('/process');
-    qqCheck(count($queued) === 1 && count(qqRequests()) === $before && qqQueue()[0]['status'] === $queued[0]['status'],
-        'Switching to direct QQ cannot replay an old service queue through either provider');
-    qqClearQueue();
+        && ($response['json']['data']['logged_in'] ?? true) === false,
+        'Authorized Weixin status reports logged out before login', $response);
 
     $beforeSettings = qqSettings();
     $response = qqConfig(['enable_comment_by_weixin' => '1']);
@@ -517,25 +568,20 @@ try {
         && strpos($response['body'], $privateContext) === false, 'Weixin status exposes readiness without login token or context token', $response);
 
     $form = fixtureRequest($base, '/form');
-    qqCheck($form['status'] === 200 && preg_match('/<input[^>]*id="qq_notify_provider-direct"[^>]*checked=/', $form['body']) === 1,
-        'Real Typecho form keeps the saved direct QQ provider selected');
-    qqCheck($form['status'] === 200 && strpos($form['body'], 'name="qq_app_secret"') !== false
-        && strpos($form['body'], $directSecret) === false && strpos($form['body'], $privateToken) === false
+    qqCheck($form['status'] === 200 && preg_match('/<input[^>]*id="qq_notify_provider-official"[^>]*checked=/', $form['body']) === 1,
+        'Real Typecho form keeps the saved official Webhook provider selected');
+    qqCheck($form['status'] === 200 && strpos($form['body'], 'name="qq_official_token"') !== false
+        && strpos($form['body'], $newToken) === false && strpos($form['body'], $privateToken) === false
         && strpos($form['body'], $privateContext) === false, 'Real Typecho form renders both channels without saved or private credentials');
     qqCheck(substr_count($form['body'], '/assets/notifications.js') === 1 && substr_count($form['body'], '/assets/vendor/qrcode.js') === 1
-        && strpos($form['body'], 'name="enable_comment_by_weixin"') !== false && strpos($form['body'], 'id="enhancement-qq-binding"') !== false,
-        'Real settings form includes both connection controls and local QR scripts exactly once');
-    if (preg_match('/id="enhancement-qq-webhook-url"[^>]*value="([^"]+)"/', $form['body'], $matches)) {
-        qqCheck(strpos(html_entity_decode($matches[1]), 'do=qq-webhook') !== false && strpos(html_entity_decode($matches[1]), '&_=') === false,
-            'Public QQ webhook callback address has no browser CSRF token');
-    } else {
-        qqCheck(false, 'Public QQ webhook callback address is rendered');
-    }
+        && strpos($form['body'], 'name="enable_comment_by_weixin"') !== false && strpos($form['body'], 'id="enhancement-weixin"') !== false
+        && strpos($form['body'], 'id="enhancement-qq-binding"') === false && strpos($form['body'], 'do=qq-webhook') === false,
+        'Real settings form includes Weixin controls and local QR scripts once without removed QQ binding controls');
     qqCall('/state', ['key' => 'weixin_account', 'operation' => 'write', 'record' => ['token' => $privateToken,
         'account_id' => 'fixture-bot', 'owner_id' => 'fixture-owner', 'base_url' => 'https://ilinkai.weixin.qq.com', 'expired' => true]]);
-    $response = qqConfig(['qq_target_id' => 'fixture-owner-openid']);
+    $response = qqConfig(['qq_official_targets' => 'owner']);
     qqCheck($response['status'] === 200 && qqSettings()['enable_comment_by_weixin'] === '1',
-        'An expired Weixin login cannot block unrelated settings or a QQ recipient binding', $response);
+        'An expired Weixin login cannot block unrelated official Webhook settings', $response);
     qqConfig(['enable_link_submit_by_weixin' => '0']);
     $response = qqConfig(['enable_link_submit_by_weixin' => '1']);
     qqCheck($response['status'] === 400 && qqSettings()['enable_link_submit_by_weixin'] === '0',

@@ -1,8 +1,6 @@
 <?php
 
-require_once __DIR__ . '/QqCommandSettingsHelper.php';
 require_once __DIR__ . '/NotifyTransportHelper.php';
-require_once __DIR__ . '/QqDirectNotifyHelper.php';
 
 class Enhancement_QqNotifyHelper
 {
@@ -17,13 +15,19 @@ class Enhancement_QqNotifyHelper
 
     public static function normalizeSettings(array $settings): array
     {
+        if (($settings['qq_notify_provider'] ?? '') === 'standalone') {
+            unset($settings['qq_official_url'], $settings['qq_official_token'], $settings['qq_official_targets'], $settings['qq_official_include_links']);
+        }
         // Old installations and backups must never select a replacement transport automatically.
         unset($settings['qq'], $settings['qqboturl'], $settings['qq_async_queue'],
             $settings['qq_agent_url'], $settings['qq_agent_token'], $settings['qq_agent_target'],
-            $settings['qq_agent_account'], $settings['qq_agent_include_links']);
-        if (!isset($settings['qq_notify_provider']) || in_array($settings['qq_notify_provider'], array('legacy', 'openclaw', 'hermes'), true)) {
+            $settings['qq_agent_account'], $settings['qq_agent_include_links'],
+            $settings['qq_agent_commands'], $settings['qq_agent_command_secret'], $settings['qq_agent_allowed_senders'], $settings['qq_agent_admin_uid'],
+            $settings['qq_app_id'], $settings['qq_app_secret'], $settings['qq_target_type'], $settings['qq_target_id'],
+            $settings['qq_direct_include_links'], $settings['qq_moments_allowed_senders']);
+        if (!isset($settings['qq_notify_provider']) || in_array($settings['qq_notify_provider'], array('legacy', 'openclaw', 'hermes', 'direct', 'standalone'), true)) {
             $settings['qq_notify_provider'] = 'none';
-            $settings['qq_agent_commands'] = '0';
+            unset($settings['qq_moments_enabled']);
         }
         return $settings;
     }
@@ -31,30 +35,54 @@ class Enhancement_QqNotifyHelper
     public static function validateSettings(array $settings)
     {
         $settings = self::normalizeSettings($settings);
-        foreach (array('qq_notify_provider', 'qq_official_url', 'qq_official_token', 'qq_official_targets', 'qq_official_include_links') as $key) {
+        foreach (array('qq_notify_provider', 'qq_official_url', 'qq_official_token', 'qq_official_targets', 'qq_official_include_links',
+            'qq_moments_enabled', 'qq_moments_secret', 'qq_moments_targets') as $key) {
             if (isset($settings[$key]) && !is_scalar($settings[$key])) {
                 throw new Typecho_Widget_Exception(_t('QQ Bot 配置项必须是文本或开关值'), 400);
             }
         }
         $provider = (string)$settings['qq_notify_provider'];
-        if (!in_array($provider, array('none', 'direct', 'official', 'standalone'), true)) {
+        if (!in_array($provider, array('none', 'official'), true)) {
             throw new Typecho_Widget_Exception(_t('QQ 通知方式无效'), 400);
         }
-        Enhancement_QqCommandSettingsHelper::validateSettings($settings);
-        Enhancement_QqDirectNotifyHelper::validateSettings($settings);
-        if (!in_array($provider, array('official', 'standalone'), true)) {
+        if (isset($settings['qq_moments_enabled']) && !in_array((string)$settings['qq_moments_enabled'], array('0', '1'), true)) {
+            throw new Typecho_Widget_Exception(_t('QQ 发布瞬间的开关值无效'), 400);
+        }
+        $momentsEnabled = ($settings['qq_moments_enabled'] ?? '0') == '1';
+        if ($momentsEnabled && $provider !== 'official') {
+            throw new Typecho_Widget_Exception(_t('通过 QQ 发布瞬间需要先配置官方 QQ Bot 服务（Webhook）'), 400);
+        }
+        if ($provider !== 'official') {
             return;
         }
         $error = self::officialConfigurationError((object)$settings);
         if ($error !== '') {
             throw new Typecho_Widget_Exception($error, 400);
         }
+        if ($momentsEnabled) {
+            $secret = (string)($settings['qq_moments_secret'] ?? '');
+            if (!preg_match('/\A[\x21-\x7e]{32,1024}\z/D', $secret)) {
+                throw new Typecho_Widget_Exception(_t('QQ 瞬间回调密钥须为 32 至 1024 位非空白 ASCII 字符'), 400);
+            }
+            if (hash_equals((string)($settings['qq_official_token'] ?? ''), $secret)) {
+                throw new Typecho_Widget_Exception(_t('QQ 瞬间回调密钥须与官方 QQ Bot 服务访问令牌不同'), 400);
+            }
+            $value = trim((string)($settings['qq_moments_targets'] ?? ''));
+            $targets = $value === '' ? array() : array_values(array_unique(array_map('trim', preg_split('/\r\n|\r|\n/', $value))));
+            if (count($targets) < 1 || count($targets) > 20) {
+                throw new Typecho_Widget_Exception(_t('请填写 1 至 20 个允许发布瞬间的 QQ 私聊别名，每行一个'), 400);
+            }
+            foreach ($targets as $target) {
+                if (!preg_match('/\A[A-Za-z0-9_-]{1,64}\z/D', $target)) {
+                    throw new Typecho_Widget_Exception(_t('QQ 瞬间发布别名仅支持 1 至 64 位英文字母、数字、下划线和连字符'), 400);
+                }
+            }
+        }
     }
 
     private static function provider($settings): string
     {
-        return isset($settings->qq_notify_provider) && in_array($settings->qq_notify_provider, array('direct', 'official', 'standalone'), true)
-            ? $settings->qq_notify_provider : 'none';
+        return ($settings->qq_notify_provider ?? '') === 'official' ? 'official' : 'none';
     }
 
     private static function officialUrl($settings): string
@@ -97,17 +125,14 @@ class Enhancement_QqNotifyHelper
     public static function sendTestMessage(string $message, $settings = null): array
     {
         $settings = $settings === null ? self::runtimeSettings() : (object)$settings;
-        if (self::provider($settings) === 'direct') {
-            return array_merge(Enhancement_QqDirectNotifyHelper::send($message, $settings), array('provider' => 'direct'));
-        }
-        if (in_array(self::provider($settings), array('official', 'standalone'), true)) {
+        if (self::provider($settings) === 'official') {
             $error = self::officialConfigurationError($settings);
             if ($error !== '') {
                 return array('success' => false, 'error' => $error);
             }
             return self::sendOfficial(self::officialEnvelope($message, $settings), $settings);
         }
-        return array('success' => false, 'error' => _t('请先选择并配置官方 QQ 直连、独立 QQ 通道或官方 QQ Bot 服务'));
+        return array('success' => false, 'error' => _t('请先选择并配置官方 QQ Bot 服务（Webhook）'));
     }
 
     public static function mark($comment, $edit, $status)
@@ -230,7 +255,7 @@ class Enhancement_QqNotifyHelper
             $db = Typecho_Db::get();
             $table = $db->getPrefix() . 'qq_notify_queue';
             self::retireObsoleteQueue($db, $table);
-            if (in_array(self::provider($settings), array('none', 'direct'), true)) {
+            if (self::provider($settings) !== 'official') {
                 return;
             }
             $query = $db->select()
@@ -301,6 +326,15 @@ class Enhancement_QqNotifyHelper
             ))
             ->where('status = ?', 0)
             ->where('SUBSTR(message, 1, ?) <> ?', strlen(self::OFFICIAL_QUEUE_PREFIX), self::OFFICIAL_QUEUE_PREFIX));
+        $rows = $db->fetchAll($db->select('qid', 'message')->from($table)->where('status = ?', 0));
+        foreach ($rows as $row) {
+            $envelope = json_decode(substr((string)$row['message'], strlen(self::OFFICIAL_QUEUE_PREFIX)), true);
+            if (!is_array($envelope) || ($envelope['provider'] ?? '') !== 'official') {
+                $db->query($db->update($table)->rows(array('status' => 2, 'retries' => 5, 'updated' => time(),
+                    'last_error' => _t('此 QQ 通知方式已移除，停止投递；仅支持官方 QQ Bot 服务（Webhook）')))
+                    ->where('qid = ?', $row['qid'])->where('status = ?', 0));
+            }
+        }
     }
 
     public static function getQueueStats(): array
@@ -361,16 +395,7 @@ class Enhancement_QqNotifyHelper
             $settings = self::runtimeSettings();
         }
 
-        if (self::provider($settings) === 'direct') {
-            try {
-                Enhancement_QqDirectNotifyHelper::validateSettings(method_exists($settings, 'toArray') ? $settings->toArray() : (array)$settings);
-                return !empty($settings->qq_app_id) && !empty($settings->qq_app_secret) && !empty($settings->qq_target_id);
-            } catch (Exception $e) {
-                return false;
-            }
-        }
-
-        if (in_array(self::provider($settings), array('official', 'standalone'), true)) {
+        if (self::provider($settings) === 'official') {
             return self::officialConfigurationError($settings) === '';
         }
         return false;
@@ -391,13 +416,7 @@ class Enhancement_QqNotifyHelper
             return;
         }
 
-        if (self::provider($settings) === 'direct') {
-            // Official APIs do not guarantee idempotency after a timeout.
-            Enhancement_QqDirectNotifyHelper::send($message, $settings);
-            return;
-        }
-
-        if (in_array(self::provider($settings), array('official', 'standalone'), true)) {
+        if (self::provider($settings) === 'official') {
             $envelope = self::officialEnvelope($message, $settings);
             $encoded = json_encode($envelope, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             if ($encoded === false) {
@@ -563,14 +582,10 @@ class Enhancement_QqNotifyHelper
             return $result;
         }
         if (!is_array($envelope) || !isset($envelope['provider'], $envelope['message'], $envelope['targets'], $envelope['serviceURL'], $envelope['requestId'])
-            || !in_array($envelope['provider'], array('official', 'standalone'), true) || !is_string($envelope['message']) || !is_array($envelope['targets'])
+            || $envelope['provider'] !== 'official' || !is_string($envelope['message']) || !is_array($envelope['targets'])
             || !is_string($envelope['serviceURL']) || !is_string($envelope['requestId'])
             || !preg_match('/\A[a-f0-9]{40}\z/D', $envelope['requestId'])) {
             $result['error'] = _t('官方 QQ Bot 本地队列记录无效');
-            return $result;
-        }
-        if ($envelope['provider'] !== self::provider($settings)) {
-            $result['error'] = _t('QQ 服务类型已更改，请恢复原类型后重试或清空旧队列');
             return $result;
         }
         if ($envelope['serviceURL'] !== self::officialUrl($settings)) {

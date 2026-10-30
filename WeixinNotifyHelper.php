@@ -16,7 +16,7 @@ class Enhancement_WeixinNotifyHelper
         if (empty($settings['enable_comment_by_weixin']) && empty($settings['enable_link_submit_by_weixin']) && empty($settings['weixin_moments_enabled'])) {
             return;
         }
-        // An expired session must not block saving unrelated settings or a QQ binding.
+        // An expired session must not block saving unrelated settings.
         if ($previous !== null
             && ((string)($settings['enable_comment_by_weixin'] ?? '0') !== '1' || ($previous['enable_comment_by_weixin'] ?? '0') == '1')
             && ((string)($settings['enable_link_submit_by_weixin'] ?? '0') !== '1' || ($previous['enable_link_submit_by_weixin'] ?? '0') == '1')

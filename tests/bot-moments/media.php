@@ -28,33 +28,51 @@ function mediaFixture(string $format = 'png'): string
     return $bytes;
 }
 
-$qqUrl = 'https://gchat.qpic.cn/example/image?token=fixture-private-query';
 $wxUrl = 'https://novac2c.cdn.weixin.qq.com/c2c/download?encrypted_query_param=fixture-private-query';
-$qq = array(array('url' => $qqUrl));
 $wx = array(array('media' => array('full_url' => $wxUrl)));
-mediaCheck(Enhancement_BotMomentsMediaHelper::normalize('qq', $qq) === $qq, 'QQ descriptors are idempotent');
 mediaCheck(Enhancement_BotMomentsMediaHelper::normalize('weixin', $wx) === $wx, 'Plain Weixin descriptors are idempotent');
-mediaCheck(Enhancement_BotMomentsMediaHelper::normalize('qq', array(array('url' => $qqUrl, 'content_type' => 'image/png',
-    'filename' => 'untrusted.php', 'unknown' => array('nested' => str_repeat('x', 10000))))) === $qq,
-    'Normalization keeps only bounded download descriptors rather than arbitrary message metadata');
-foreach (array('multimedia.nt.qq.com', 'multimedia.nt.qq.com.cn', 'c2cpicdw.qpic.cn', 'gchat.qpic.cn', 'sub.qpic.cn') as $host) {
-    mediaCheck(Enhancement_BotMomentsMediaHelper::normalize('qq', array(array('url' => 'https://' . $host . '/image')))[0]['url'] === 'https://' . $host . '/image',
-        'Official QQ image CDN host is accepted: ' . $host);
+mediaCheck(Enhancement_BotMomentsMediaHelper::normalize('weixin', array(array('media' => array('full_url' => $wxUrl),
+    'filename' => 'untrusted.php', 'unknown' => array('nested' => str_repeat('x', 10000))))) === $wx,
+    'Normalization keeps bounded download descriptors rather than arbitrary message metadata');
+foreach (array('http://novac2c.cdn.weixin.qq.com/image', 'https://127.0.0.1/image', 'https://2130706433/image', 'https://[::1]/image',
+    'https://localhost/image', 'https://novac2c.cdn.weixin.qq.com.evil.test/image', 'https://evil.test/image',
+    'https://novac2c.cdn.weixin.qq.com:443/image', 'https://user:secret@novac2c.cdn.weixin.qq.com/image',
+    'https://novac2c.cdn.weixin.qq.com/image#fragment', 'https://novac2c.cdn.weixin.qq.com./image', "https://novac2c.cdn.weixin.qq.com/image\n",
+    'https://novac2c.cdn.weixin.qq.com\\@evil.test/image', 'https://novac2c.cdn.weixin.qq.com/' . str_repeat('x', 2048),
+    array('https://novac2c.cdn.weixin.qq.com/image')) as $url) {
+    mediaFails(static function () use ($url) { Enhancement_BotMomentsMediaHelper::normalize('weixin', array(array('media' => array('full_url' => $url)))); },
+        'Unsafe or malformed image URLs fail with a fixed error');
 }
-foreach (array('http://gchat.qpic.cn/image', 'https://127.0.0.1/image', 'https://2130706433/image', 'https://[::1]/image',
-    'https://localhost/image', 'https://gchat.qpic.cn.evil.test/image', 'https://qpic.cn.evil.test/image',
-    'https://evil.test/image', 'https://gchat.qpic.cn:443/image', 'https://user:secret@gchat.qpic.cn/image',
-    'https://gchat.qpic.cn/image#fragment', 'https://gchat.qpic.cn./image', "https://gchat.qpic.cn/image\n", 'https://gchat.qpic.cn\\@evil.test/image',
-    'https://gchat.qpic.cn/' . str_repeat('x', 2048), array('https://gchat.qpic.cn/image')) as $url) {
-    mediaFails(static function () use ($url) { Enhancement_BotMomentsMediaHelper::normalize('qq', array(array('url' => $url))); }, 'Unsafe or malformed image URLs fail with a fixed error');
+foreach (array(array('media' => array('full_url' => $wxUrl)), array(1 => $wx[0]), array('nested' => $wx[0]), array_fill(0, 10, $wx[0])) as $invalid) {
+    mediaFails(static function () use ($invalid) { Enhancement_BotMomentsMediaHelper::normalize('weixin', $invalid); }, 'Attachments must be a list containing at most nine images');
 }
-foreach (array(array('url' => $qqUrl), array(1 => array('url' => $qqUrl)), array('nested' => array('url' => $qqUrl)), array_fill(0, 10, array('url' => $qqUrl))) as $invalid) {
-    mediaFails(static function () use ($invalid) { Enhancement_BotMomentsMediaHelper::normalize('qq', $invalid); }, 'Attachments must be a list containing at most nine images');
+mediaCheck(count(Enhancement_BotMomentsMediaHelper::normalize('weixin', array_fill(0, 9, $wx[0]))) === 9, 'Exactly nine attachments are accepted');
+mediaFails(static function () use ($wx) { Enhancement_BotMomentsMediaHelper::normalize('other', $wx); }, 'Unknown channels cannot receive attachments');
+
+$qqUrl = 'https://gchat.qpic.cn/fixture/image?token=private-query';
+$qq = array(array('url' => $qqUrl));
+mediaCheck(Enhancement_BotMomentsMediaHelper::normalize('qq', array(array('url' => '//gchat.qpic.cn/fixture/image?token=private-query',
+    'content_type' => 'image/jpeg', 'filename' => 'untrusted.php'))) === $qq,
+    'Official QQ protocol-relative image URLs become bounded HTTPS descriptors');
+mediaCheck(Enhancement_BotMomentsMediaHelper::normalize('qq', $qq) === $qq, 'QQ image descriptors remain idempotent after canonicalization');
+foreach (array('multimedia.nt.qq.com', 'multimedia.nt.qq.com.cn', 'qpic.cn', 'c2cpicdw.qpic.cn', 'gchat.qpic.cn') as $host) {
+    mediaCheck(Enhancement_BotMomentsMediaHelper::normalize('qq', array(array('url' => '//' . $host . '/image')))[0]['url'] === 'https://' . $host . '/image',
+        'Official QQ image CDN hosts accept protocol-relative URLs: ' . $host);
 }
-mediaCheck(count(Enhancement_BotMomentsMediaHelper::normalize('qq', array_fill(0, 9, array('url' => $qqUrl)))) === 9, 'Exactly nine attachments are accepted');
-mediaFails(static function () use ($qqUrl) { Enhancement_BotMomentsMediaHelper::normalize('qq', array(array('url' => $qqUrl, 'content_type' => 'image/svg+xml'))); }, 'Declared SVG attachments are rejected');
-mediaFails(static function () use ($qq) { Enhancement_BotMomentsMediaHelper::normalize('other', $qq); }, 'Unknown channels cannot receive attachments');
-mediaFails(static function () use ($qqUrl) { Enhancement_BotMomentsMediaHelper::normalize('weixin', array(array('media' => array('full_url' => $qqUrl)))); }, 'Weixin cannot use the QQ CDN allowlist');
+foreach (array('http://gchat.qpic.cn/image', '//gchat.qpic.cn.evil.test/image', '//evil.test/image', '//127.0.0.1/image',
+    '///gchat.qpic.cn/image', '//user:secret@gchat.qpic.cn/image', '//gchat.qpic.cn:443/image', '//gchat.qpic.cn/image#fragment',
+    "//gchat.qpic.cn/image\n", '//gchat.qpic.cn\\@evil.test/image') as $url) {
+    mediaFails(static function () use ($url) { Enhancement_BotMomentsMediaHelper::normalize('qq', array(array('url' => $url))); },
+        'QQ URL canonicalization retains host, protocol and credential restrictions');
+}
+mediaFails(static function () use ($qqUrl) { Enhancement_BotMomentsMediaHelper::normalize('weixin', array(array('media' => array('full_url' => $qqUrl)))); },
+    'Weixin image receiving cannot use QQ CDN hosts');
+foreach (array('image/svg+xml', 'application/pdf', array('image/jpeg')) as $mime) {
+    mediaFails(static function () use ($qqUrl, $mime) { Enhancement_BotMomentsMediaHelper::normalize('qq', array(array('url' => $qqUrl, 'content_type' => $mime))); },
+        'QQ declared image types must use supported raster MIME types');
+}
+mediaFails(static function () use ($qq) { Enhancement_BotMomentsMediaHelper::normalize('qq', array_fill(0, 10, $qq[0])); },
+    'QQ images retain the nine-image attachment limit');
 
 $keyHex = '00112233445566778899aabbccddeeff';
 foreach (array(base64_encode(hex2bin($keyHex)), base64_encode(strtoupper($keyHex))) as $encodedKey) {
@@ -80,9 +98,9 @@ mediaFails(static function () use ($wxUrl) { Enhancement_BotMomentsMediaHelper::
 $downloaded = 0;
 $stored = array();
 $png = mediaFixture();
-$download = static function ($url, $limit, $timeout) use (&$downloaded, $png, $qqUrl): string {
+$download = static function ($url, $limit, $timeout) use (&$downloaded, $png, $wxUrl): string {
     $downloaded++;
-    mediaCheck($url === $qqUrl && $limit === 10485760 && $timeout >= 1 && $timeout <= 8, 'Injected downloads receive only a URL and bounded size/time settings');
+    mediaCheck($url === $wxUrl && $limit === 10485760 && $timeout >= 1 && $timeout <= 8, 'Injected downloads receive only a URL and bounded size/time settings');
     return $png;
 };
 $store = static function ($file) use (&$stored, &$downloaded, $png): string {
@@ -93,11 +111,11 @@ $store = static function ($file) use (&$stored, &$downloaded, $png): string {
     $stored[] = $file['name'];
     return 'https://site.example/uploads/' . $file['name'];
 };
-$media = Enhancement_BotMomentsMediaHelper::receive('qq', array_merge($qq, $qq), $download, $store);
+$media = Enhancement_BotMomentsMediaHelper::receive('weixin', array_merge($wx, $wx), $download, $store);
 mediaCheck(count($media) === 2 && $media[0]['type'] === 'PHOTO' && strpos($media[0]['url'], 'https://site.example/uploads/') === 0, 'Received images become stable PHOTO media URLs');
 foreach (array('jpeg' => 'image/jpeg', 'gif' => 'image/gif', 'webp' => 'image/webp') as $format => $mime) {
     $bytes = mediaFixture($format);
-    $result = Enhancement_BotMomentsMediaHelper::receive('qq', $qq, static function () use ($bytes): string { return $bytes; }, static function ($file) use ($mime): string {
+    $result = Enhancement_BotMomentsMediaHelper::receive('weixin', $wx, static function () use ($bytes): string { return $bytes; }, static function ($file) use ($mime): string {
         mediaCheck($file['type'] === $mime, 'Actual decoded image type controls the stored MIME type');
         return 'https://site.example/image';
     });
@@ -116,6 +134,15 @@ mediaCheck($decrypted === array(array('type' => 'PHOTO', 'url' => 'https://site.
 $plainWeixin = Enhancement_BotMomentsMediaHelper::receive('weixin', $wx, static function () use ($png): string { return $png; },
     static function (): string { return 'https://site.example/weixin-plain.png'; });
 mediaCheck($plainWeixin[0]['url'] === 'https://site.example/weixin-plain.png', 'Weixin images without an encryption key are validated as plaintext images');
+$qqReceived = Enhancement_BotMomentsMediaHelper::receive('qq', array(array('url' => '//gchat.qpic.cn/fixture/image?token=private-query')),
+    static function ($url, $limit) use ($png, $qqUrl): string {
+        mediaCheck($url === $qqUrl && $limit === 10485760, 'QQ downloads receive the canonical HTTPS URL and raster byte limit');
+        return $png;
+    }, static function ($file) use ($png): string {
+        mediaCheck($file['bytes'] === $png && $file['type'] === 'image/png', 'QQ image bytes are verified without Weixin decryption');
+        return 'https://site.example/qq.png';
+    });
+mediaCheck($qqReceived === array(array('type' => 'PHOTO', 'url' => 'https://site.example/qq.png')), 'QQ service images become stable site media URLs');
 $decryptMethod = new ReflectionMethod('Enhancement_BotMomentsMediaHelper', 'decrypt');
 $decryptMethod->setAccessible(true);
 $nistCipher = hex2bin('3ad77bb40d7a3660a89ecaf32466ef97a254be88e037ddd9d79fb6411c3f9df8');
@@ -127,24 +154,24 @@ mediaFails(static function () use ($preferred) { Enhancement_BotMomentsMediaHelp
 foreach (array('<html>redirect to https://evil.test</html>', '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
     "\x89PNG\r\n\x1a\n" . str_repeat("\0", 30), str_repeat('x', 10485761)) as $badBytes) {
     $badStores = 0;
-    mediaFails(static function () use ($qq, $badBytes, &$badStores) { Enhancement_BotMomentsMediaHelper::receive('qq', $qq,
+    mediaFails(static function () use ($wx, $badBytes, &$badStores) { Enhancement_BotMomentsMediaHelper::receive('weixin', $wx,
         static function () use ($badBytes): string { return $badBytes; }, static function () use (&$badStores): string { $badStores++; return 'https://site.example/never'; }); },
         'HTML, SVG, corrupt image headers and oversized bytes are rejected');
     mediaCheck($badStores === 0, 'Rejected bytes never reach permanent storage');
 }
 $hugePng = substr_replace($png, pack('NN', 10000, 10000), 16, 8);
-mediaFails(static function () use ($qq, $hugePng) { Enhancement_BotMomentsMediaHelper::receive('qq', $qq,
+mediaFails(static function () use ($wx, $hugePng) { Enhancement_BotMomentsMediaHelper::receive('weixin', $wx,
     static function () use ($hugePng): string { return $hugePng; }, static function (): string { return 'https://site.example/never'; }); }, 'Oversized image dimensions are rejected before raster decoding');
 $sequence = array($png, '<html>not an image</html>');
 $badStores = 0;
-mediaFails(static function () use ($qq, &$sequence, &$badStores) { Enhancement_BotMomentsMediaHelper::receive('qq', array_merge($qq, $qq),
+mediaFails(static function () use ($wx, &$sequence, &$badStores) { Enhancement_BotMomentsMediaHelper::receive('weixin', array_merge($wx, $wx),
     static function () use (&$sequence): string { return array_shift($sequence); }, static function () use (&$badStores): string { $badStores++; return 'https://site.example/never'; }); }, 'A later invalid image rejects the complete image batch');
 mediaCheck($badStores === 0, 'A partially downloaded batch never writes the earlier valid image');
-mediaFails(static function () use ($qq) { Enhancement_BotMomentsMediaHelper::receive('qq', $qq,
-    static function (): string { throw new RuntimeException('https://gchat.qpic.cn/?private-download-token AES-private-key'); }); }, 'Downloader exceptions never expose signed URLs or keys');
-mediaFails(static function () use ($qq, $png) { Enhancement_BotMomentsMediaHelper::receive('qq', $qq,
+mediaFails(static function () use ($wx) { Enhancement_BotMomentsMediaHelper::receive('weixin', $wx,
+    static function (): string { throw new RuntimeException('https://novac2c.cdn.weixin.qq.com/?private-download-token AES-private-key'); }); }, 'Downloader exceptions never expose signed URLs or keys');
+mediaFails(static function () use ($wx, $png) { Enhancement_BotMomentsMediaHelper::receive('weixin', $wx,
     static function () use ($png): string { return $png; }, static function (): string { throw new RuntimeException('S3 credential-private-secret'); }); }, 'Storage exceptions never expose credentials');
-mediaFails(static function () use ($qq, $png) { Enhancement_BotMomentsMediaHelper::receive('qq', $qq,
+mediaFails(static function () use ($wx, $png) { Enhancement_BotMomentsMediaHelper::receive('weixin', $wx,
     static function () use ($png): string { return $png; }, static function (): string { return 'javascript:alert(1)'; }); }, 'Storage must return an HTTP(S) media URL');
 
 $ipMethod = new ReflectionMethod('Enhancement_BotMomentsMediaHelper', 'publicIp');
@@ -189,22 +216,22 @@ class Enhancement_AttachmentResolverHelper
 {
     public static function buildLocalAttachmentUrlByPath($path): string { return 'https://site.example/' . ltrim($path, '/'); }
 }
-$local = Enhancement_BotMomentsMediaHelper::receive('qq', $qq, static function () use ($png): string { return $png; });
+$local = Enhancement_BotMomentsMediaHelper::receive('weixin', $wx, static function () use ($png): string { return $png; });
 mediaCheck($local[0]['url'] === 'https://site.example/native-upload.png' && !isset(Widget_Upload::$seen['tmp_name'])
     && Widget_Upload::$seen['bytes'] === $png, 'Native uploads use bytes without pretending temporary files are HTTP uploads');
 Widget_Upload::$result = array('path' => '/usr/uploads/fixture.png');
-$localPath = Enhancement_BotMomentsMediaHelper::receive('qq', $qq, static function () use ($png): string { return $png; });
+$localPath = Enhancement_BotMomentsMediaHelper::receive('weixin', $wx, static function () use ($png): string { return $png; });
 mediaCheck($localPath[0]['url'] === 'https://site.example/usr/uploads/fixture.png', 'Native upload paths are resolved through the existing upload URL helper');
 Widget_Upload::$result = false;
-mediaFails(static function () use ($qq, $png) { Enhancement_BotMomentsMediaHelper::receive('qq', $qq,
+mediaFails(static function () use ($wx, $png) { Enhancement_BotMomentsMediaHelper::receive('weixin', $wx,
     static function () use ($png): string { return $png; }); }, 'A rejected default upload fails with a safe message');
 Enhancement_S3Helper::$enabled = true;
-$remote = Enhancement_BotMomentsMediaHelper::receive('qq', $qq, static function () use ($png): string { return $png; });
+$remote = Enhancement_BotMomentsMediaHelper::receive('weixin', $wx, static function () use ($png): string { return $png; });
 clearstatcache(true, Enhancement_S3Helper::$seen['tmp_name']);
 mediaCheck($remote[0]['url'] === 'https://objects.example/s3-upload.png' && Enhancement_S3Helper::$seen['timeout'] >= 1
     && Enhancement_S3Helper::$seen['timeout'] <= 20 && !is_file(Enhancement_S3Helper::$seen['tmp_name']), 'S3 uses the remaining batch timeout and temporary buffers are removed after storage');
 Enhancement_S3Helper::$result = array('path' => 'images/fixture.png');
-$remotePath = Enhancement_BotMomentsMediaHelper::receive('qq', $qq, static function () use ($png): string { return $png; });
+$remotePath = Enhancement_BotMomentsMediaHelper::receive('weixin', $wx, static function () use ($png): string { return $png; });
 mediaCheck($remotePath[0]['url'] === 'https://objects.example/images/fixture.png', 'S3 results without an inline URL use the existing attachment URL resolver');
 
 echo 'Bot moment media checks passed: ' . $mediaChecks . PHP_EOL;

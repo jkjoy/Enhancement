@@ -4,7 +4,6 @@
   if (window.enhancementNotificationsReady) return;
   window.enhancementNotificationsReady = true;
 
-  const field = (name) => document.querySelector('[name="' + name + '"]');
   const role = (panel, name) => panel.querySelector('[data-role="' + name + '"]');
   const button = (panel, action) => panel.querySelector('[data-action="' + action + '"]');
   const message = (panel, text) => { role(panel, 'message').textContent = text; };
@@ -65,73 +64,6 @@
       panel.removeAttribute('aria-busy');
       if (panel.updateButtons) panel.updateButtons();
     }
-  }
-
-  const qq = document.getElementById('enhancement-qq-binding');
-  if (qq) {
-    let state = null;
-    const target = field('qq_target_id');
-    let savedTarget = target ? target.value : '';
-    const canBind = () => state && state.provider === 'direct' && state.available && state.configured && ['c2c', 'group'].includes(state.target_type);
-    qq.updateButtons = () => {
-      button(qq, 'qq-binding-start').disabled = !canBind();
-      button(qq, 'qq-binding-cancel').disabled = !(state && state.binding && state.binding.code);
-    };
-
-    function render(data, allowBindingSync) {
-      const previousBinding = state && state.binding && state.binding.code;
-      state = data || {};
-      const binding = state.binding || {};
-      role(qq, 'state').textContent = state.provider !== 'direct' ? '请先选择“官方 QQ 机器人直连”并保存，再配置回调和绑定接收人。' : !state.available
-        ? '当前 PHP 未启用 sodium，暂不能验证官方事件签名或生成绑定码。'
-        : !state.configured ? '请先保存 QQ AppID 和 AppSecret。'
-          : state.target_type === 'channel' ? 'QQ 频道请手动填写子频道 ID；自动绑定支持私聊和 QQ 群。'
-            : state.target_id ? '已保存接收 ID：' + state.target_id : '凭证已配置，等待绑定接收人。';
-      role(qq, 'binding').hidden = !binding.code;
-      document.getElementById('enhancement-qq-binding-command').value = binding.code ? '绑定通知 ' + binding.code : '';
-      role(qq, 'binding-hint').textContent = binding.code
-        ? '请在目标' + (binding.target_type === 'group' ? ' QQ 群 @机器人' : ' QQ 私聊') + '发送上述命令，有效期至 ' + date(binding.expires_at) + '。发送后点击“检查绑定状态”。'
-        : '';
-      role(qq, 'events').textContent = '回调验证：' + date(state.last_challenge_at) + '；已验证消息事件：' + date(state.last_event_at) + '。';
-      lastResult(qq, state.last_result);
-      if (typeof state.target_id === 'string' && (state.target_id !== savedTarget || (allowBindingSync && previousBinding && !binding.code))) {
-        if (target) target.value = state.target_id;
-        savedTarget = state.target_id;
-      }
-    }
-
-    async function refresh(allowBindingSync = true) {
-      const result = await request(qq, 'qq-binding-status');
-      render(result.data, allowBindingSync);
-    }
-
-    qq.addEventListener('click', (event) => {
-      const clicked = event.target.closest('button[data-action]');
-      if (!clicked || !qq.contains(clicked)) return;
-      const action = clicked.dataset.action;
-      perform(qq, async () => {
-        if (action === 'qq-binding-start') {
-          const appId = field('qq_app_id');
-          const secret = field('qq_app_secret');
-          const type = field('qq_target_type');
-          const provider = document.querySelector('[name="qq_notify_provider"]:checked');
-          if ((appId && appId.value.trim() !== appId.defaultValue.trim()) || (secret && secret.value !== '')
-            || (type && state && type.value !== state.target_type) || (provider && provider.value !== 'direct')) {
-            throw new Error('请先选择官方 QQ 机器人直连，保存 AppID、AppSecret 和接收类型，再生成绑定码。');
-          }
-        }
-        if (action !== 'qq-binding-status') {
-          const result = await request(qq, action);
-          await refresh(action !== 'qq-binding-cancel');
-          message(qq, result.message || (action === 'qq-binding-start' ? '绑定码已生成，请发送绑定命令后手动检查状态。' : '本次绑定已取消。'));
-        } else {
-          await refresh();
-          message(qq, '绑定状态已更新；绑定成功后请保存配置并发送 QQ 测试通知。');
-        }
-      });
-    });
-
-    perform(qq, async () => { await refresh(); message(qq, ''); });
   }
 
   const weixin = document.getElementById('enhancement-weixin');

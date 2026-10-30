@@ -9,6 +9,7 @@ class Enhancement_BotMomentsMediaHelper
 
     private static function approvedUrl(string $channel, $url): string
     {
+        if ($channel === 'qq' && is_string($url) && strncmp($url, '//', 2) === 0) { $url = 'https:' . $url; }
         if (!is_string($url) || $url === '' || strlen($url) > 2048
             || preg_match('/[\\\\\x00-\x20\x7f-\xff]/', $url)) {
             throw new RuntimeException(self::ERROR);
@@ -16,7 +17,8 @@ class Enhancement_BotMomentsMediaHelper
         $parts = parse_url($url);
         $host = is_array($parts) ? strtolower((string)($parts['host'] ?? '')) : '';
         $allowed = $channel === 'qq'
-            ? in_array($host, array('multimedia.nt.qq.com', 'multimedia.nt.qq.com.cn', 'qpic.cn'), true) || (bool)preg_match('/\A(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+qpic\.cn\z/D', $host)
+            ? in_array($host, array('multimedia.nt.qq.com', 'multimedia.nt.qq.com.cn', 'qpic.cn'), true)
+                || (bool)preg_match('/\A(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+qpic\.cn\z/D', $host)
             : $host === 'novac2c.cdn.weixin.qq.com';
         if (!is_array($parts) || strtolower((string)($parts['scheme'] ?? '')) !== 'https' || !$allowed
             || isset($parts['port']) || isset($parts['user']) || isset($parts['pass']) || isset($parts['fragment'])) {
@@ -48,7 +50,7 @@ class Enhancement_BotMomentsMediaHelper
                 if (!is_array($item)) { throw new RuntimeException(self::ERROR); }
                 if ($channel === 'qq') {
                     if (isset($item['content_type']) && (!is_string($item['content_type'])
-                        || !in_array(strtolower($item['content_type']), array('image/jpeg', 'image/png', 'image/gif', 'image/webp'), true))) {
+                        || !in_array(strtolower(trim($item['content_type'])), array('image/jpeg', 'image/png', 'image/gif', 'image/webp'), true))) {
                         throw new RuntimeException(self::ERROR);
                     }
                     $normalized[] = array('url' => self::approvedUrl($channel, $item['url'] ?? null));
