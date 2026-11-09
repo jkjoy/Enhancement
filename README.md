@@ -258,6 +258,8 @@ docker exec --user '<PHP运行用户>' '<PHP容器名>' php '/容器内站点路
 `content`（必填，支持 Markdown）、`tags`（可选）、`media`（可选，若不填则从内容自动解析）、`created`（可选，时间戳或时间字符串）
 `status`（可选，`public` 或 `private`）、`latitude` / `longitude`（可选，经纬度；也支持 `lat` / `lng`）
 
+`created` 不填时使用当前时间；数值按 Unix 秒时间戳处理。不带时区的时间字符串（如 `2026-11-09 18:00:00`）按 Typecho 站点时区解析，带 `Z` 或 `+08:00` 等时区标记的字符串按指定时区解析。API 列表中的 `time` 与后台瞬间列表统一按站点时区显示。
+
 ### 微信通知
 
 微信使用腾讯 iLink 协议，由 PHP 请求腾讯 HTTPS 接口，服务器需启用 PHP cURL。配置步骤：

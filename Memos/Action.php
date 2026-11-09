@@ -157,7 +157,7 @@ class Enhancement_Memos_Action extends Typecho_Widget implements Widget_Interfac
                 $parsed = strtotime((string)$created);
                 $timestamp = $parsed ? $parsed : 0;
             }
-            $timeString = $timestamp > 0 ? date('Y-m-d H:i', $timestamp) : '';
+            $timeString = $timestamp > 0 ? (new Typecho_Date($timestamp))->format('Y-m-d H:i') : '';
 
             $latitude = Enhancement_Plugin::normalizeMomentLatitude(isset($row['latitude']) ? $row['latitude'] : '');
             $longitude = Enhancement_Plugin::normalizeMomentLongitude(isset($row['longitude']) ? $row['longitude'] : '');
@@ -299,9 +299,12 @@ class Enhancement_Memos_Action extends Typecho_Widget implements Widget_Interfac
             if (is_numeric($createdValue)) {
                 $created = intval($createdValue);
             } else {
-                $parsed = strtotime((string)$createdValue);
-                if ($parsed) {
-                    $created = $parsed;
+                $offset = (int)$this->options->timezone;
+                $timezone = new DateTimeZone(($offset < 0 ? '-' : '+') . gmdate('H:i', abs($offset)));
+                try {
+                    $created = (new DateTimeImmutable((string)$createdValue, $timezone))->getTimestamp();
+                } catch (Exception $e) {
+                    $created = $this->options->time;
                 }
             }
         }

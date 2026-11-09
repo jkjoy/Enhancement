@@ -263,7 +263,7 @@ $momentsFiltered = $momentsStatusFilter !== '' || $momentsKeywords !== '';
                                             <?php endif; ?>
                                             <div class="enh-moment-meta">
                                                 <?php if ($status === 'private'): ?><span class="enh-moment-badge"><?php _e('私密'); ?></span><?php endif; ?>
-                                                <?php if ($created > 0): ?><span><?php echo date('Y-m-d H:i', $created); ?></span><?php endif; ?>
+                                                <?php if ($created > 0): ?><span><?php echo (new Typecho_Date($created))->format('Y-m-d H:i'); ?></span><?php endif; ?>
                                                 <span><?php echo $momentsSourceLabels[$source]; ?></span>
                                                 <?php if ($location !== ''): ?><span class="location" title="<?php echo $momentsEscape($location); ?>"><?php echo $momentsEscape($location); ?></span><?php endif; ?>
                                             </div>
