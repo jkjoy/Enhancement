@@ -48,37 +48,6 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         return $normalized;
     }
 
-    private function decodeStoredPluginSettingsValue($rawValue)
-    {
-        $text = trim((string)$rawValue);
-        if ($text === '') {
-            return array();
-        }
-
-        $decoded = json_decode($text, true);
-        if (is_array($decoded)) {
-            return $decoded;
-        }
-
-        $unserialized = @unserialize($text, array('allowed_classes' => false));
-        if (is_array($unserialized)) {
-            return $unserialized;
-        }
-
-        return array();
-    }
-
-    private function encodeStoredPluginSettingsValue(array $settings)
-    {
-        $settings = $this->normalizePluginSettings($settings);
-        $serialized = @serialize($settings);
-        if (!is_string($serialized) || $serialized === '') {
-            $serialized = 'a:0:{}';
-        }
-
-        return $serialized;
-    }
-
     private function collectPluginSettings()
     {
         $settings = array();
@@ -93,7 +62,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             );
 
             if (is_array($row) && isset($row['value'])) {
-                $decoded = $this->decodeStoredPluginSettingsValue((string)$row['value']);
+                $decoded = Enhancement_SettingsHelper::decodePluginConfigValue((string)$row['value']);
                 if (is_array($decoded)) {
                     $settings = $decoded;
                 }
@@ -166,48 +135,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             throw new Typecho_Widget_Exception(_t('没有可保存的配置项'));
         }
 
-        $settings = Enhancement_QqNotifyHelper::normalizeSettings($settings);
-        Enhancement_CommentGuardHelper::validateSettings($settings);
-        Enhancement_QqNotifyHelper::validateSettings($settings);
-        Enhancement_FriendPostsHelper::validateSettings($settings);
-        Enhancement_WeixinNotifyHelper::validateSettings($settings);
-        Enhancement_BotMomentsHelper::validateSettings($settings);
-        if (Enhancement_QqOfficialHelper::credentialsIdentity($this->collectPluginSettings()) !== Enhancement_QqOfficialHelper::credentialsIdentity($settings)) {
-            foreach (array('qq_binding', 'qq_binding_pending', 'qq_token') as $key) {
-                Enhancement_NotifyTransportHelper::write($key, array());
-            }
-        }
-        Enhancement_BotMomentsHelper::syncActivation($settings);
-        Enhancement_FriendPostsNotifyHelper::syncActivation($settings);
-        $storedValue = $this->encodeStoredPluginSettingsValue($settings);
-
-        $row = $this->db->fetchRow(
-            $this->db->select('name')
-                ->from('table.options')
-                ->where('name = ?', 'plugin:Enhancement')
-                ->where('user = ?', 0)
-                ->limit(1)
-        );
-
-        if (is_array($row) && !empty($row)) {
-            $this->db->query(
-                $this->db->update('table.options')
-                    ->rows(array('value' => $storedValue))
-                    ->where('name = ?', 'plugin:Enhancement')
-                    ->where('user = ?', 0)
-            );
-        } else {
-            $this->db->query(
-                $this->db->insert('table.options')->rows(array(
-                    'name' => 'plugin:Enhancement',
-                    'value' => $storedValue,
-                    'user' => 0
-                ))
-            );
-        }
-
-        Enhancement_SettingsHelper::syncOptionCache('plugin:Enhancement', $storedValue, 'Enhancement');
-        Enhancement_RestApiHelper::syncRoutes((object)$settings);
+        Enhancement_ConfigStorageHelper::replaceSettings($settings);
     }
 
     private function settingsBackupNamePrefix()
@@ -465,6 +393,10 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 
     private function removeDirectoryRecursively($path)
     {
+        // Never traverse a link, including a link passed as the root of a cleanup.
+        if (is_link($path)) {
+            return @unlink($path);
+        }
         if (!is_dir($path)) {
             return false;
         }
@@ -479,7 +411,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
                 continue;
             }
             $current = $path . DIRECTORY_SEPARATOR . $item;
-            if (is_dir($current)) {
+            if (is_dir($current) && !is_link($current)) {
                 if (!$this->removeDirectoryRecursively($current)) {
                     return false;
                 }
@@ -563,13 +495,31 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 
     private function deleteInstalledPackage($name, $typeLabel, $baseDir, $allowSingleFile = false)
     {
-        $name = trim((string)$name);
+        $name = is_string($name) ? trim($name) : '';
         if ($name === '' || !preg_match('/^[a-zA-Z0-9_-]+$/', $name)) {
             $this->uploadResponse(false, _t('%s名称不合法', $typeLabel), 400);
             return;
         }
 
+        if ($allowSingleFile) {
+            $plugins = $this->options->plugins;
+            $activated = is_array($plugins) && is_array($plugins['activated'] ?? null) ? $plugins['activated'] : array();
+            foreach (array_merge(array('Enhancement'), array_keys($activated)) as $activeName) {
+                if (strcasecmp($name, (string)$activeName) === 0) {
+                    $this->uploadResponse(false, _t('不能删除已启用的插件或 Enhancement 自身，请先停用其他插件后再删除'), 400);
+                    return;
+                }
+            }
+        } elseif (strcasecmp($name, (string)$this->options->theme) === 0) {
+            $this->uploadResponse(false, _t('不能删除当前使用的主题，请先切换到其他主题'), 400);
+            return;
+        }
+
         $path = $this->installedPackagePath($baseDir, $name);
+        if (is_link($path)) {
+            $this->uploadResponse(false, _t('不能在线删除符号链接部署的%s，请手动移除链接', $typeLabel), 400);
+            return;
+        }
         if (!is_dir($path)) {
             if ($allowSingleFile) {
                 $file = $path . '.php';
@@ -635,18 +585,11 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $isThemePackage = false;
         $typeLabel = '';
 
-        for ($i = 0; $i < $zip->numFiles; $i++) {
-            $entry = str_replace('\\', '/', (string)$zip->getNameIndex($i));
-            $entry = ltrim($entry, '/');
-            if ($entry === '') {
-                continue;
-            }
-
-            if (strpos($entry, '../') !== false || preg_match('/^[a-zA-Z]:/', $entry) || strpos($entry, "\0") !== false) {
-                $zip->close();
-                $this->uploadResponse(false, _t('压缩包包含非法路径，已拒绝安装'), 400);
-                return;
-            }
+        $pathError = '';
+        if (!$this->validateZipArchivePaths($zip, $pathError)) {
+            $zip->close();
+            $this->uploadResponse(false, $pathError, 400);
+            return;
         }
 
         $pluginIndex = $zip->locateName('Plugin.php', ZipArchive::FL_NOCASE | ZipArchive::FL_NODIR);
@@ -743,6 +686,24 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         }
 
         $packageDirExisted = is_dir($targetPackageDir);
+
+        // Extracting into existing links can overwrite files outside the package.
+        if (is_link($targetPackageDir)) {
+            $zip->close();
+            $this->uploadResponse(false, _t('目标目录是符号链接，请手动更新该插件或主题'), 400);
+            return;
+        }
+        for ($index = 0; $index < $zip->numFiles; $index++) {
+            $destination = rtrim($targetBase, '/\\');
+            foreach (explode('/', rtrim(str_replace('\\', '/', (string)$zip->getNameIndex($index)), '/')) as $segment) {
+                $destination .= DIRECTORY_SEPARATOR . $segment;
+                if (is_link($destination)) {
+                    $zip->close();
+                    $this->uploadResponse(false, _t('安装目标包含符号链接，请手动更新该插件或主题'), 400);
+                    return;
+                }
+            }
+        }
 
         if (!is_dir($targetBase)) {
             @mkdir($targetBase, 0755, true);
@@ -923,10 +884,12 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             if (stripos($errorMessage, 'SSL certificate') !== false || stripos($errorMessage, 'local issuer certificate') !== false) {
                 $errorMessage .= _t('。请确认服务器存在可读的 cacert.pem，或在 php.ini 配置 curl.cainfo / openssl.cafile。');
             }
-            curl_close($ch);
+            if (PHP_VERSION_ID < 80000) { curl_close($ch); }
+            unset($ch);
             return false;
         }
-        curl_close($ch);
+        if (PHP_VERSION_ID < 80000) { curl_close($ch); }
+        unset($ch);
 
         if ($httpCode < 200 || $httpCode >= 300) {
             $errorMessage = _t('远程仓库响应异常（HTTP %d）', $httpCode);
@@ -974,7 +937,8 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $ok = curl_exec($ch);
         $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $curlError = curl_errno($ch) ? curl_error($ch) : '';
-        curl_close($ch);
+        if (PHP_VERSION_ID < 80000) { curl_close($ch); }
+        unset($ch);
         fclose($fp);
 
         if (!$ok || $curlError !== '') {
@@ -1040,13 +1004,20 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $errorMessage = '';
         for ($i = 0; $i < $zip->numFiles; $i++) {
             $entry = str_replace('\\', '/', (string)$zip->getNameIndex($i));
-            $entry = ltrim($entry, '/');
             if ($entry === '') {
                 continue;
             }
 
-            if (strpos($entry, '../') !== false || preg_match('/^[a-zA-Z]:/', $entry) || strpos($entry, "\0") !== false) {
-                $errorMessage = _t('更新包包含非法路径，已拒绝安装');
+            if ($entry[0] === '/' || in_array('..', explode('/', $entry), true)
+                || preg_match('/^[a-zA-Z]:/', $entry) || strpos($entry, "\0") !== false) {
+                $errorMessage = _t('压缩包包含非法路径，已拒绝安装');
+                return false;
+            }
+            $operatingSystem = 0;
+            $attributes = 0;
+            if ($zip->getExternalAttributesIndex($i, $operatingSystem, $attributes)
+                && (($attributes >> 16) & 0170000) === 0120000) {
+                $errorMessage = _t('压缩包包含符号链接，已拒绝安装');
                 return false;
             }
         }
@@ -1121,6 +1092,11 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $pluginRootReal = realpath($pluginRoot);
         $currentReal = realpath($currentDir);
         $targetReal = realpath($targetDir);
+
+        if (is_link($targetDir)) {
+            $message = _t('Enhancement 使用符号链接部署，请在源目录通过 Git 或手动更新，在线升级已取消');
+            return false;
+        }
 
         if (!$pluginRootReal || !$currentReal || !$targetReal || strcasecmp($currentReal, $targetReal) !== 0) {
             $message = _t('当前插件目录不是 usr/plugins/Enhancement，已取消在线升级');
@@ -2657,59 +2633,8 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 
     public function goRedirect()
     {
-        $target = $this->request->get('target');
-        if (is_array($target)) {
-            $target = implode('', $target);
-        }
-
-        $target = trim((string)$target);
-        if ($target === '') {
-            $this->response->setStatus(404);
-            echo _t('跳转目标不存在');
-            return;
-        }
-
-        $url = Enhancement_Plugin::decodeGoTarget($target);
-        if ($url === '') {
-            $this->response->setStatus(400);
-            echo _t('无效的跳转地址');
-            return;
-        }
-
-        header('Content-Type: text/html; charset=UTF-8');
-        header('X-Robots-Tag: noindex, nofollow, noarchive');
-
-        $options = Typecho_Widget::widget('Widget_Options');
-        $homeUrl = isset($options->siteUrl) ? (string)$options->siteUrl : '/';
-        $safeUrl = htmlspecialchars($url, ENT_QUOTES, 'UTF-8');
-        $safeHomeUrl = htmlspecialchars($homeUrl, ENT_QUOTES, 'UTF-8');
-
-        echo '<!doctype html>';
-        echo '<html lang="zh-CN"><head><meta charset="utf-8">';
-        echo '<meta name="viewport" content="width=device-width, initial-scale=1">';
-        echo '<title>即将离开本站</title>';
-        echo '<style>';
-        echo 'body{margin:0;background:#f5f7fb;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,PingFang SC,Hiragino Sans GB,Microsoft YaHei,sans-serif;color:#1f2937;}';
-        echo '.wrap{max-width:560px;margin:8vh auto;padding:24px;}';
-        echo '.card{background:#fff;border-radius:12px;padding:24px;box-shadow:0 10px 24px rgba(0,0,0,.08);}';
-        echo 'h1{margin:0 0 10px;font-size:22px;}';
-        echo 'p{margin:8px 0;color:#4b5563;line-height:1.7;word-break:break-all;}';
-        echo '.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:18px;}';
-        echo '.btn{display:inline-block;padding:10px 16px;border-radius:8px;text-decoration:none;font-weight:500;}';
-        echo '.btn-primary{background:#2563eb;color:#fff;}';
-        echo '.btn-secondary{background:#eef2ff;color:#1e40af;}';
-        echo '.host{display:inline-block;padding:2px 8px;background:#eef2ff;color:#3730a3;border-radius:99px;font-size:12px;}';
-        echo '</style></head><body>';
-        echo '<div class="wrap"><div class="card">';
-        echo '<h1>即将离开本站</h1>';
-        echo '<p>你将访问外部网站，请注意账号与隐私安全。</p>';
-        echo '<p>目标地址：<span id="target-url">' . $safeUrl . '</span></p>';
-        echo '<div class="actions">';
-        echo '<a class="btn btn-primary" href="' . $safeUrl . '" rel="noopener noreferrer nofollow" target="_blank">继续访问</a>';
-        echo '<a class="btn btn-secondary" href="' . $safeHomeUrl . '">回到首页</a>';
-        echo '</div>';
-        echo '</div></div>';
-        echo '</body></html>';
+        require_once __DIR__ . '/Go/Renderer.php';
+        Enhancement_Go_Renderer::respond($this->request->get('target'), $this->response, true);
     }
 
     public function refreshFriendPosts()

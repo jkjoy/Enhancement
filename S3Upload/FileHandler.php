@@ -23,6 +23,7 @@ class Enhancement_S3Upload_FileHandler
             return self::localUploadHandle($file);
         }
 
+        $tempFile = null;
         try {
             $name = (string)$file['name'];
             $ext = self::getSafeName($name);
@@ -39,7 +40,6 @@ class Enhancement_S3Upload_FileHandler
                 : Enhancement_S3Upload_Utils::getMimeType(isset($file['tmp_name']) ? (string)$file['tmp_name'] : '');
             $isImage = self::isImage($mime);
 
-            $tempFile = null;
             $webpName = null;
             $compressEnabled = isset($settings->s3_compress_images) && trim((string)$settings->s3_compress_images) === '1';
             if (
@@ -57,26 +57,18 @@ class Enhancement_S3Upload_FileHandler
 
                 $tempFile = tempnam(sys_get_temp_dir(), 'enh_s3_');
                 if ($tempFile !== false) {
-                    $tempFile .= '.webp';
                     if (self::convertToWebp($file['tmp_name'], $tempFile, $mime, $quality)) {
                         $file['tmp_name'] = $tempFile;
                         $file['size'] = filesize($tempFile);
                         $file['type'] = 'image/webp';
                         $webpName = self::replaceExtToWebp($file['name']);
                         $file['name'] = $webpName;
-                    } else {
-                        @unlink($tempFile);
-                        $tempFile = null;
                     }
                 }
             }
 
             $uploader = new Enhancement_S3Upload_StreamUploader();
             $result = $uploader->handleUpload($file);
-
-            if ($tempFile && is_file($tempFile)) {
-                @unlink($tempFile);
-            }
 
             if (!$result || !is_array($result)) {
                 Enhancement_S3Upload_Utils::log('S3 上传返回结果异常', 'error');
@@ -102,9 +94,13 @@ class Enhancement_S3Upload_FileHandler
                 'isImage' => self::isImage(isset($result['mime']) ? (string)$result['mime'] : ''),
                 'url' => isset($result['url']) ? $result['url'] : ''
             );
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Enhancement_S3Upload_Utils::log('上传处理错误: ' . $e->getMessage(), 'error');
             return false;
+        } finally {
+            if (is_string($tempFile) && is_file($tempFile)) {
+                @unlink($tempFile);
+            }
         }
     }
 
@@ -489,26 +485,32 @@ class Enhancement_S3Upload_FileHandler
 
         $mime = strtolower(trim((string)$mime));
         $image = null;
-        if ($mime === 'image/jpeg' || $mime === 'image/jpg') {
-            $image = @imagecreatefromjpeg($src);
-        } elseif ($mime === 'image/png') {
-            $image = @imagecreatefrompng($src);
-            if ($image) {
-                imagepalettetotruecolor($image);
-                imagealphablending($image, true);
-                imagesavealpha($image, true);
+        try {
+            if ($mime === 'image/jpeg' || $mime === 'image/jpg') {
+                $image = @imagecreatefromjpeg($src);
+            } elseif ($mime === 'image/png') {
+                $image = @imagecreatefrompng($src);
+                if ($image) {
+                    imagepalettetotruecolor($image);
+                    imagealphablending($image, true);
+                    imagesavealpha($image, true);
+                }
+            } elseif ($mime === 'image/gif') {
+                $image = @imagecreatefromgif($src);
             }
-        } elseif ($mime === 'image/gif') {
-            $image = @imagecreatefromgif($src);
-        }
 
-        if (!$image) {
-            return false;
-        }
+            if (!$image) {
+                return false;
+            }
 
-        $result = @imagewebp($image, $dest, intval($quality));
-        imagedestroy($image);
-        return $result && is_file($dest);
+            $result = @imagewebp($image, $dest, intval($quality));
+            return $result && is_file($dest);
+        } finally {
+            if ($image && PHP_VERSION_ID < 80000) {
+                imagedestroy($image);
+            }
+            $image = null;
+        }
     }
 
     private static function replaceExtToWebp($filename)

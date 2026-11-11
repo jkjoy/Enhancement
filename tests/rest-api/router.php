@@ -12,11 +12,23 @@ define('__TYPECHO_DEBUG__', true);
 $_SERVER['SCRIPT_NAME'] = '/fixture.php';
 require_once $testRoot . '/var/Typecho/Common.php';
 Typecho\Common::init();
-$database = new Typecho\Db('Pdo_SQLite', 'typecho_');
+class EnhancementFixtureDatabase extends Typecho\Db
+{
+    public $queries = [];
+    public function query($query, int $op = self::READ, string $action = self::SELECT)
+    {
+        if (getenv('ENHANCEMENT_SHORTCODE_TESTS') === '1') {
+            $this->queries[] = (string)$query;
+        }
+        return parent::query($query, $op, $action);
+    }
+}
+$database = new EnhancementFixtureDatabase('Pdo_SQLite', 'typecho_');
 $database->addServer(['file' => $testDirectory . '/fixture.sqlite'], Typecho\Db::READ | Typecho\Db::WRITE);
 Typecho\Db::set($database);
 Typecho\Widget::widget('Widget_Init');
 require_once dirname(__DIR__, 2) . '/Plugin.php';
+require_once dirname(__DIR__, 2) . '/RestApi/Action.php';
 
 function fixtureCommentFilter($comment, $content)
 {
@@ -25,8 +37,10 @@ function fixtureCommentFilter($comment, $content)
 }
 function fixtureCommentFinished($comment): void
 {
+    Enhancement_ReplyAccessHelper::rememberComment($comment);
     file_put_contents(getenv('ENHANCEMENT_REST_API_TEST_DIR') . '/comment-hooks.json', json_encode(['id' => (int)$comment->coid, 'status' => $comment->status, 'cid' => (int)$comment->cid]));
 }
+function fixtureExcerptPassthrough($text, $widget = null, $lastResult = null) { return $text; }
 // Typecho's route-save helper persists Plugin::export(). Rebuild disposable
 // callbacks once per request so config saves cannot multiply filter execution.
 Typecho\Plugin::init(['activated' => [], 'handles' => []]);
@@ -34,6 +48,29 @@ Typecho\Plugin::factory('Widget_Feedback')->comment = 'fixtureCommentFilter';
 Typecho\Plugin::factory('Widget_Feedback')->comment_1 = ['Enhancement_Plugin', 'turnstileFilterComment'];
 Typecho\Plugin::factory('Widget_Feedback')->finishComment = 'fixtureCommentFinished';
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+if ($path === '/__fixture/shortcodes' && getenv('ENHANCEMENT_SHORTCODE_TESTS') === '1') {
+    Typecho\Plugin::factory('Widget_Abstract_Contents')->contentEx = Enhancement_Plugin::callback('parse');
+    if (!empty($_GET['legacy'])) {
+        Typecho\Plugin::factory('Widget_Abstract_Contents')->excerptEx = Enhancement_Plugin::callback('parse');
+        Typecho\Plugin::factory('Widget_Abstract_Contents')->excerptEx = 'fixtureExcerptPassthrough';
+    }
+    Enhancement_LifecycleHelper::registerReplyPrivacyHooks();
+    Enhancement_LifecycleHelper::registerReplyPrivacyHooks();
+    $cid = max(1, (int)($_GET['cid'] ?? 1));
+    $parameters = 'type=post&checkPermalink=0' . (!empty($_GET['feed']) ? '&isFeed=1' : '');
+    $widget = Typecho\Widget::widget('Widget_Archive', $parameters, ['cid' => $cid]);
+    $text = (string)($_GET['text'] ?? $widget->text);
+    $before = count($database->queries);
+    $rendered = Enhancement_ShortcodeHelper::parseContent($text, $widget);
+    $queries = array_slice($database->queries, $before);
+    header('Content-Type: application/json');
+    Typecho\Response::getInstance()->sendHeaders();
+    echo json_encode(['rendered' => $rendered, 'cid' => (int)$widget->cid,
+        'title' => $widget->title, 'content' => $widget->content, 'excerpt' => $widget->excerpt,
+        'extra_queries' => $queries,
+        'excerpt_hooks' => array_values(Typecho\Plugin::export()['handles']['Widget_Abstract_Contents:excerptEx'] ?? [])]);
+    exit;
+}
 if ($path === '/__fixture/guard' && getenv('ENHANCEMENT_COMMENT_GUARD_TESTS') === '1') {
     header('Content-Type: application/json');
     echo json_encode([

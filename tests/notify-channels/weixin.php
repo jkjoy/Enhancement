@@ -513,5 +513,182 @@ foreach (array('disconnect', 'relogin-token', 'relogin-account', 'expired') as $
     notifyCheck($staleSync['status'] === 'wait' && $staleSync['moments_published'] === 0 && $staleCommands === 0 && $stateAfterChange === $stateAfterResponse,
         'A Weixin account change while polling never restores old state or executes stale commands: ' . $accountChange);
 }
+
+function weixinSessionState(): array
+{
+    $state = array();
+    foreach (array('weixin_account', 'weixin_login', 'weixin_sync', 'weixin_recipient', 'weixin_result') as $key) {
+        $state[$key] = Enhancement_NotifyTransportHelper::read($key);
+    }
+    return $state;
+}
+
+function weixinReplaceSession(string $change): array
+{
+    if ($change === 'disconnect') {
+        Enhancement_WeixinNotifyHelper::disconnect();
+    } elseif ($change === 'expired') {
+        $account = Enhancement_NotifyTransportHelper::read('weixin_account');
+        $account['expired'] = true;
+        Enhancement_NotifyTransportHelper::write('weixin_account', $account);
+    } else {
+        $previous = Enhancement_NotifyTransportHelper::read('weixin_account');
+        $same = $change === 'relogin-same-credentials';
+        $owner = $same ? 'scanner@im.wechat' : 'replacement-owner';
+        Enhancement_WeixinNotifyHelper::startLogin(weixinResponse(array('qrcode' => 'replacement-qr', 'qrcode_img_content' => 'https://ilinkai.weixin.qq.com/qr/login')));
+        Enhancement_WeixinNotifyHelper::pollLogin('', weixinResponse(array('status' => 'confirmed',
+            'bot_token' => $same ? 'private-token-fixture' : 'replacement-token',
+            'ilink_bot_id' => $change === 'relogin-account' ? 'replacement-bot' : 'fixture-bot', 'ilink_user_id' => $owner,
+            'baseurl' => 'https://ilinkai.weixin.qq.com/')));
+        if ($same) {
+            $account = Enhancement_NotifyTransportHelper::read('weixin_account');
+            $account['connected_at'] = $previous['connected_at'];
+            Enhancement_NotifyTransportHelper::write('weixin_account', $account);
+        }
+        Enhancement_NotifyTransportHelper::write('weixin_sync', array('get_updates_buf' => 'replacement-cursor', 'synced_at' => 123,
+            'candidates' => array($owner), 'context_tokens' => array($owner => 'replacement-context')));
+        Enhancement_WeixinNotifyHelper::bind($owner);
+    }
+    Enhancement_NotifyTransportHelper::write('weixin_result', array('success' => true, 'message' => 'replacement-result', 'time' => 456));
+    return weixinSessionState();
+}
+
+foreach (array('command', 'reply') as $changeDuring) {
+    foreach (array('disconnect', 'relogin-token', 'relogin-account', 'relogin-same-credentials', 'expired') as $accountChange) {
+        weixinConnect();
+        weixinBindOwner();
+        notifySettings(array('weixin_moments_enabled' => '1'));
+        $handled = $receipts = 0;
+        $replacementState = array();
+        Enhancement_BotMomentsHelper::$handler = static function ($channel, $command) use ($changeDuring, $accountChange, &$handled, &$replacementState): ?array {
+            $handled++;
+            if ($changeDuring === 'command') { $replacementState = weixinReplaceSession($accountChange); }
+            return array('success' => true, 'message' => '旧命令回复。');
+        };
+        $stale = Enhancement_WeixinNotifyHelper::sync(static function ($method, $url, $headers, $payload) use ($changeDuring, $accountChange, &$receipts, &$replacementState): array {
+            if (strpos($url, '/getupdates') !== false) {
+                return array('status' => 200, 'data' => array('get_updates_buf' => 'stale-cursor', 'msgs' => array(
+                    weixinMomentMessage('stale-first', array('item_list' => array(
+                        array('type' => 1, 'text_item' => array('text' => '瞬间 处理中的图文')),
+                        array('type' => 2, 'image_item' => array('media' => 'private-media-in-progress')),
+                    ))), weixinMomentMessage('stale-second'),
+                )));
+            }
+            $receipts++;
+            notifyCheck(in_array('Authorization: Bearer private-token-fixture', $headers, true)
+                && $payload['msg']['to_user_id'] === 'scanner@im.wechat' && $payload['msg']['context_token'] === 'moment-context',
+                'An in-flight Weixin reply remains pinned to its original account, recipient and context');
+            $replacementState = weixinReplaceSession($accountChange);
+            return array('status' => 200, 'data' => array('ret' => 0));
+        });
+        notifyCheck($stale['status'] === 'wait' && $handled === 1 && $receipts === ($changeDuring === 'reply' ? 1 : 0)
+            && $replacementState === weixinSessionState(),
+            'An account change during a Weixin ' . $changeDuring . ' stops old commands, replies and state writes: ' . $accountChange);
+    }
+}
+
+weixinConnect();
+weixinBindOwner();
+$replacementState = array();
+$staleUnauthorized = Enhancement_WeixinNotifyHelper::send('旧请求', array(), static function () use (&$replacementState): array {
+    $replacementState = weixinReplaceSession('relogin-same-credentials');
+    return array('status' => 401, 'data' => array('ret' => -14));
+});
+notifyCheck(!$staleUnauthorized['success'] && weixinSessionState() === $replacementState
+    && !Enhancement_WeixinNotifyHelper::status()['expired'],
+    'A delayed unauthorized response cannot expire or overwrite a fresh login with identical credentials');
+
+foreach (array(null, array('success' => true, 'message' => 'replayed', 'replayed' => true)) as $ignoredResult) {
+    weixinConnect();
+    weixinBindOwner();
+    notifySettings(array('weixin_moments_enabled' => '1'));
+    $handled = 0;
+    $replacementState = array();
+    Enhancement_BotMomentsHelper::$handler = static function () use ($ignoredResult, &$handled, &$replacementState): ?array {
+        $handled++;
+        $replacementState = weixinReplaceSession('disconnect');
+        return $ignoredResult;
+    };
+    $stale = Enhancement_WeixinNotifyHelper::sync(weixinResponse(array('get_updates_buf' => 'ignored-stale', 'msgs' => array(
+        weixinMomentMessage('ignored-first'), weixinMomentMessage('ignored-second'),
+    ))));
+    notifyCheck($stale['status'] === 'wait' && $handled === 1 && $replacementState === weixinSessionState(),
+        'Ignored and replayed Weixin command results still stop after a session change');
+}
+
+foreach (array('command', 'reply') as $loseDuring) {
+    weixinConnect();
+    weixinBindOwner();
+    notifySettings(array('weixin_moments_enabled' => '1'));
+    $receipts = 0;
+    $replaceLease = static function () use ($replacementLease): void {
+        Enhancement_NotifyTransportHelper::write('weixin_sync_lock', array('token' => $replacementLease, 'expires_at' => time() + 180));
+    };
+    Enhancement_BotMomentsHelper::$handler = static function () use ($loseDuring, $replaceLease): ?array {
+        if ($loseDuring === 'command') { $replaceLease(); }
+        return array('success' => true, 'message' => '旧命令回复。');
+    };
+    $leaseFailure = '';
+    try {
+        Enhancement_WeixinNotifyHelper::sync(static function ($method, $url) use ($loseDuring, $replaceLease, &$receipts): array {
+            if (strpos($url, '/getupdates') !== false) {
+                return array('status' => 200, 'data' => array('get_updates_buf' => 'lost-final-lease', 'msgs' => array(weixinMomentMessage('lost-final'))));
+            }
+            $receipts++;
+            $replaceLease();
+            return array('status' => 200, 'data' => array('ret' => 0));
+        });
+    } catch (RuntimeException $exception) { $leaseFailure = $exception->getMessage(); }
+    notifyCheck($leaseFailure === '微信消息同步锁已失效，请重新同步。' && $receipts === ($loseDuring === 'reply' ? 1 : 0)
+        && Enhancement_NotifyTransportHelper::read('weixin_sync')['get_updates_buf'] === 'cursor-1'
+        && Enhancement_NotifyTransportHelper::read('weixin_sync_lock')['token'] === $replacementLease,
+        'A lease lost during the final Weixin ' . $loseDuring . ' prevents stale cursor commits and preserves the new worker');
+    Enhancement_NotifyTransportHelper::releaseLease('weixin_sync_lock', $replacementLease);
+}
+
+weixinConnect();
+weixinBindOwner();
+$beforeContendedSync = weixinSessionState();
+$stateLease = null;
+weixinThrows(static function () use (&$stateLease): void {
+    Enhancement_WeixinNotifyHelper::sync(static function () use (&$stateLease): array {
+        $stateLease = Enhancement_NotifyTransportHelper::acquireLease('weixin_state_lock', 60);
+        return array('status' => 200, 'data' => array('get_updates_buf' => 'contended-cursor', 'msgs' => array(weixinMomentMessage('contended'))));
+    });
+}, 'Weixin cannot commit synchronization state while an account transition holds the shared state lock');
+notifyCheck(weixinSessionState() === $beforeContendedSync && Enhancement_NotifyTransportHelper::read('weixin_sync_lock') === array(),
+    'State-lock contention preserves account context and releases the old synchronization lease');
+Enhancement_NotifyTransportHelper::releaseLease('weixin_state_lock', $stateLease);
+
+foreach (array('disconnect', 'new-qr', 'new-login') as $changeDuringLogin) {
+    weixinConnect();
+    Enhancement_WeixinNotifyHelper::startLogin(weixinResponse(array('qrcode' => 'old-pending-qr', 'qrcode_img_content' => 'https://ilinkai.weixin.qq.com/qr/login')));
+    $replacementState = array();
+    $staleLogin = Enhancement_WeixinNotifyHelper::pollLogin('', static function () use ($changeDuringLogin, &$replacementState): array {
+        if ($changeDuringLogin === 'disconnect') {
+            Enhancement_WeixinNotifyHelper::disconnect();
+        } elseif ($changeDuringLogin === 'new-login') {
+            weixinReplaceSession('relogin-same-credentials');
+        } else {
+            Enhancement_WeixinNotifyHelper::startLogin(weixinResponse(array('qrcode' => 'new-pending-qr', 'qrcode_img_content' => 'https://ilinkai.weixin.qq.com/qr/login')));
+        }
+        $replacementState = weixinSessionState();
+        return array('status' => 200, 'data' => array('status' => 'confirmed', 'bot_token' => 'stale-token',
+            'ilink_bot_id' => 'stale-bot', 'ilink_user_id' => 'stale-owner', 'baseurl' => 'https://ilinkai.weixin.qq.com/'));
+    });
+    notifyCheck($staleLogin['status'] === 'wait' && weixinSessionState() === $replacementState,
+        'A superseded Weixin login poll cannot replace the current connection or pending QR: ' . $changeDuringLogin);
+}
+
+weixinConnect();
+$replacementState = array();
+weixinThrows(static function () use (&$replacementState): void {
+    Enhancement_WeixinNotifyHelper::startLogin(static function () use (&$replacementState): array {
+        Enhancement_WeixinNotifyHelper::disconnect();
+        $replacementState = weixinSessionState();
+        return array('status' => 200, 'data' => array('qrcode' => 'stale-qr', 'qrcode_img_content' => 'https://ilinkai.weixin.qq.com/qr/login'));
+    });
+}, 'A delayed Weixin QR response is rejected after disconnect');
+notifyCheck(weixinSessionState() === $replacementState, 'A delayed Weixin QR request cannot restore a disconnected login');
 Enhancement_BotMomentsHelper::$handler = null;
 notifyReset();

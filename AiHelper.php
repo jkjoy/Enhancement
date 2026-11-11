@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/ShortcodeHelper.php';
+
 class Enhancement_AiHelper
 {
     private static function settings()
@@ -288,7 +290,8 @@ class Enhancement_AiHelper
         $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $errno = curl_errno($ch);
         $error = $errno ? curl_error($ch) : '';
-        curl_close($ch);
+        if (PHP_VERSION_ID < 80000) { curl_close($ch); }
+        unset($ch);
 
         if ($errno !== 0) {
             $result['error'] = 'AI 请求失败：' . $error;
@@ -462,6 +465,8 @@ class Enhancement_AiHelper
 
     private static function summaryToPlainText(string $text): string
     {
+        // Remove hidden bodies while their shortcode or rendered boundaries still exist.
+        $text = Enhancement_ShortcodeHelper::hideReplyContent($text);
         $text = str_replace('<!--markdown-->', '', (string)$text);
         if ($text === '') {
             return '';

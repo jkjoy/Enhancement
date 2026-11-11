@@ -6,6 +6,42 @@ class Enhancement_WeixinNotifyHelper
     private const VERSION = '2.4.10';
     private const BASE_URL = 'https://ilinkai.weixin.qq.com';
 
+    private static function withStateLock(callable $operation)
+    {
+        $lease = Enhancement_NotifyTransportHelper::acquireLease('weixin_state_lock', 60);
+        if ($lease === null) {
+            throw new RuntimeException('微信连接状态正在更新，请稍后重试。');
+        }
+        try {
+            return $operation();
+        } finally {
+            Enhancement_NotifyTransportHelper::releaseLease('weixin_state_lock', $lease);
+        }
+    }
+
+    private static function sameSession(array $expected, array $current): bool
+    {
+        foreach (array('token', 'account_id', 'owner_id', 'base_url', 'connected_at', 'session_id') as $key) {
+            if (($expected[$key] ?? null) !== ($current[$key] ?? null)) { return false; }
+        }
+        return true;
+    }
+
+    // Call under the state lock so replacing the account and writing its state cannot interleave.
+    private static function syncCurrent(array $account, string $lease): bool
+    {
+        if (!Enhancement_NotifyTransportHelper::renewLease('weixin_sync_lock', $lease, 180)) {
+            throw new RuntimeException('微信消息同步锁已失效，请重新同步。');
+        }
+        $current = Enhancement_NotifyTransportHelper::read('weixin_account');
+        return self::sameSession($account, $current) && empty($current['expired']);
+    }
+
+    private static function changedSync(array $counts): array
+    {
+        return array('status' => 'wait', 'message' => '微信连接已变更，请重新同步。', 'candidates' => array()) + $counts;
+    }
+
     public static function validateSettings(array $settings, ?array $previous = null): void
     {
         foreach (array('enable_comment_by_weixin', 'enable_link_submit_by_weixin', 'enable_friend_posts_by_weixin', 'weixin_include_links', 'weixin_moments_enabled') as $key) {
@@ -115,14 +151,14 @@ class Enhancement_WeixinNotifyHelper
             }
         }
         if (in_array($data['ret'] ?? null, array(-14, '-14'), true) || in_array($data['errcode'] ?? null, array(-14, '-14'), true) || (int)($response['status'] ?? 0) === 401) {
-            $account = Enhancement_NotifyTransportHelper::read('weixin_account');
-            if ($requestAccount !== null && $account !== array()
-                && ($account['token'] ?? null) === ($requestAccount['token'] ?? null)
-                && ($account['account_id'] ?? null) === ($requestAccount['account_id'] ?? null)) {
-                $expired = $account;
-                $expired['expired'] = true;
-                Enhancement_NotifyTransportHelper::compareAndSwap('weixin_account', $account, $expired);
-            }
+            self::withStateLock(static function () use ($requestAccount): void {
+                $account = Enhancement_NotifyTransportHelper::read('weixin_account');
+                if ($requestAccount !== null && $account !== array() && self::sameSession($requestAccount, $account)) {
+                    $expired = $account;
+                    $expired['expired'] = true;
+                    Enhancement_NotifyTransportHelper::compareAndSwap('weixin_account', $account, $expired);
+                }
+            });
             return new RuntimeException('微信登录凭证已失效，请重新扫码并同步接收人（错误码 -14 或 HTTP 401）。');
         }
         $message = '微信接口失败（HTTP ' . (int)($response['status'] ?? 0) . ($code !== '' ? '，错误码 ' . $code : '') . '）。';
@@ -171,7 +207,9 @@ class Enhancement_WeixinNotifyHelper
 
     public static function startLogin(?callable $transport = null): array
     {
-        $account = Enhancement_NotifyTransportHelper::read('weixin_account');
+        list($account, $login) = self::withStateLock(static function (): array {
+            return array(Enhancement_NotifyTransportHelper::read('weixin_account'), Enhancement_NotifyTransportHelper::read('weixin_login'));
+        });
         $tokens = array();
         if (is_string($account['token'] ?? null) && $account['token'] !== '') {
             $tokens[] = $account['token'];
@@ -186,7 +224,14 @@ class Enhancement_WeixinNotifyHelper
         if (!is_string($qrcode) || $qrcode === '' || strlen($qrcode) > 8192 || $url === '') {
             throw new RuntimeException('微信未返回有效的官方扫码链接。');
         }
-        Enhancement_NotifyTransportHelper::write('weixin_login', array('qrcode' => $qrcode, 'qrcode_url' => $url, 'base_url' => self::BASE_URL, 'started_at' => time(), 'status' => 'wait'));
+        self::withStateLock(static function () use ($account, $login, $qrcode, $url): void {
+            if (!self::sameSession($account, Enhancement_NotifyTransportHelper::read('weixin_account'))
+                || Enhancement_NotifyTransportHelper::read('weixin_login') !== $login) {
+                throw new RuntimeException('微信连接状态已变更，请重新生成扫码链接。');
+            }
+            Enhancement_NotifyTransportHelper::write('weixin_login', array('qrcode' => $qrcode, 'qrcode_url' => $url,
+                'base_url' => self::BASE_URL, 'started_at' => time(), 'status' => 'wait', 'request_id' => bin2hex(random_bytes(16))));
+        });
         return array('status' => 'wait', 'qrcode_url' => $url, 'message' => '请使用微信扫描二维码并确认连接。');
     }
 
@@ -194,7 +239,11 @@ class Enhancement_WeixinNotifyHelper
     {
         $login = Enhancement_NotifyTransportHelper::read('weixin_login');
         if (empty($login['qrcode']) || (int)($login['started_at'] ?? 0) <= time() - 300) {
-            Enhancement_NotifyTransportHelper::write('weixin_login', array());
+            self::withStateLock(static function () use ($login): void {
+                if (Enhancement_NotifyTransportHelper::read('weixin_login') === $login) {
+                    Enhancement_NotifyTransportHelper::write('weixin_login', array());
+                }
+            });
             return array('status' => 'expired', 'message' => '扫码链接已过期，请重新生成。');
         }
         if ($verifyCode !== '' && !preg_match('/\A[0-9]{1,12}\z/', $verifyCode)) {
@@ -230,6 +279,7 @@ class Enhancement_WeixinNotifyHelper
         if (!isset($messages[$status])) {
             throw new RuntimeException('微信返回了无法识别的登录状态，请稍后重试。');
         }
+        $pendingLogin = $login;
         $login['status'] = $status;
         if ($status === 'scaned_but_redirect') {
             if (!is_string($data['redirect_host'] ?? null)) {
@@ -237,6 +287,7 @@ class Enhancement_WeixinNotifyHelper
             }
             $login['base_url'] = self::baseUrl('https://' . $data['redirect_host']);
         }
+        $token = $accountId = $owner = $accountBase = '';
         if ($status === 'confirmed') {
             $token = $data['bot_token'] ?? null;
             $accountId = $data['ilink_bot_id'] ?? null;
@@ -247,15 +298,22 @@ class Enhancement_WeixinNotifyHelper
                 throw new RuntimeException('微信返回的登录凭证不完整，请重新扫码。');
             }
             $accountBase = self::baseUrl(is_string($data['baseurl'] ?? null) && $data['baseurl'] !== '' ? $data['baseurl'] : $base);
-            Enhancement_ConfigStorageHelper::configHandle(array('enable_comment_by_weixin' => '0', 'enable_link_submit_by_weixin' => '0', 'enable_friend_posts_by_weixin' => '0', 'weixin_moments_enabled' => '0'), false);
-            Enhancement_NotifyTransportHelper::write('weixin_account', array('token' => $token, 'account_id' => $accountId, 'owner_id' => $owner, 'base_url' => $accountBase, 'connected_at' => time(), 'expired' => false));
-            Enhancement_NotifyTransportHelper::write('weixin_sync', array());
-            Enhancement_NotifyTransportHelper::write('weixin_recipient', array());
-            Enhancement_NotifyTransportHelper::write('weixin_login', array());
-            Enhancement_NotifyTransportHelper::write('weixin_result', array());
-        } else {
-            Enhancement_NotifyTransportHelper::write('weixin_login', in_array($status, array('expired', 'verify_code_blocked', 'binded_redirect'), true) ? array() : $login);
         }
+        $saved = self::withStateLock(static function () use ($pendingLogin, $login, $status, $token, $accountId, $owner, $accountBase): bool {
+            if (Enhancement_NotifyTransportHelper::read('weixin_login') !== $pendingLogin) { return false; }
+            if ($status === 'confirmed') {
+                Enhancement_ConfigStorageHelper::configHandle(array('enable_comment_by_weixin' => '0', 'enable_link_submit_by_weixin' => '0', 'enable_friend_posts_by_weixin' => '0', 'weixin_moments_enabled' => '0'), false);
+                Enhancement_NotifyTransportHelper::write('weixin_account', array('token' => $token, 'account_id' => $accountId,
+                    'owner_id' => $owner, 'base_url' => $accountBase, 'connected_at' => time(), 'expired' => false, 'session_id' => bin2hex(random_bytes(16))));
+                foreach (array('weixin_sync', 'weixin_recipient', 'weixin_login', 'weixin_result') as $key) {
+                    Enhancement_NotifyTransportHelper::write($key, array());
+                }
+            } else {
+                Enhancement_NotifyTransportHelper::write('weixin_login', in_array($status, array('expired', 'verify_code_blocked', 'binded_redirect'), true) ? array() : $login);
+            }
+            return true;
+        });
+        if (!$saved) { return array('status' => 'wait', 'message' => '微信连接已变更，请重新检查连接状态。'); }
         return array('status' => $status, 'message' => $messages[$status]);
     }
 
@@ -297,14 +355,17 @@ class Enhancement_WeixinNotifyHelper
             return array('status' => 'busy', 'message' => '微信消息正在同步，请稍后重试。', 'candidates' => array()) + $counts;
         }
         try {
-            $account = self::account();
-            $sync = Enhancement_NotifyTransportHelper::read('weixin_sync');
-            $settings = Enhancement_Plugin::runtimeSettings();
-            $recipient = Enhancement_NotifyTransportHelper::read('weixin_recipient');
-            // A message that establishes the first binding cannot also publish a moment.
-            $momentRecipient = class_exists('Enhancement_BotMomentsHelper')
-                && isset($settings->weixin_moments_enabled) && $settings->weixin_moments_enabled == '1'
-                && !empty($recipient['user_id']) ? self::recipient($account) : '';
+            list($account, $sync, $settings, $recipient, $momentRecipient) = self::withStateLock(static function (): array {
+                $account = self::account();
+                $sync = Enhancement_NotifyTransportHelper::read('weixin_sync');
+                $settings = Enhancement_Plugin::runtimeSettings();
+                $recipient = Enhancement_NotifyTransportHelper::read('weixin_recipient');
+                // A message that establishes the first binding cannot also publish a moment.
+                $momentRecipient = class_exists('Enhancement_BotMomentsHelper')
+                    && isset($settings->weixin_moments_enabled) && $settings->weixin_moments_enabled == '1'
+                    && !empty($recipient['user_id']) ? self::recipient($account) : '';
+                return array($account, $sync, $settings, $recipient, $momentRecipient);
+            });
             try {
                 $response = self::request($transport, 'POST', $account['base_url'] . '/ilink/bot/getupdates', self::headers($account['token']), array(
                     'get_updates_buf' => (string)($sync['get_updates_buf'] ?? ''), 'base_info' => self::baseInfo(),
@@ -315,10 +376,8 @@ class Enhancement_WeixinNotifyHelper
                 }
                 return array('status' => 'wait', 'message' => '尚未收到新消息。请先向微信机器人发送“绑定通知”，再同步一次。', 'candidates' => array()) + $counts;
             }
-            $currentAccount = Enhancement_NotifyTransportHelper::read('weixin_account');
-            if (($currentAccount['token'] ?? null) !== $account['token'] || ($currentAccount['account_id'] ?? null) !== $account['account_id']
-                || !empty($currentAccount['expired'])) {
-                return array('status' => 'wait', 'message' => '微信连接已变更，请重新同步。', 'candidates' => array()) + $counts;
+            if (!self::withStateLock(static function () use ($account, $lease): bool { return self::syncCurrent($account, $lease); })) {
+                return self::changedSync($counts);
             }
             if (self::failed($response)) {
                 throw self::error($response, $account);
@@ -373,19 +432,26 @@ class Enhancement_WeixinNotifyHelper
             $sync['context_tokens'] = array_slice($context, -20, null, true);
             $sync['candidates'] = array_slice($candidates, -20);
             // Replies need the newest context; retain the cursor until every command is handled.
-            Enhancement_NotifyTransportHelper::write('weixin_sync', $sync);
+            if (!self::withStateLock(static function () use ($account, $lease, $sync): bool {
+                if (!self::syncCurrent($account, $lease)) { return false; }
+                Enhancement_NotifyTransportHelper::write('weixin_sync', $sync);
+                return true;
+            })) { return self::changedSync($counts); }
             $replies = 0;
             foreach ($commands as $command) {
-                if (!Enhancement_NotifyTransportHelper::renewLease('weixin_sync_lock', $lease, 180)) {
-                    throw new RuntimeException('微信消息同步锁已失效，请重新同步。');
+                if (!self::withStateLock(static function () use ($account, $lease): bool { return self::syncCurrent($account, $lease); })) {
+                    return self::changedSync($counts);
                 }
                 $result = Enhancement_BotMomentsHelper::handle('weixin', $command);
+                if (!self::withStateLock(static function () use ($account, $lease): bool { return self::syncCurrent($account, $lease); })) {
+                    return self::changedSync($counts);
+                }
                 if ($result === null || !empty($result['replayed'])) {
                     continue;
                 }
                 $counts[empty($result['success']) ? 'moments_failed' : (($result['kind'] ?? '') === 'draft' ? 'moments_drafts' : 'moments_published')]++;
                 if ($replies < 10) {
-                    self::send((string)$result['message'], $settings, $transport);
+                    self::sendForAccount((string)$result['message'], $settings, $transport, $account, $momentRecipient, $lease);
                     $replies++;
                 } else {
                     $counts['moments_replies_skipped']++;
@@ -395,28 +461,34 @@ class Enhancement_WeixinNotifyHelper
                 $sync['get_updates_buf'] = $data['get_updates_buf'];
             }
             $sync['synced_at'] = time();
-            Enhancement_NotifyTransportHelper::write('weixin_sync', $sync);
-            if (!empty($recipient['user_id'])) {
-                self::recipient($account);
-                return array('status' => 'bound', 'message' => '接收人保持绑定，会话信息已同步。', 'candidates' => array()) + $counts;
-            }
-            if (!empty($account['owner_id']) && in_array($account['owner_id'], $sync['candidates'], true)) {
-                self::bind($account['owner_id']);
-                return array('status' => 'bound', 'message' => '已绑定扫码微信账号为通知接收人，现在可启用微信通知。', 'candidates' => array()) + $counts;
-            }
-            $view = array();
-            foreach ($sync['candidates'] as $candidate) {
-                if (is_string($candidate) && self::userId($candidate)) {
-                    $view[] = array('user_id' => $candidate);
+            return self::withStateLock(static function () use ($account, $lease, $sync, $recipient, $counts): array {
+                if (!self::syncCurrent($account, $lease)) { return self::changedSync($counts); }
+                Enhancement_NotifyTransportHelper::write('weixin_sync', $sync);
+                if (!empty($recipient['user_id'])) {
+                    self::recipient($account);
+                    return array('status' => 'bound', 'message' => '接收人保持绑定，会话信息已同步。', 'candidates' => array()) + $counts;
                 }
-            }
-            return array('status' => $view === array() ? 'wait' : 'select', 'message' => $view === array() ? '尚未收到绑定消息。请先向微信机器人发送“绑定通知”，再同步一次。' : '请选择刚发送绑定消息的接收人。', 'candidates' => $view) + $counts;
+                if (!empty($account['owner_id']) && in_array($account['owner_id'], $sync['candidates'], true)) {
+                    self::bindRecipient($account['owner_id']);
+                    return array('status' => 'bound', 'message' => '已绑定扫码微信账号为通知接收人，现在可启用微信通知。', 'candidates' => array()) + $counts;
+                }
+                $view = array();
+                foreach ($sync['candidates'] as $candidate) {
+                    if (is_string($candidate) && self::userId($candidate)) { $view[] = array('user_id' => $candidate); }
+                }
+                return array('status' => $view === array() ? 'wait' : 'select', 'message' => $view === array() ? '尚未收到绑定消息。请先向微信机器人发送“绑定通知”，再同步一次。' : '请选择刚发送绑定消息的接收人。', 'candidates' => $view) + $counts;
+            });
         } finally {
             Enhancement_NotifyTransportHelper::releaseLease('weixin_sync_lock', $lease);
         }
     }
 
     public static function bind(string $userId): array
+    {
+        return self::withStateLock(static function () use ($userId): array { return self::bindRecipient($userId); });
+    }
+
+    private static function bindRecipient(string $userId): array
     {
         $account = self::account();
         $sync = Enhancement_NotifyTransportHelper::read('weixin_sync');
@@ -434,25 +506,48 @@ class Enhancement_WeixinNotifyHelper
 
     public static function disconnect(): array
     {
-        Enhancement_ConfigStorageHelper::configHandle(array('enable_comment_by_weixin' => '0', 'enable_link_submit_by_weixin' => '0', 'enable_friend_posts_by_weixin' => '0', 'weixin_moments_enabled' => '0'), false);
-        foreach (array('weixin_account', 'weixin_login', 'weixin_sync', 'weixin_recipient', 'weixin_result') as $key) {
-            Enhancement_NotifyTransportHelper::write($key, array());
-        }
+        self::withStateLock(static function (): void {
+            Enhancement_ConfigStorageHelper::configHandle(array('enable_comment_by_weixin' => '0', 'enable_link_submit_by_weixin' => '0', 'enable_friend_posts_by_weixin' => '0', 'weixin_moments_enabled' => '0'), false);
+            foreach (array('weixin_account', 'weixin_login', 'weixin_sync', 'weixin_recipient', 'weixin_result') as $key) {
+                Enhancement_NotifyTransportHelper::write($key, array());
+            }
+        });
         return array('status' => 'disconnected', 'message' => '微信连接及接收人已清除，微信通知已关闭。重新连接并绑定后，请保存启用通知。');
     }
 
     public static function send(string $text, $settings = null, ?callable $transport = null): array
     {
+        return self::sendForAccount($text, $settings, $transport);
+    }
+
+    private static function sendForAccount(string $text, $settings, ?callable $transport, ?array $expectedAccount = null, string $expectedRecipient = '', string $syncLease = ''): array
+    {
         $result = array('success' => false, 'error' => '', 'id' => '', 'delivery' => '');
+        $requestAccount = $expectedAccount;
+        $previousResult = null;
         try {
             $settings = $settings === null ? Enhancement_Plugin::runtimeSettings() : (object)$settings;
             $text = Enhancement_NotifyTransportHelper::text($text, !isset($settings->weixin_include_links) || $settings->weixin_include_links == '1');
             if ($text === '') {
                 throw new RuntimeException('微信通知内容不能为空。');
             }
-            $account = self::account();
-            $to = self::recipient($account);
-            $sync = Enhancement_NotifyTransportHelper::read('weixin_sync');
+            list($account, $to, $sync) = self::withStateLock(static function () use ($expectedAccount, $expectedRecipient, $syncLease, &$requestAccount, &$previousResult): array {
+                $current = Enhancement_NotifyTransportHelper::read('weixin_account');
+                if ($requestAccount === null) { $requestAccount = $current; }
+                $previousResult = Enhancement_NotifyTransportHelper::read('weixin_result');
+                if ($expectedAccount !== null && (!self::sameSession($expectedAccount, $current) || !empty($current['expired']))) {
+                    throw new RuntimeException('微信连接已变更，请重新同步。');
+                }
+                if ($syncLease !== '' && !self::syncCurrent($expectedAccount, $syncLease)) {
+                    throw new RuntimeException('微信连接已变更，请重新同步。');
+                }
+                $account = self::account();
+                $to = self::recipient($account);
+                if ($expectedRecipient !== '' && $to !== $expectedRecipient) {
+                    throw new RuntimeException('微信接收人已变更，请重新同步。');
+                }
+                return array($account, $to, Enhancement_NotifyTransportHelper::read('weixin_sync'));
+            });
             $clientId = 'enhancement:' . (string)(int)floor(microtime(true) * 1000) . '-' . bin2hex(random_bytes(8));
             $msg = array('from_user_id' => '', 'to_user_id' => $to, 'client_id' => $clientId,
                 'message_type' => 2, 'message_state' => 2, 'item_list' => array(array('type' => 1, 'text_item' => array('text' => $text))),
@@ -480,7 +575,12 @@ class Enhancement_WeixinNotifyHelper
                 ? $exception->getMessage() : '微信通知发送失败，请检查连接状态。';
         }
         try {
-            Enhancement_NotifyTransportHelper::recordResult('weixin', $result);
+            self::withStateLock(static function () use ($requestAccount, $previousResult, $result): void {
+                if ($requestAccount !== null && self::sameSession($requestAccount, Enhancement_NotifyTransportHelper::read('weixin_account'))
+                    && $previousResult === Enhancement_NotifyTransportHelper::read('weixin_result')) {
+                    Enhancement_NotifyTransportHelper::recordResult('weixin', $result);
+                }
+            });
         } catch (Throwable $exception) {
             // An unavailable status store must not change the delivery outcome.
         }

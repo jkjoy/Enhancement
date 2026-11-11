@@ -255,29 +255,38 @@ class Enhancement_S3Upload_S3Client
             throw new Exception('无法打开上传文件流');
         }
 
-        $ch = curl_init();
-        curl_setopt_array($ch, array(
-            CURLOPT_URL => $target['url'],
-            CURLOPT_HTTPHEADER => $curlHeaders,
-            CURLOPT_CUSTOMREQUEST => 'PUT',
-            CURLOPT_UPLOAD => true,
-            CURLOPT_INFILE => $stream,
-            CURLOPT_INFILESIZE => $contentLength,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_SSL_VERIFYPEER => $this->sslVerifyEnabled(),
-            CURLOPT_SSL_VERIFYHOST => $this->sslVerifyEnabled() ? 2 : 0,
-            CURLOPT_HEADER => true,
-            CURLOPT_CONNECTTIMEOUT => min(15, max(1, min(120, (int)$timeout))),
-            CURLOPT_TIMEOUT => max(1, min(120, (int)$timeout)),
-            CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1
-        ));
+        $ch = null;
+        try {
+            $ch = curl_init();
+            curl_setopt_array($ch, array(
+                CURLOPT_URL => $target['url'],
+                CURLOPT_HTTPHEADER => $curlHeaders,
+                CURLOPT_CUSTOMREQUEST => 'PUT',
+                CURLOPT_UPLOAD => true,
+                CURLOPT_INFILE => $stream,
+                CURLOPT_INFILESIZE => $contentLength,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_SSL_VERIFYPEER => $this->sslVerifyEnabled(),
+                CURLOPT_SSL_VERIFYHOST => $this->sslVerifyEnabled() ? 2 : 0,
+                CURLOPT_HEADER => true,
+                CURLOPT_CONNECTTIMEOUT => min(15, max(1, min(120, (int)$timeout))),
+                CURLOPT_TIMEOUT => max(1, min(120, (int)$timeout)),
+                CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1
+            ));
 
-        $response = curl_exec($ch);
-        $httpCode = intval(curl_getinfo($ch, CURLINFO_HTTP_CODE));
-        $curlError = curl_error($ch);
-        $headerSize = intval(curl_getinfo($ch, CURLINFO_HEADER_SIZE));
-        curl_close($ch);
-        @fclose($stream);
+            $response = curl_exec($ch);
+            $httpCode = intval(curl_getinfo($ch, CURLINFO_HTTP_CODE));
+            $curlError = curl_error($ch);
+            $headerSize = intval(curl_getinfo($ch, CURLINFO_HEADER_SIZE));
+        } finally {
+            if (PHP_VERSION_ID < 80000 && is_resource($ch)) {
+                curl_close($ch);
+            }
+            $ch = null;
+            if (is_resource($stream)) {
+                fclose($stream);
+            }
+        }
 
         $responseHeaders = '';
         $responseBody = '';
@@ -341,24 +350,31 @@ class Enhancement_S3Upload_S3Client
         $curlHeaders[] = 'Authorization: ' . $signature;
         $curlHeaders[] = 'Expect:';
 
-        $ch = curl_init();
-        curl_setopt_array($ch, array(
-            CURLOPT_URL => $target['url'],
-            CURLOPT_HTTPHEADER => $curlHeaders,
-            CURLOPT_CUSTOMREQUEST => 'DELETE',
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_SSL_VERIFYPEER => $this->sslVerifyEnabled(),
-            CURLOPT_SSL_VERIFYHOST => $this->sslVerifyEnabled() ? 2 : 0,
-            CURLOPT_HEADER => true,
-            CURLOPT_CONNECTTIMEOUT => 15,
-            CURLOPT_TIMEOUT => 60
-        ));
+        $ch = null;
+        try {
+            $ch = curl_init();
+            curl_setopt_array($ch, array(
+                CURLOPT_URL => $target['url'],
+                CURLOPT_HTTPHEADER => $curlHeaders,
+                CURLOPT_CUSTOMREQUEST => 'DELETE',
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_SSL_VERIFYPEER => $this->sslVerifyEnabled(),
+                CURLOPT_SSL_VERIFYHOST => $this->sslVerifyEnabled() ? 2 : 0,
+                CURLOPT_HEADER => true,
+                CURLOPT_CONNECTTIMEOUT => 15,
+                CURLOPT_TIMEOUT => 60
+            ));
 
-        $response = curl_exec($ch);
-        $httpCode = intval(curl_getinfo($ch, CURLINFO_HTTP_CODE));
-        $headerSize = intval(curl_getinfo($ch, CURLINFO_HEADER_SIZE));
-        $curlError = curl_error($ch);
-        curl_close($ch);
+            $response = curl_exec($ch);
+            $httpCode = intval(curl_getinfo($ch, CURLINFO_HTTP_CODE));
+            $headerSize = intval(curl_getinfo($ch, CURLINFO_HEADER_SIZE));
+            $curlError = curl_error($ch);
+        } finally {
+            if (PHP_VERSION_ID < 80000 && is_resource($ch)) {
+                curl_close($ch);
+            }
+            $ch = null;
+        }
 
         if ($response === false || !in_array($httpCode, array(200, 204, 404), true)) {
             $responseHeaders = '';

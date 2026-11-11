@@ -1,6 +1,10 @@
 <?php
 /** Actual S3 upload pipeline with a fake object client and disposable local storage. */
 if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
+error_reporting(E_ALL);
+set_error_handler(static function ($severity, $message, $file, $line) {
+    throw new RuntimeException($message . ' at ' . $file . ':' . $line);
+});
 $storageFixture = sys_get_temp_dir() . '/enh-bot-s3-' . bin2hex(random_bytes(8));
 if (!mkdir($storageFixture, 0700)) { throw new RuntimeException('Cannot create isolated storage fixture.'); }
 define('__TYPECHO_ROOT_DIR__', $storageFixture);
@@ -43,6 +47,7 @@ class Enhancement_S3Upload_S3Client
 {
     public static $calls = array();
     public static $pathDelay = 0;
+    public static $failure = null;
     public static function getInstance() { return new self(); }
     public function generatePath($file): string
     {
@@ -53,6 +58,7 @@ class Enhancement_S3Upload_S3Client
     {
         storageCheck(is_file($file) && is_readable($file), 'The real stream uploader supplies a readable verified file to object storage');
         self::$calls[] = array('path' => $path, 'file' => $file, 'timeout' => $timeout);
+        if (self::$failure !== null) { throw self::$failure; }
         return array('url' => 'https://objects.example/' . $path);
     }
     public function getObjectUrl($path): string { return 'https://objects.example/' . $path; }
@@ -61,10 +67,12 @@ require_once dirname(__DIR__, 2) . '/S3Upload/StreamUploader.php';
 require_once dirname(__DIR__, 2) . '/S3Upload/FileHandler.php';
 
 $stream = tmpfile();
-$compressedTemporaries = array();
+$existingTemporaries = glob(sys_get_temp_dir() . '/enh_s3_*');
 try {
     $image = imagecreatetruecolor(2, 2);
-    ob_start(); imagepng($image); $png = ob_get_clean(); imagedestroy($image);
+    ob_start(); imagepng($image); $png = ob_get_clean();
+    if (PHP_VERSION_ID < 80000) { imagedestroy($image); }
+    $image = null;
     fwrite($stream, $png);
     $temporaryPath = stream_get_meta_data($stream)['uri'];
     $file = array('name' => 'fixture.png', 'type' => 'image/png', 'size' => strlen($png), 'bytes' => $png, 'tmp_name' => $temporaryPath);
@@ -112,23 +120,73 @@ try {
         'timeout' => 20, 'deadline' => microtime(true) + 5));
     $compressed = Enhancement_S3Upload_FileHandler::uploadHandle($compressedFile);
     $last = end(Enhancement_S3Upload_S3Client::$calls);
-    $compressedTemporaries[] = $last['file'];
     storageCheck(is_array($compressed) && $compressed['mime'] === 'image/webp' && $compressed['type'] === 'webp'
         && $last['timeout'] >= 1 && $last['timeout'] <= 4,
         'The existing image compression setting remains active and its result retains the shared upload budget');
     storageCheck(Enhancement_AttachmentResolverHelper::extractPathFromContent($compressed) === $compressed['path']
         && !array_key_exists('bytes', $compressed) && !array_key_exists('tmp_name', $compressed) && !array_key_exists('deadline', $compressed),
         'Stored attachment metadata exposes a stable object path and omits temporary bytes and receiver deadlines');
+    storageCheck($last['file'] !== $temporaryPath && pathinfo($last['file'], PATHINFO_EXTENSION) === ''
+        && !file_exists($last['file']) && glob(sys_get_temp_dir() . '/enh_s3_*') === $existingTemporaries,
+        'Successful compression removes the original tempnam file without leaving an unused base file');
+    storageCheck(is_file($temporaryPath) && file_get_contents($temporaryPath) === $largePng,
+        'Successful compression preserves the receiver-owned source');
+
+    foreach (array(new RuntimeException('fixture upload failure'), new Error('fixture upload error')) as $failure) {
+        Enhancement_S3Upload_S3Client::$failure = $failure;
+        storageCheck(Enhancement_S3Upload_FileHandler::uploadHandle($compressedFile) === false,
+            'Upload exceptions and errors return a failed result');
+        $last = end(Enhancement_S3Upload_S3Client::$calls);
+        storageCheck(!file_exists($last['file']) && glob(sys_get_temp_dir() . '/enh_s3_*') === $existingTemporaries
+            && file_get_contents($temporaryPath) === $largePng,
+            'Upload failure always removes compressed temporary files and preserves the source');
+    }
+    Enhancement_S3Upload_S3Client::$failure = null;
+
+    // Unsupported conversion returns false, preserving the existing original-file upload fallback.
+    $unsupported = array_replace($compressedFile, array('type' => 'image/webp', 'deadline' => microtime(true) + 5));
+    $result = Enhancement_S3Upload_FileHandler::uploadHandle($unsupported);
+    $last = end(Enhancement_S3Upload_S3Client::$calls);
+    storageCheck(is_array($result) && $result['mime'] === 'image/png' && $last['file'] === $temporaryPath
+        && glob(sys_get_temp_dir() . '/enh_s3_*') === $existingTemporaries,
+        'A conversion returning false uploads the original and removes its unused compression temporary');
+
+    $invalidImage = str_repeat('not a PNG', 14000);
+    rewind($stream); ftruncate($stream, 0); fwrite($stream, $invalidImage);
+    clearstatcache(true, $temporaryPath);
+    $invalid = array_replace($compressedFile, array('size' => strlen($invalidImage), 'deadline' => microtime(true) + 5));
+    $before = count(Enhancement_S3Upload_S3Client::$calls);
+    storageCheck(Enhancement_S3Upload_FileHandler::uploadHandle($invalid) === false
+        && count(Enhancement_S3Upload_S3Client::$calls) === $before
+        && glob(sys_get_temp_dir() . '/enh_s3_*') === $existingTemporaries
+        && file_get_contents($temporaryPath) === $invalidImage,
+        'A GD decoding warning promoted to an exception cleans the temporary and preserves the source');
+
+    rewind($stream); ftruncate($stream, 0); fwrite($stream, $largePng);
+    clearstatcache(true, $temporaryPath);
+    $convert = new ReflectionMethod('Enhancement_S3Upload_FileHandler', 'convertToWebp');
+    if (PHP_VERSION_ID < 80100) { $convert->setAccessible(true); }
+    $writeFailed = false;
+    try { $convert->invoke(null, $temporaryPath, $storageFixture . '/missing/output', 'image/png', 85); }
+    catch (RuntimeException $exception) { $writeFailed = true; }
+    storageCheck($writeFailed && file_get_contents($temporaryPath) === $largePng,
+        'A GD encoder write exception releases the image and preserves the source');
+
+    require dirname(__DIR__, 2) . '/S3Helper.php';
+    $factory = new class {
+        private $handle = 'Widget_Upload';
+        private static $plugin = array('handles' => array('Widget_Upload:uploadHandle' => array(
+            array('Enhancement_S3Helper', 'uploadHandle'), array('Other_Plugin', 'uploadHandle'))));
+        public static function plugins() { return self::$plugin; }
+    };
+    $remove = new ReflectionMethod('Enhancement_S3Helper', 'removeRuntimeCallbacks');
+    if (PHP_VERSION_ID < 80100) { $remove->setAccessible(true); }
+    $remove->invoke(null, $factory);
+    storageCheck(array_values($factory::plugins()['handles']['Widget_Upload:uploadHandle']) === array(array('Other_Plugin', 'uploadHandle')),
+        'Private runtime hook cleanup works without deprecated reflection calls');
     echo 'Bot moment S3 storage checks passed: ' . $storageChecks . PHP_EOL;
 } finally {
     if (is_resource($stream)) { fclose($stream); }
-    foreach ($compressedTemporaries as $path) {
-        if (strpos(basename($path), 'enh_s3_') === 0 && substr($path, -5) === '.webp'
-            && realpath(dirname($path)) === realpath(sys_get_temp_dir())) {
-            @unlink($path);
-            @unlink(substr($path, 0, -5));
-        }
-    }
     $resolvedFixture = realpath($storageFixture);
     if ($resolvedFixture !== false && realpath(dirname($resolvedFixture)) === realpath(sys_get_temp_dir())
         && strpos(basename($resolvedFixture), 'enh-bot-s3-') === 0) {

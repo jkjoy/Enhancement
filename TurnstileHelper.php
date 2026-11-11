@@ -80,10 +80,12 @@ class Enhancement_TurnstileHelper
         $response = curl_exec($ch);
         if (curl_errno($ch)) {
             $error = curl_error($ch);
-            curl_close($ch);
+            if (PHP_VERSION_ID < 80000) { curl_close($ch); }
+            unset($ch);
             return array('success' => false, 'message' => _t('人机验证请求失败：%s', $error));
         }
-        curl_close($ch);
+        if (PHP_VERSION_ID < 80000) { curl_close($ch); }
+        unset($ch);
 
         $decoded = json_decode((string)$response, true);
         if (!is_array($decoded)) {

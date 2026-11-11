@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/ReplyAccessHelper.php';
+
 class Enhancement_ShortcodeHelper
 {
     public static function renderStyles()
@@ -26,22 +28,13 @@ class Enhancement_ShortcodeHelper
             return $content;
         }
 
-        $canViewReply = self::canViewerAccessReplyShortcode($widget);
-
-        $content = preg_replace_callback(
-            '/\[reply\]([\s\S]*?)\[\/reply\]/i',
-            function ($matches) use ($canViewReply) {
-                $innerRaw = isset($matches[1]) ? (string)$matches[1] : '';
-                if ($canViewReply) {
-                    return '<div class="enhancement-shortcode enhancement-reply">' . $innerRaw . '</div>';
-                }
-                return '<div class="enhancement-shortcode enhancement-reply enhancement-reply-locked">'
-                    . '<span class="enhancement-reply-lock-text">该内容仅评论审核通过后可见</span>'
-                    . '<a class="enhancement-reply-action" href="#comments">评论后刷新查看隐藏内容</a>'
-                    . '</div>';
-            },
-            $content
-        );
+        if (stripos($content, '[reply]') !== false || stripos($content, '<!--enhancement-reply-start-->') !== false) {
+            if (!self::canViewerAccessReplyShortcode($widget)) {
+                $content = self::hideReplyContent($content, self::replyLockedNotice());
+            } else {
+                $content = self::renderUnlockedReplyContent($content);
+            }
+        }
 
         $content = self::replaceCalloutShortcode($content, 'primary', 'important');
         $content = self::replaceCalloutShortcode($content, 'success', 'success');
@@ -59,10 +52,13 @@ class Enhancement_ShortcodeHelper
                 try {
                     $db = Typecho_Db::get();
                     $row = $db->fetchRow(
-                        $db->select('cid', 'title', 'slug', 'created', 'type', 'status')
+                        $db->select()
                             ->from('table.contents')
                             ->where('cid = ?', $cid)
                             ->where('type = ?', 'post')
+                            ->where('status = ?', 'publish')
+                            ->where('created <= ?', time())
+                            ->where('(password IS NULL OR password = ?)', '')
                             ->limit(1)
                     );
 
@@ -76,7 +72,7 @@ class Enhancement_ShortcodeHelper
                     }
 
                     $permalink = '';
-                    $archive = Typecho_Widget::widget('Widget_Archive');
+                    $archive = Typecho_Widget::widget('Widget_Abstract_Contents@enhancement-article-ref-' . $cid);
                     if (method_exists($archive, 'filter')) {
                         $archive->push($row);
                         if (isset($archive->permalink)) {
@@ -159,135 +155,73 @@ class Enhancement_ShortcodeHelper
         return $content;
     }
 
+    private static function renderUnlockedReplyContent($content): string
+    {
+        $depth = 0;
+        $opening = '<!--enhancement-reply-start--><div class="enhancement-shortcode enhancement-reply">';
+        $closing = '</div><!--enhancement-reply-end-->';
+        $content = preg_replace_callback('/\[\/?reply\]/i', function ($match) use (&$depth, $opening, $closing) {
+            if (stripos($match[0], '[/') === 0) {
+                if ($depth <= 0) {
+                    return '';
+                }
+                $depth--;
+                return $closing;
+            }
+            $depth++;
+            return $opening;
+        }, $content);
+        return $content . str_repeat($closing, $depth);
+    }
+
+    /** Hide complete, nested and truncated reply blocks in public output. */
+    public static function hideReplyContent($content, $replacement = ''): string
+    {
+        $content = (string)$content;
+        if (!preg_match_all('/\[\/?reply\]|<!--enhancement-reply-(?:start|end)-->/i', $content, $matches, PREG_OFFSET_CAPTURE)) {
+            return $content;
+        }
+        $result = '';
+        $offset = 0;
+        $depth = 0;
+        foreach ($matches[0] as $match) {
+            list($tag, $position) = $match;
+            if ($depth === 0) {
+                $result .= substr($content, $offset, $position - $offset);
+            }
+            $closing = stripos($tag, '[/') === 0 || stripos($tag, '-end-->') !== false;
+            if ($closing) {
+                $depth = max(0, $depth - 1);
+            } else {
+                if ($depth === 0) {
+                    $result .= $replacement;
+                }
+                $depth++;
+            }
+            $offset = $position + strlen($tag);
+        }
+        return $depth === 0 ? $result . substr($content, $offset) : $result;
+    }
+
+    private static function replyLockedNotice(): string
+    {
+        return '<div class="enhancement-shortcode enhancement-reply enhancement-reply-locked">'
+            . '<span class="enhancement-reply-lock-text">该内容仅评论审核通过后可见</span>'
+            . '<a class="enhancement-reply-action" href="#comments">评论后刷新查看隐藏内容</a>'
+            . '</div>';
+    }
+
     private static function canViewerAccessReplyShortcode($widget): bool
     {
-        $cid = self::resolveReplyTargetCid($widget);
-        if ($cid <= 0) {
+        // Lists and feeds can be shared or cached; only the actual article can unlock.
+        if (!($widget instanceof Widget_Archive) || !$widget->is('single') || $widget->is('feed')) {
             return false;
         }
-
-        $identity = self::resolveReplyViewerIdentity();
-        if (!is_array($identity) || (empty($identity['uid']) && empty($identity['mail']) && empty($identity['author']))) {
+        if (!Enhancement_ReplyAccessHelper::canAccess((int)$widget->cid)) {
             return false;
         }
-
-        static $cache = array();
-        $cacheKey = $cid
-            . '|u:' . (isset($identity['uid']) ? intval($identity['uid']) : 0)
-            . '|m:' . (isset($identity['mail']) ? (string)$identity['mail'] : '')
-            . '|a:' . (isset($identity['author']) ? (string)$identity['author'] : '');
-
-        if (array_key_exists($cacheKey, $cache)) {
-            return (bool)$cache[$cacheKey];
-        }
-
-        $uid = isset($identity['uid']) ? intval($identity['uid']) : 0;
-        $mail = isset($identity['mail']) ? trim((string)$identity['mail']) : '';
-        $author = isset($identity['author']) ? trim((string)$identity['author']) : '';
-
-        try {
-            $db = Typecho_Db::get();
-
-            if ($uid > 0) {
-                $row = $db->fetchRow(
-                    $db->select('coid')
-                        ->from('table.comments')
-                        ->where('cid = ?', $cid)
-                        ->where('type = ?', 'comment')
-                        ->where('status = ?', 'approved')
-                        ->where('authorId = ?', $uid)
-                        ->limit(1)
-                );
-                if (is_array($row) && !empty($row)) {
-                    $cache[$cacheKey] = true;
-                    return true;
-                }
-            }
-
-            if ($mail !== '') {
-                $row = $db->fetchRow(
-                    $db->select('coid')
-                        ->from('table.comments')
-                        ->where('cid = ?', $cid)
-                        ->where('type = ?', 'comment')
-                        ->where('status = ?', 'approved')
-                        ->where('LOWER(mail) = ?', strtolower($mail))
-                        ->limit(1)
-                );
-                if (is_array($row) && !empty($row)) {
-                    $cache[$cacheKey] = true;
-                    return true;
-                }
-            }
-
-            if ($author !== '') {
-                $row = $db->fetchRow(
-                    $db->select('coid')
-                        ->from('table.comments')
-                        ->where('cid = ?', $cid)
-                        ->where('type = ?', 'comment')
-                        ->where('status = ?', 'approved')
-                        ->where('author = ?', $author)
-                        ->limit(1)
-                );
-                if (is_array($row) && !empty($row)) {
-                    $cache[$cacheKey] = true;
-                    return true;
-                }
-            }
-        } catch (Exception $e) {
-            $cache[$cacheKey] = false;
-            return false;
-        }
-
-        $cache[$cacheKey] = false;
-        return false;
-    }
-
-    private static function resolveReplyTargetCid($widget): int
-    {
-        if (is_object($widget)) {
-            $cid = isset($widget->cid) ? intval($widget->cid) : 0;
-            if ($cid > 0) {
-                return $cid;
-            }
-        }
-
-        try {
-            $archive = Typecho_Widget::widget('Widget_Archive');
-            $cid = isset($archive->cid) ? intval($archive->cid) : 0;
-            if ($cid > 0) {
-                return $cid;
-            }
-        } catch (Exception $e) {
-        }
-
-        return 0;
-    }
-
-    private static function resolveReplyViewerIdentity(): array
-    {
-        $identity = array(
-            'uid' => 0,
-            'mail' => '',
-            'author' => ''
-        );
-
-        try {
-            $user = Typecho_Widget::widget('Widget_User');
-            if ($user->hasLogin()) {
-                $identity['uid'] = isset($user->uid) ? intval($user->uid) : 0;
-                $identity['mail'] = isset($user->mail) ? trim((string)$user->mail) : '';
-                $identity['author'] = isset($user->screenName) ? trim((string)$user->screenName) : '';
-                return $identity;
-            }
-        } catch (Exception $e) {
-        }
-
-        $identity['mail'] = trim((string)Typecho_Cookie::get('__typecho_remember_mail'));
-        $identity['author'] = trim((string)Typecho_Cookie::get('__typecho_remember_author'));
-
-        return $identity;
+        Typecho_Response::getInstance()->setHeader('Cache-Control', 'private, no-store');
+        return true;
     }
 
     private static function extractDownloadShortcodeUrl($rawBody): string

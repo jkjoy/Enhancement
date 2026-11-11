@@ -35,7 +35,7 @@ class Enhancement_LifecycleHelper
         Typecho_Plugin::factory('admin/write-post.php')->bottom = Enhancement_Plugin::callback('writePostBottom');
         Typecho_Plugin::factory('admin/write-page.php')->bottom = Enhancement_Plugin::callback('writePageBottom');
         Typecho_Plugin::factory('Widget_Abstract_Contents')->contentEx = Enhancement_Plugin::callback('parse');
-        Typecho_Plugin::factory('Widget_Abstract_Contents')->excerptEx = Enhancement_Plugin::callback('parse');
+        self::registerReplyPrivacyHooks(true);
         Typecho_Plugin::factory('Widget_Abstract_Comments')->contentEx = Enhancement_Plugin::callback('parse');
         Typecho_Plugin::factory('Widget_Archive')->handleInit = Enhancement_Plugin::callback('applyAvatarPrefix');
         Typecho_Plugin::factory('Widget_Archive')->header = Enhancement_Plugin::callback('archiveHeader');
@@ -46,6 +46,57 @@ class Enhancement_LifecycleHelper
         }
 
         return _t($info);
+    }
+
+    /** Runtime upgrades must not enter Typecho's pending plugin-activation hooks. */
+    public static function registerReplyPrivacyHooks($activating = false)
+    {
+        $plugins = Typecho_Plugin::export();
+        $hooks = array('excerpt' => 'hideReplyForExcerpt', 'excerptEx' => 'parseExcerpt');
+        $normalize = function (&$callbacks, $target, $replaceLegacy) {
+            $callbacks = is_array($callbacks) ? $callbacks : array();
+            $found = false;
+            foreach ($callbacks as $position => $existing) {
+                $legacy = $replaceLegacy && is_array($existing) && isset($existing[0], $existing[1])
+                    && $existing[1] === 'parse' && in_array(strtolower(ltrim((string)$existing[0], '\\')),
+                        array('enhancement_plugin', 'typechoplugin\\enhancement\\plugin'), true);
+                if ($existing === $target || $legacy) {
+                    if ($found) {
+                        unset($callbacks[$position]);
+                    } else {
+                        $callbacks[$position] = $target;
+                        $found = true;
+                    }
+                }
+            }
+            if (!$found) {
+                $weight = $callbacks ? max(array_map('floatval', array_keys($callbacks))) + 0.001 : 0;
+                $callbacks[(string)$weight] = $target;
+            }
+        };
+        foreach ($hooks as $hook => $method) {
+            $key = 'Widget_Abstract_Contents:' . $hook;
+            $target = array('Enhancement_ContentParseHelper', $method);
+            $normalize($plugins['handles'][$key], $target, $hook === 'excerptEx');
+            if (isset($plugins['activated']['Enhancement'])) {
+                $normalize($plugins['activated']['Enhancement']['handles'][$key], $target, $hook === 'excerptEx');
+            }
+            if ($activating) {
+                // Normal activation owns these callbacks through Typecho's tmp
+                // record. Remove runtime copies before using the activation API.
+                foreach ($plugins['handles'][$key] as $position => $existing) {
+                    if ($existing === $target) {
+                        unset($plugins['handles'][$key][$position]);
+                    }
+                }
+            }
+        }
+        Typecho_Plugin::init($plugins);
+        if ($activating) {
+            foreach ($hooks as $hook => $method) {
+                Typecho_Plugin::factory('Widget_Abstract_Contents')->{$hook} = array('Enhancement_ContentParseHelper', $method);
+            }
+        }
     }
 
     /** Register the new menu on in-place upgrades without disabling the plugin. */

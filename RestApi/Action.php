@@ -370,7 +370,9 @@ class Enhancement_RestApi_Action extends Typecho_Widget implements Widget_Interf
         $author = $this->db->fetchRow($this->db->select()
             ->from('table.users')->where('uid = ?', $row['authorId'])->limit(1));
         $summary = $this->get_custom_field((int)$row['cid'], 'summary');
-        $excerpt = (string)$summary;
+        // Previously generated summaries may already contain hidden reply text.
+        $hasReply = stripos((string)$row['text'], '[reply]') !== false;
+        $excerpt = $hasReply ? '' : Enhancement_ShortcodeHelper::hideReplyContent((string)$summary);
         // terms
         list($catIds, $tagIds) = $this->get_post_terms((int)$row['cid']);
 
@@ -387,7 +389,7 @@ class Enhancement_RestApi_Action extends Typecho_Widget implements Widget_Interf
             'guid' => ['rendered' => $permalink],
             'title' => ['rendered' => $row['title']],
             'content' => [
-                'rendered' => str_replace('<!--markdown-->', '', $row['text']),
+                'rendered' => Enhancement_ShortcodeHelper::hideReplyContent(str_replace('<!--markdown-->', '', $row['text'])),
                 'protected' => false,
             ],
             'excerpt' => [

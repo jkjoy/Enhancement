@@ -134,7 +134,9 @@ class Enhancement_S3Helper
             }
 
             $handleProperty = $ref->getProperty('handle');
-            $handleProperty->setAccessible(true);
+            if (PHP_VERSION_ID < 80100) {
+                $handleProperty->setAccessible(true);
+            }
             $handle = $handleProperty->getValue($factory);
 
             if (!$ref->hasProperty('plugin')) {
@@ -142,7 +144,9 @@ class Enhancement_S3Helper
             }
 
             $pluginProperty = $ref->getProperty('plugin');
-            $pluginProperty->setAccessible(true);
+            if (PHP_VERSION_ID < 80100) {
+                $pluginProperty->setAccessible(true);
+            }
             $plugins = $pluginProperty->getValue();
             if (!is_array($plugins)) {
                 return;

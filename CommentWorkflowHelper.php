@@ -1,9 +1,12 @@
 <?php
 
+require_once __DIR__ . '/ReplyAccessHelper.php';
+
 class Enhancement_CommentWorkflowHelper
 {
     public static function finishComment($comment)
     {
+        Enhancement_ReplyAccessHelper::rememberComment($comment);
         $settings = Enhancement_Plugin::runtimeSettings();
         $user = Typecho_Widget::widget('Widget_User');
         $commentUrl = isset($comment->url) ? trim((string)$comment->url) : '';

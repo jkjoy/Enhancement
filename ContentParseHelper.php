@@ -2,6 +2,16 @@
 
 class Enhancement_ContentParseHelper
 {
+    public static function hideReplyForExcerpt($text, $widget = null, $lastResult = null)
+    {
+        return Enhancement_ShortcodeHelper::hideReplyContent(empty($lastResult) ? $text : $lastResult);
+    }
+
+    public static function parseExcerpt($text, $widget, $lastResult = null)
+    {
+        return self::parse(self::hideReplyForExcerpt($text, $widget, $lastResult), $widget, null);
+    }
+
     public static function parse($text, $widget, $lastResult)
     {
         $text = empty($lastResult) ? $text : $lastResult;
