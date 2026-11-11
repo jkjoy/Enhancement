@@ -42,6 +42,11 @@ class Enhancement_ConfigStorageHelper
 
         $optionName = 'plugin:Enhancement';
         $incoming = self::normalizeSettingsForStorage($settings);
+        if (array_key_exists('SMTPHost', $incoming)) {
+            $incoming['STMPHost'] = $incoming['SMTPHost'];
+        } elseif (array_key_exists('STMPHost', $incoming)) {
+            $incoming['SMTPHost'] = $incoming['STMPHost'];
+        }
         if (empty($incoming)) {
             return;
         }

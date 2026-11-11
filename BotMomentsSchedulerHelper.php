@@ -27,9 +27,9 @@ class Enhancement_BotMomentsSchedulerHelper
         } catch (Throwable $exception) { return array('enabled' => false, 'status' => 'error', 'last_run' => 0, 'last_attempt' => 0, 'next_at' => 0); }
     }
 
-    private static function context(): ?array
+    private static function context(bool $reload = false): ?array
     {
-        $config = Enhancement_Plugin::runtimeSettings();
+        $config = Enhancement_Plugin::runtimeSettings($reload);
         $settings = is_object($config) && method_exists($config, 'toArray') ? $config->toArray() : (array)$config;
         if (($settings['weixin_moments_enabled'] ?? '0') != '1' || ($settings['weixin_moments_auto_receive'] ?? '1') != '1') { return null; }
         $db = Typecho_Db::get();
@@ -88,7 +88,10 @@ class Enhancement_BotMomentsSchedulerHelper
             $sent = (int)curl_getinfo($handle, CURLINFO_REQUEST_SIZE);
             // Without FastCGI the task may acknowledge only after the short caller timeout.
             return $status === 204 || (curl_errno($handle) === 28 && $sent > 0);
-        } finally { curl_close($handle); }
+        } finally {
+            if (PHP_VERSION_ID < 80000) { curl_close($handle); }
+            unset($handle);
+        }
     }
 
     public static function dispatchIfDue(?callable $dispatch = null): bool
@@ -102,7 +105,7 @@ class Enhancement_BotMomentsSchedulerHelper
                 && ($state['expires_at'] ?? 0) > time())) { return false; }
             $lease = Enhancement_NotifyTransportHelper::acquireLease('weixin_cron_lock', 10);
             if ($lease === null) { return false; }
-            $context = self::context();
+            $context = self::context(true);
             if ($context === null) { return false; }
             $state = Enhancement_NotifyTransportHelper::read('weixin_cron');
             if (($state['next_at'] ?? 0) > time() || (in_array($state['status'] ?? '', array('queued', 'running'), true)
@@ -156,7 +159,7 @@ class Enhancement_BotMomentsSchedulerHelper
         try {
             if (($claim['status'] ?? '') !== 'running' || ($claim['expires_at'] ?? 0) <= time()
                 || Enhancement_NotifyTransportHelper::read('weixin_cron') !== $claim) { return; }
-            $context = self::context();
+            $context = self::context(true);
             if ($context === null || !hash_equals((string)($claim['binding'] ?? ''), $context['binding'])) { $status = 'disabled'; }
             else {
                 ob_start();

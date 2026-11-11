@@ -1,11 +1,5 @@
 <?php
-use Widget\Options;
-use PHPMailer\PHPMailer\PHPMailer;
-use PHPMailer\PHPMailer\Exception;
-
-require_once __DIR__ . '/PHPMailer/PHPMailer.php';
-require_once __DIR__ . '/PHPMailer/SMTP.php';
-require_once __DIR__ . '/PHPMailer/Exception.php';
+require_once dirname(__DIR__) . '/MailHelper.php';
 
 class Enhancement_CommentNotifier_Action extends Typecho_Widget implements Widget_Interface_Do
 {
@@ -22,52 +16,42 @@ class Enhancement_CommentNotifier_Action extends Typecho_Widget implements Widge
             $plugin = (object) array();
         }
 
-        if (!is_object($plugin)) {
-            echo '插件配置缺失';
+        $this->response->setHeader('Cache-Control', 'no-store');
+        if (!$this->request->isPost()) {
+            $this->response->setStatus(405)->setHeader('Allow', 'POST');
             return;
         }
-
-        if (!isset($_REQUEST['auth']) || $_REQUEST['auth'] != $plugin->auth) {
-            echo '密钥不正确';
+        $expected = is_object($plugin) && isset($plugin->auth) ? (string)$plugin->auth : '';
+        $provided = $this->request->get('auth');
+        if ($expected === '' || !is_string($provided) || !hash_equals($expected, $provided)
+            || (isset($plugin->enable_comment_notifier) && (string)$plugin->enable_comment_notifier !== '1')) {
+            $this->response->setStatus(403);
             return;
         }
-
-        try {
-            $from = $plugin->from;
-            $fromName = $plugin->fromName;
-
-            $mail = new PHPMailer(false);
-            $mail->CharSet = PHPMailer::CHARSET_UTF8;
-            $mail->Encoding = PHPMailer::ENCODING_BASE64;
-            $mail->isSMTP();
-            $mail->Host = $plugin->STMPHost;
-            $mail->SMTPAuth = true;
-            $mail->Username = $plugin->SMTPUserName;
-            $mail->Password = $plugin->SMTPPassword;
-            $mail->SMTPSecure = $plugin->SMTPSecure;
-            $mail->Port = $plugin->SMTPPort;
-
-            $mail->setFrom($from, $fromName);
-            $mail->addAddress($_REQUEST['to'], $_REQUEST['fromName']);
-            $mail->Subject = $_REQUEST['subject'];
-            $mail->isHTML();
-            $mail->Body = $_REQUEST['html'];
-            $mail->send();
-
-            $at = date('Y-m-d H:i:s');
-            if ($mail->isError()) {
-                $data = $at . ' ' . $mail->ErrorInfo;
-            } else {
-                $data = PHP_EOL . $at . ' 发送成功!! ';
-                $data .= ' 发件人:' . $fromName;
-                $data .= ' 发件邮箱:' . $from;
-                $data .= ' 接收邮箱:' . $_REQUEST['to'];
-                $data .= ' 接收人:' . $_REQUEST['fromName'] . PHP_EOL;
+        $param = array();
+        foreach (array('to', 'fromName', 'subject', 'html') as $key) {
+            $value = $this->request->get($key, '');
+            if (!is_string($value) || strlen($value) > ($key === 'html' ? 1048576 : 1000)) {
+                $this->response->setStatus(400);
+                return;
             }
-            echo $data;
-        } catch (Exception $e) {
-            $str = "\nerror time: " . date('Y-m-d H:i:s') . "\n";
-            echo $str . $e . "\n";
+            $param[$key] = $value;
+        }
+        if (!filter_var($param['to'], FILTER_VALIDATE_EMAIL)) {
+            $this->response->setStatus(400);
+            return;
+        }
+        try {
+            $mail = Enhancement_MailHelper::createMailer($plugin);
+            $mail->addAddress($param['to'], $param['fromName']);
+            $mail->Subject = $param['subject'];
+            $mail->Body = $param['html'];
+            $sent = $mail->send();
+            $this->response->setStatus($sent ? 200 : 502);
+            echo $sent ? '发送成功' : '发送失败';
+        } catch (Throwable $error) {
+            $this->response->setStatus(502);
+            echo '发送失败';
         }
     }
 }

@@ -7,9 +7,9 @@ class Enhancement_FriendPostsNotifyHelper
     private const LIMIT = 1800;
     private const ATTEMPTS = 4;
 
-    private static function settings(): array
+    private static function settings(bool $reload = false): array
     {
-        $settings = Enhancement_Plugin::runtimeSettings();
+        $settings = Enhancement_Plugin::runtimeSettings($reload);
         return is_object($settings) && method_exists($settings, 'toArray') ? $settings->toArray() : (array)$settings;
     }
 
@@ -85,6 +85,14 @@ class Enhancement_FriendPostsNotifyHelper
         Enhancement_NotifyTransportHelper::write($key . '_parts', $sizes);
     }
 
+    private static function saveChangedState(string $key, array $state, array &$saved): void
+    {
+        if ($state !== $saved) {
+            self::writeState($key, $state);
+            $saved = $state;
+        }
+    }
+
     private static function identity(string $channel, array $settings): string
     {
         if (($settings['enable_friend_posts'] ?? '1') != '1'
@@ -151,17 +159,18 @@ class Enhancement_FriendPostsNotifyHelper
         return ($label !== '' ? $label . "\n" : '') . $url . "\n\n";
     }
 
-    private static function current(string $channel, array $state): bool
+    private static function current(string $channel, array $state, ?array $settings = null): bool
     {
         $current = Enhancement_NotifyTransportHelper::read('friend_posts_' . $channel);
         return ($current['activation'] ?? '') === $state['activation']
-            && self::identity($channel, self::settings()) === $state['identity'];
+            && self::identity($channel, $settings ?? self::settings(true)) === $state['identity'];
     }
 
     private static function channel(string $channel, array $feeds, array $active, int $now): array
     {
         $key = 'friend_posts_' . $channel;
         $state = self::readState($key);
+        $saved = $state;
         $result = array('sent' => 0, 'failed' => 0);
         if (empty($state['identity'])) {
             $settings = self::settings();
@@ -197,7 +206,7 @@ class Enhancement_FriendPostsNotifyHelper
             $state['feeds'][$feedKey] = array('seen' => $seen);
         }
         if (!self::current($channel, $state)) { return $result; }
-        self::writeState($key, $state);
+        self::saveChangedState($key, $state, $saved);
         // Keep a refresh bounded even when many friends publish together.
         for ($batch = 0; $batch < 3; $batch++) {
             $text = "【朋友文章更新】\n";
@@ -217,7 +226,7 @@ class Enhancement_FriendPostsNotifyHelper
                 $selected[] = $id;
             }
             if (!$selected) {
-                if (self::current($channel, $state)) { self::writeState($key, $state); }
+                if (self::current($channel, $state)) { self::saveChangedState($key, $state, $saved); }
                 break;
             }
             if (!self::current($channel, $state)) { break; }
@@ -226,10 +235,10 @@ class Enhancement_FriendPostsNotifyHelper
                 $state['pending'][$id]['next_at'] = $now + array(60, 300, 900, 86400)[$attempts - 1];
             }
             // Save the attempt before contacting the provider; a crashed refresh is throttled too.
-            self::writeState($key, $state);
+            self::saveChangedState($key, $state, $saved);
             try {
-                $settings = self::settings();
-                if (!self::current($channel, $state)) { break; }
+                $settings = self::settings(true);
+                if (!self::current($channel, $state, $settings)) { break; }
                 $delivery = $channel === 'qq' ? Enhancement_QqOfficialHelper::send($text, $settings)
                     : Enhancement_WeixinNotifyHelper::send($text, $settings);
             } catch (Throwable $exception) {
@@ -242,7 +251,7 @@ class Enhancement_FriendPostsNotifyHelper
                 else { $state['pending'][$id]['error'] = $error; }
             }
             $state['last_result'] = array('success' => $success, 'message' => $success ? '朋友文章更新通知已受理。' : $error, 'time' => $now);
-            if (self::current($channel, $state)) { self::writeState($key, $state); }
+            if (self::current($channel, $state)) { self::saveChangedState($key, $state, $saved); }
             $result[$success ? 'sent' : 'failed']++;
             if (!$success) { $result['message'] = ($channel === 'qq' ? 'QQ' : '微信') . ' 朋友文章通知失败：' . $error; break; }
         }
@@ -261,7 +270,7 @@ class Enhancement_FriendPostsNotifyHelper
     {
         $result = array('success' => true, 'sent' => 0, 'failed' => 0);
         try {
-            self::syncActivation(self::settings());
+            self::syncActivation(self::settings(true));
             $active = array_fill_keys(array_filter($activeFeeds, 'is_string'), true);
         } catch (Throwable $exception) {
             return array('success' => false, 'sent' => 0, 'failed' => 1, 'message' => '朋友文章通知状态无法保存，请检查数据库。');

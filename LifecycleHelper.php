@@ -143,7 +143,7 @@ class Enhancement_LifecycleHelper
             return $decoded;
         }
 
-        $unserialized = @unserialize($value);
+        $unserialized = @unserialize($value, array('allowed_classes' => false));
         if (is_array($unserialized)) {
             return $unserialized;
         }

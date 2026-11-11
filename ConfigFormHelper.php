@@ -43,7 +43,7 @@ class Enhancement_ConfigFormHelper
             array('1' => _t('启用'), '0' => _t('禁用')),
             '1',
             _t('<h3 class="enhancement-title">朋友文章</h3><hr/>获取朋友的最近文章'),
-            _t('默认启用。访问朋友文章独立页面时，轮换更新一个到期友链，每站抓取最多 8 秒；管理员可在“管理 → 朋友文章”提前刷新全部站点。关闭后停止抓取与前台输出。')
+            _t('默认启用。朋友文章页面仅读取缓存，请在“管理 → 朋友文章”手动刷新，或配置下方计划任务持续更新；每站抓取最多 8 秒。关闭后停止抓取与前台输出。')
         );
         $form->addInput($enableFriendPosts);
 
@@ -626,7 +626,7 @@ class Enhancement_ConfigFormHelper
         $form->addInput($adminfrom);
 
         $smtpHost = new Typecho_Widget_Helper_Form_Element_Text(
-            'STMPHost',
+            'SMTPHost',
             null,
             'smtp.qq.com',
             _t('SMTP服务器地址'),
@@ -704,7 +704,7 @@ class Enhancement_ConfigFormHelper
             array('1' => _t('启用'), '0' => _t('禁用')),
             '0',
             _t('记录日志'),
-            _t('启用后在插件目录生成 log.txt（目录需可写）')
+            _t('启用后在服务器临时目录生成 enhancement-mail-*.log，需保证 PHP 可写；日志最多保留约 1 MiB')
         );
         $form->addInput($log);
 

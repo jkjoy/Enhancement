@@ -1,5 +1,8 @@
 <?php
 
+require_once __DIR__ . '/MailHelper.php';
+require_once __DIR__ . '/CommentNotifier/TemplateHelper.php';
+
 class Enhancement_CommentNotifierHelper
 {
     private static function settings()
@@ -224,27 +227,9 @@ class Enhancement_CommentNotifierHelper
                 return false;
             }
 
-            require_once __DIR__ . '/CommentNotifier/PHPMailer/PHPMailer.php';
-            require_once __DIR__ . '/CommentNotifier/PHPMailer/SMTP.php';
-            require_once __DIR__ . '/CommentNotifier/PHPMailer/Exception.php';
-
-            $from = $plugin->from;
-            $fromName = $plugin->fromName;
-            $mail = new \PHPMailer\PHPMailer\PHPMailer(false);
-            $mail->CharSet = \PHPMailer\PHPMailer\PHPMailer::CHARSET_UTF8;
-            $mail->Encoding = \PHPMailer\PHPMailer\PHPMailer::ENCODING_BASE64;
-            $mail->isSMTP();
-            $mail->Host = $plugin->STMPHost;
-            $mail->SMTPAuth = true;
-            $mail->Username = $plugin->SMTPUserName;
-            $mail->Password = $plugin->SMTPPassword;
-            $mail->SMTPSecure = $plugin->SMTPSecure;
-            $mail->Port = $plugin->SMTPPort;
-
-            $mail->setFrom($from, $fromName);
+            $mail = Enhancement_MailHelper::createMailer($plugin);
             $mail->addAddress($param['to'], $param['fromName']);
             $mail->Subject = $param['subject'];
-            $mail->isHTML();
             $mail->Body = $param['html'];
             $mail->send();
 
@@ -258,26 +243,48 @@ class Enhancement_CommentNotifierHelper
                     $data = $at . ' ' . $mail->ErrorInfo;
                 } else {
                     $data = PHP_EOL . $at . ' 发送成功! ';
-                    $data .= ' 发件人:' . $fromName;
-                    $data .= ' 发件邮箱:' . $from;
+                    $data .= ' 发件人:' . $plugin->fromName;
+                    $data .= ' 发件邮箱:' . $plugin->from;
                     $data .= ' 接收人:' . $param['fromName'];
                     $data .= ' 接收邮箱:' . $param['to'] . PHP_EOL;
                 }
 
-                $fileName = __DIR__ . '/CommentNotifier/log.txt';
-                file_put_contents($fileName, $data, FILE_APPEND);
+                self::writeLog($data);
             }
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             $flag = false;
             if (!empty($plugin->log)) {
-                $fileName = __DIR__ . '/CommentNotifier/log.txt';
                 $str = "\nerror time: " . date('Y-m-d H:i:s') . "\n";
-                file_put_contents($fileName, $str, FILE_APPEND);
-                file_put_contents($fileName, $e, FILE_APPEND);
+                self::writeLog($str . '邮件发送失败：' . get_class($e) . "\n");
             }
         }
 
         return $flag;
+    }
+
+    private static function writeLog($message)
+    {
+        // Keep recipient addresses out of files served directly by the web server.
+        $key = hash('sha256', __DIR__);
+        $path = rtrim(sys_get_temp_dir(), '/\\') . '/enhancement-mail-' . $key . '.log';
+        if (is_link($path)) {
+            return;
+        }
+        $handle = @fopen($path, 'c+');
+        if (!$handle) {
+            return;
+        }
+        @chmod($path, 0600);
+        if (@flock($handle, LOCK_EX)) {
+            $stat = fstat($handle);
+            if (is_array($stat) && $stat['size'] > 1048576) {
+                ftruncate($handle, 0);
+            }
+            fseek($handle, 0, SEEK_END);
+            fwrite($handle, (string)$message);
+            flock($handle, LOCK_UN);
+        }
+        fclose($handle);
     }
 
     private static function mailBody($comment, $options, $type): string
@@ -326,9 +333,8 @@ class Enhancement_CommentNotifierHelper
             $Ptext = $parseBiaoQing($Ptext);
         }
 
-        $style = 'style="display: inline-block;vertical-align: bottom;margin: 0;" width="30"';
-        $commentText = str_replace('class="biaoqing', $style . ' class="biaoqing', $commentText);
-        $Ptext = str_replace('class="biaoqing', $style . ' class="biaoqing', $Ptext);
+        $commentText = Enhancement_MailHelper::sanitizeHtml($commentText);
+        $Ptext = Enhancement_MailHelper::sanitizeHtml($Ptext);
 
         $content = self::getTemplate($html);
         $content = preg_replace('#<\\?php#', '<!--', $content);
@@ -363,42 +369,40 @@ class Enhancement_CommentNotifierHelper
             '{status}',
         );
         $replace = array(
-            $comment->title,
-            $postAuthor,
-            $commentAt,
+            Enhancement_MailHelper::escape($comment->title),
+            Enhancement_MailHelper::escape($postAuthor),
+            Enhancement_MailHelper::escape($commentAt),
             $commentText,
-            $comment->author,
-            $comment->mail,
-            md5($comment->mail),
-            $avatarUrl,
-            $comment->ip,
-            $comment->permalink,
-            $options->siteUrl,
-            $options->title,
-            $Pname,
+            Enhancement_MailHelper::escape($comment->author),
+            Enhancement_MailHelper::escape($commentMail),
+            md5($commentMail),
+            Enhancement_MailHelper::escape(Enhancement_MailHelper::safeUrl($avatarUrl)),
+            Enhancement_MailHelper::escape($comment->ip),
+            Enhancement_MailHelper::escape(Enhancement_MailHelper::safeUrl($comment->permalink)),
+            Enhancement_MailHelper::escape(Enhancement_MailHelper::safeUrl($options->siteUrl)),
+            Enhancement_MailHelper::escape($options->title),
+            Enhancement_MailHelper::escape($Pname),
             $Ptext,
-            $Pmail,
+            Enhancement_MailHelper::escape($Pmail),
             $Pmd5,
-            $PavatarUrl,
-            $options->pluginUrl . '/Enhancement/CommentNotifier/template/' . $template . '/',
-            $options->adminUrl . '/manage-comments.php',
-            isset($status[$comment->status]) ? $status[$comment->status] : $comment->status
+            Enhancement_MailHelper::escape(Enhancement_MailHelper::safeUrl($PavatarUrl)),
+            Enhancement_MailHelper::escape(Enhancement_MailHelper::safeUrl($options->pluginUrl . '/Enhancement/CommentNotifier/template/' . $template . '/')),
+            Enhancement_MailHelper::escape(Enhancement_MailHelper::safeUrl($options->adminUrl . '/manage-comments.php')),
+            Enhancement_MailHelper::escape(isset($status[$comment->status]) ? $status[$comment->status] : $comment->status)
         );
 
-        return str_replace($search, $replace, $content);
+        return strtr($content, array_combine($search, $replace));
     }
 
     private static function getTemplate($template = 'owner')
     {
         $template .= '.html';
         $templateDir = self::configStr('template', 'default');
-        $filePath = __DIR__ . '/CommentNotifier/template/' . $templateDir . '/' . $template;
-
-        if (!file_exists($filePath)) {
-            $filePath = __DIR__ . '/CommentNotifier/template/default/' . $template;
+        try {
+            return Enhancement_CommentNotifier_TemplateHelper::read($templateDir, $template, true);
+        } catch (RuntimeException $error) {
+            return Enhancement_CommentNotifier_TemplateHelper::read('default', $template);
         }
-
-        return file_get_contents($filePath);
     }
 
     public static function configStr(string $key, $default = '', string $method = 'empty'): string

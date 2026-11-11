@@ -138,7 +138,7 @@ class Enhancement_BotMomentsHelper
 
     private static function stillAuthorized(string $channel, array $message, string $identity): bool
     {
-        $config = Enhancement_Plugin::runtimeSettings();
+        $config = Enhancement_Plugin::runtimeSettings(true);
         $settings = is_object($config) && method_exists($config, 'toArray') ? $config->toArray() : (array)$config;
         $gate = Enhancement_NotifyTransportHelper::read('bot_moments_gate')[$channel] ?? array();
         return ($settings[$channel . '_moments_enabled'] ?? '0') == '1' && self::authorized($channel, $message, $settings)

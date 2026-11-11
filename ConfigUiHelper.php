@@ -554,7 +554,7 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select:focus{
                 return;
             }
 
-            var fieldNames = ['STMPHost', 'SMTPUserName', 'SMTPPassword', 'from', 'fromName', 'adminfrom', 'SMTPSecure', 'SMTPPort'];
+            var fieldNames = ['SMTPHost', 'SMTPUserName', 'SMTPPassword', 'from', 'fromName', 'adminfrom', 'SMTPSecure', 'SMTPPort'];
             var selector = $.map(fieldNames, function (name) {
                 return '[name="' + name + '"]';
             }).join(',');

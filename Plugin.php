@@ -5,13 +5,15 @@
  * 具体功能包含:插件/主题zip上传,友情链接,朋友文章RSS聚合,瞬间,REST API,网站地图,编辑器增强,站外链接跳转,评论邮件通知,QQ/微信通知,常见视频链接 音乐链接 解析,AI摘要生成等
  * @package Enhancement
  * @author 老孙博客
- * @version 1.13.1
+ * @version 1.13.2
  * @link HTTPS://www.IMSUN.ORG
  * @dependence 14.10.10-*
  */
 
 require_once __DIR__ . '/AttachmentHelper.php';
 require_once __DIR__ . '/AiHelper.php';
+require_once __DIR__ . '/MailHelper.php';
+require_once __DIR__ . '/CommentNotifier/TemplateHelper.php';
 require_once __DIR__ . '/CommentNotifierHelper.php';
 require_once __DIR__ . '/GoRedirectHelper.php';
 require_once __DIR__ . '/MediaHelper.php';
@@ -75,14 +77,14 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         return Enhancement_SettingsHelper::listSettingsBackups($limit);
     }
 
-    private static function pluginSettings($options = null)
+    private static function pluginSettings($options = null, $reload = false)
     {
-        return Enhancement_SettingsHelper::pluginSettings($options);
+        return Enhancement_SettingsHelper::pluginSettings($options, $reload);
     }
 
-    public static function runtimeSettings()
+    public static function runtimeSettings($reload = false)
     {
-        return self::pluginSettings(Typecho_Widget::widget('Widget_Options'));
+        return self::pluginSettings(Typecho_Widget::widget('Widget_Options'), $reload);
     }
 
     private static function readPluginSettingsFromDatabase()

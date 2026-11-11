@@ -24,7 +24,8 @@ function mediaFixture(string $format = 'png'): string
     ob_start();
     call_user_func('image' . $format, $image);
     $bytes = ob_get_clean();
-    imagedestroy($image);
+    if (PHP_VERSION_ID < 80000) { imagedestroy($image); }
+    unset($image);
     return $bytes;
 }
 
@@ -144,7 +145,7 @@ $qqReceived = Enhancement_BotMomentsMediaHelper::receive('qq', array(array('url'
     });
 mediaCheck($qqReceived === array(array('type' => 'PHOTO', 'url' => 'https://site.example/qq.png')), 'QQ service images become stable site media URLs');
 $decryptMethod = new ReflectionMethod('Enhancement_BotMomentsMediaHelper', 'decrypt');
-$decryptMethod->setAccessible(true);
+if (PHP_VERSION_ID < 80100) { $decryptMethod->setAccessible(true); }
 $nistCipher = hex2bin('3ad77bb40d7a3660a89ecaf32466ef97a254be88e037ddd9d79fb6411c3f9df8');
 mediaCheck($decryptMethod->invoke(null, $nistCipher, array('aeskey' => '2b7e151628aed2a6abf7158809cf4f3c')) === hex2bin('6bc1bee22e409f96e93d7e117393172a'),
     'AES decoding matches a fixed NIST plaintext/ciphertext block with PKCS7 padding');
@@ -175,7 +176,7 @@ mediaFails(static function () use ($wx, $png) { Enhancement_BotMomentsMediaHelpe
     static function () use ($png): string { return $png; }, static function (): string { return 'javascript:alert(1)'; }); }, 'Storage must return an HTTP(S) media URL');
 
 $ipMethod = new ReflectionMethod('Enhancement_BotMomentsMediaHelper', 'publicIp');
-$ipMethod->setAccessible(true);
+if (PHP_VERSION_ID < 80100) { $ipMethod->setAccessible(true); }
 foreach (array('127.0.0.1', '10.0.0.1', '172.16.0.1', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0',
     '192.0.2.1', '192.88.99.1', '198.18.0.1', '198.51.100.1', '203.0.113.1', '224.0.0.1', '240.0.0.1', '255.255.255.255', '::1', '::ffff:127.0.0.1') as $ip) {
     mediaCheck(!$ipMethod->invoke(null, $ip), 'Private, special and unsupported IP resolutions are rejected: ' . $ip);

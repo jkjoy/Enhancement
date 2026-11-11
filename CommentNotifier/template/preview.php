@@ -1,8 +1,32 @@
 <?php
-if(!empty($_GET['theme'])&&!empty($_GET['file'])){
-$theme=$_GET['theme'];
-$file=$_GET['file'];
+// This file is also accessed directly, so initialize Typecho before checking access.
+if (!defined('__TYPECHO_ROOT_DIR__')) {
+    $root = dirname(__DIR__, 5);
+    if (!is_file($root . '/config.inc.php')) {
+        http_response_code(404);
+        exit;
+    }
+    require_once $root . '/config.inc.php';
 }
+Typecho_Widget::widget('Widget_Init');
+$user = Typecho_Widget::widget('Widget_User');
+if (!$user->hasLogin() || !$user->pass('administrator', true)) {
+    Typecho_Response::getInstance()->setStatus(403);
+    exit;
+}
+require_once dirname(__DIR__) . '/TemplateHelper.php';
+$theme = isset($_GET['theme']) ? $_GET['theme'] : 'default';
+$file = isset($_GET['file']) ? $_GET['file'] : 'owner.html';
+try {
+    Enhancement_CommentNotifier_TemplateHelper::resolve($theme, $file, true);
+} catch (RuntimeException $error) {
+    Typecho_Response::getInstance()->setStatus(404);
+    exit;
+}
+header("Content-Security-Policy: sandbox; default-src 'none'; img-src https: http: data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'");
+header('Content-Type: text/html; charset=UTF-8');
+header('Cache-Control: no-store');
+header('X-Content-Type-Options: nosniff');
     /**
      * 获取评论模板
      *
@@ -11,13 +35,7 @@ $file=$_GET['file'];
      */
 function getTemplate($templateDir = 'default',$template = 'owner.html')
     {
-        $filePath = dirname(__FILE__) . '/' . $templateDir . '/' . $template;
-
-        if (!file_exists($filePath)) {//如果模板文件缺失就调用根目录下的default文件夹中用于垫底的模板
-            $filePath = dirname(__FILE__) . '/default/' . $template;
-        }
-
-$content=file_get_contents($filePath);
+$content=Enhancement_CommentNotifier_TemplateHelper::read($templateDir, $template, true);
 $content=preg_replace('#<\?php#', '<!--', $content);
 $content=preg_replace('#\?>#', '-->', $content);
 $demouser = array(
@@ -88,7 +106,7 @@ $search = array(
 <meta charset="UTF-8">
 <meta name="renderer" content="webkit">
 <meta name="viewport" content="width=device-width,user-scalable=no,viewport-fit=cover,initial-scale=1, maximum-scale=1">
-<title>预览<?php echo $file; ?></title>
+<title>预览<?php echo htmlspecialchars($file, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?></title>
 </head>
 <body>
     

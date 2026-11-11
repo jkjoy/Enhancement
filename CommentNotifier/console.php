@@ -1,6 +1,9 @@
 <?php
-include 'header.php';
-include 'menu.php';
+if (!defined('__TYPECHO_ROOT_DIR__')) {
+    http_response_code(404);
+    exit;
+}
+require_once __DIR__ . '/TemplateHelper.php';
 
 use Typecho\Widget;
 use Widget\Notice;
@@ -8,6 +11,7 @@ use Widget\Options;
 
 /* @var Options $options */
 Options::alloc()->to($options);
+\Widget\User::alloc()->pass('administrator');
 
 /** 初始化上下文 */
 $request = $options->request;
@@ -21,39 +25,53 @@ if (class_exists('Enhancement_Plugin') && method_exists('Enhancement_Plugin', 'r
 }
 
 $name = '当前';
-$othertheme = Enhancement_Plugin::commentNotifierConfigStr('template', 'default');//编辑其他模板
-
-if(!empty($request->get('theme'))){
-$plugin->template=$request->get('theme');
-$othertheme=$request->get('theme');
-$name = $request->get('theme');
+$othertheme = $request->get('theme', Enhancement_Plugin::commentNotifierConfigStr('template', 'default'));
+try {
+    Enhancement_CommentNotifier_TemplateHelper::resolve($othertheme, $theme, true);
+} catch (RuntimeException $error) {
+    throw new Typecho_Widget_Exception(_t('模板文件不存在'), 404);
 }
+$plugin->template = $othertheme;
+$name = $othertheme;
 
 $title = '编辑邮件模板 ' . $theme;
 if ($current == 'index') {
     $title = '邮件发信模板';
 }
 
-if ($request->is('do=editTheme')) {
-    editTheme($request->edit);
-}
-function editTheme($file)
-{
-    $template = Enhancement_Plugin::commentNotifierConfigStr('template', 'default');
-    $path = dirname(__FILE__) . DIRECTORY_SEPARATOR . 'template' . DIRECTORY_SEPARATOR . $template . DIRECTORY_SEPARATOR . $file;
-    if (file_exists($path) && is_writeable($path)) {
-        $handle = fopen($path, 'wb');
-        if ($handle && fwrite($handle, Options::alloc()->request->content)) {
-            fclose($handle);
-            Notice::alloc()->set(_t("文件 %s 的更改已经保存", $file), 'success');
-        } else {
-            Notice::alloc()->set(_t("文件 %s 无法被写入", $file), 'error');
-        }
-        Options::alloc()->response->goBack();
-    } else {
-        throw new Typecho_Widget_Exception(_t('您编辑的模板文件不存在'));
+if ($request->get('change') !== null) {
+    if (!$request->isPost()) {
+        $response->setStatus(405)->setHeader('Allow', 'POST');
+        exit;
     }
+    \Widget\Security::alloc()->protect();
+    try {
+        $selected = $request->get('change');
+        Enhancement_CommentNotifier_TemplateHelper::resolve($selected, 'owner.html');
+    } catch (RuntimeException $error) {
+        throw new Typecho_Widget_Exception(_t('模板文件不存在'), 400);
+    }
+    Enhancement_ConfigStorageHelper::configHandle(array('template' => $selected), false);
+    Notice::alloc()->set(_t('邮件模板启用成功'), 'success');
+    $response->redirect($options->adminUrl . 'extending.php?panel=' . urlencode(Enhancement_Plugin::$commentNotifierPanel));
 }
+
+if ($request->is('do=editTheme')) {
+    if (!$request->isPost()) {
+        $response->setStatus(405)->setHeader('Allow', 'POST');
+        exit;
+    }
+    \Widget\Security::alloc()->protect();
+    try {
+        Enhancement_CommentNotifier_TemplateHelper::write($othertheme, $request->edit, $request->content);
+        Notice::alloc()->set(_t('邮件模板更改已经保存'), 'success');
+    } catch (RuntimeException $error) {
+        throw new Typecho_Widget_Exception(_t('邮件模板保存失败，请检查文件名和写入权限'), 400);
+    }
+    $response->goBack();
+}
+include 'header.php';
+include 'menu.php';
 
 class Enhancement_CommentNotifier_Console extends Typecho_Widget
 {
@@ -77,16 +95,15 @@ class Enhancement_CommentNotifier_Console extends Typecho_Widget
     public function execute()
     {
         $this->_dir = dirname(__FILE__);
-        $template = Enhancement_Plugin::commentNotifierConfigStr('template', 'default');
-        $path = '/template/' . $template;
-        $files = glob($this->_dir . $path . '/*.{html,HTML}', GLOB_BRACE);
+        $template = $this->request->get('theme', Enhancement_Plugin::commentNotifierConfigStr('template', 'default'));
+        $directory = Enhancement_CommentNotifier_TemplateHelper::directory($template);
+        $files = glob($directory . '/*.{html,HTML}', GLOB_BRACE);
 
         $this->_currentFile = $this->request->get('file', 'owner.html');
 
-        if (preg_match("/^([_0-9a-z-\.\ ])+$/i", $this->_currentFile)
-            && file_exists($this->_dir . $path . '/' . $this->_currentFile)) {
+        if (Enhancement_CommentNotifier_TemplateHelper::resolve($template, $this->_currentFile)) {
             foreach ($files as $file) {
-                if (file_exists($file)) {
+                if (is_file($file) && !is_link($file)) {
                     $file = basename($file);
                     $this->push(array(
                         'file' => $file,
@@ -120,9 +137,8 @@ class Enhancement_CommentNotifier_Console extends Typecho_Widget
      */
     public function currentContent(): string
     {
-        $template = Enhancement_Plugin::commentNotifierConfigStr('template', 'default');
-        $path = '/template/' . $template;
-        return htmlspecialchars(file_get_contents($this->_dir . $path . '/' . $this->_currentFile));
+        $template = $this->request->get('theme', Enhancement_Plugin::commentNotifierConfigStr('template', 'default'));
+        return htmlspecialchars(Enhancement_CommentNotifier_TemplateHelper::read($template, $this->_currentFile), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
     }
 
     /**
@@ -133,9 +149,8 @@ class Enhancement_CommentNotifier_Console extends Typecho_Widget
      */
     public function currentIsWriteable(): bool
     {
-        $template = Enhancement_Plugin::commentNotifierConfigStr('template', 'default');
-        $path = '/template/' . $template;
-        return is_writeable($this->_dir . $path . '/' . $this->_currentFile);
+        $template = $this->request->get('theme', Enhancement_Plugin::commentNotifierConfigStr('template', 'default'));
+        return is_writeable(Enhancement_CommentNotifier_TemplateHelper::resolve($template, $this->_currentFile));
     }
 
     /**
@@ -160,7 +175,7 @@ class Enhancement_CommentNotifier_Console extends Typecho_Widget
 <div class="main">
     <div class="body container">
         <div class="typecho-page-title">
-            <h2><?= $title ?></h2>
+            <h2><?= htmlspecialchars($title, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></h2>
         </div>
         <div class="row typecho-page-main" role="main">
             <div class="col-mb-12">
@@ -171,7 +186,7 @@ class Enhancement_CommentNotifier_Console extends Typecho_Widget
                         </a></li>
                     <li<?= ($current == 'theme' ? ' class="current"' : '') ?>><a
                             href="<?php $options->adminUrl('extending.php?panel=' . Enhancement_Plugin::$commentNotifierPanel . '&act=theme&theme='.$othertheme); ?>">
-                            <?php _e('编辑'.$name.'邮件模板'); ?>
+                            <?php echo htmlspecialchars('编辑' . $name . '邮件模板', ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?>
                         </a></li>
                     <li>
                         <a href="<?php $options->adminUrl('options-plugin.php?config=Enhancement') ?>"><?php _e('插件设置'); ?></a>
@@ -194,6 +209,7 @@ class Enhancement_CommentNotifier_Console extends Typecho_Widget
                         <form method="post" name="theme" id="theme"
                               action="<?php $options->adminUrl('extending.php?panel=' . Enhancement_Plugin::$commentNotifierPanel . '&act=theme&theme=' .$othertheme. '&file=' . $files->file); ?>">
                             <label for="content" class="sr-only"><?php _e('编辑源码'); ?></label>
+                            <input type="hidden" name="_" value="<?php echo htmlspecialchars(\Widget\Security::alloc()->getToken($request->getRequestUrl()), ENT_QUOTES, 'UTF-8'); ?>"/>
                             <textarea name="content" id="content" class="w-100 mono"
                                       <?php if (!$files->currentIsWriteable()): ?>readonly<?php endif; ?>><?php echo $files->currentContent(); ?></textarea>
                             <p class="submit">

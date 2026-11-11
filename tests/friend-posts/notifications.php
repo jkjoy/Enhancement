@@ -5,7 +5,11 @@ if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
 
 class Enhancement_Plugin {
     public static $values = array();
-    public static function runtimeSettings() { return (object)self::$values; }
+    public static $cached;
+    public static function runtimeSettings($reload = false) {
+        if ($reload || self::$cached === null) { self::$cached = self::$values; }
+        return (object)self::$cached;
+    }
 }
 class Enhancement_NotifyTransportHelper {
     public static $records = array();
@@ -13,11 +17,13 @@ class Enhancement_NotifyTransportHelper {
     public static $fail = false;
     public static $failOnceKey;
     public static $maxBytes = 0;
+    public static $writes = 0;
     public static function read(string $key): array {
         if (self::$fail) { throw new RuntimeException('Fixture options database unavailable'); }
         return self::$records[$key] ?? array();
     }
     public static function write(string $key, array $record): void {
+        self::$writes++;
         if (self::$fail || !preg_match('/\A[a-z_]{1,40}\z/D', $key)) { throw new RuntimeException('Fixture write rejected'); }
         $json = json_encode($record, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         if ($json === false) { throw new RuntimeException('Fixture invalid UTF-8'); }
@@ -61,6 +67,7 @@ function check($condition, string $message): void {
     $passed++;
 }
 function resetNotifications(array $settings = array()): void {
+    Enhancement_Plugin::$cached = null;
     Enhancement_Plugin::$values = array_replace(array('enable_friend_posts' => '1', 'enable_friend_posts_by_qq' => '1',
         'enable_friend_posts_by_weixin' => '1', 'qq_notify_provider' => 'official', 'qq_app_id' => '123', 'qq_app_secret' => 'fixture-secret'), $settings);
     Enhancement_NotifyTransportHelper::$records = array('qq_binding' => array(
@@ -73,6 +80,7 @@ function resetNotifications(array $settings = array()): void {
     Enhancement_NotifyTransportHelper::$onWrite = null;
     Enhancement_NotifyTransportHelper::$failOnceKey = null;
     Enhancement_NotifyTransportHelper::$maxBytes = 0;
+    Enhancement_NotifyTransportHelper::$writes = 0;
     Enhancement_QqOfficialHelper::$messages = Enhancement_WeixinNotifyHelper::$messages = array();
     Enhancement_QqOfficialHelper::$fail = Enhancement_WeixinNotifyHelper::$fail = false;
 }
@@ -91,7 +99,7 @@ function retryDue(string $channel): void {
 }
 function state(string $channel): array {
     $reader = new ReflectionMethod('Enhancement_FriendPostsNotifyHelper', 'readState');
-    $reader->setAccessible(true);
+    if (PHP_VERSION_ID < 80100) { $reader->setAccessible(true); }
     return $reader->invoke(null, 'friend_posts_' . $channel);
 }
 
@@ -112,6 +120,10 @@ $baseline = array(item('old'), item('undated-old', 0), item('future', time() + 3
 observe(array(feed('a', $baseline), feed('b', array(item('b-old')))));
 check(!Enhancement_QqOfficialHelper::$messages && !Enhancement_WeixinNotifyHelper::$messages, 'first successful observation only establishes independent baselines');
 check(count(state('qq')['feeds'][hash('sha256', 'a')]['seen']) === 2, 'future article remains unseen in the baseline');
+$writeCount = Enhancement_NotifyTransportHelper::$writes;
+observe();
+observe(array(feed('a', $baseline), feed('b', array(item('b-old')))));
+check(Enhancement_NotifyTransportHelper::$writes === $writeCount, 'unchanged inline baselines and idle refreshes perform no options writes');
 $new = item('new-a');
 $round = array(feed('a', array_merge(array($new, $new), $baseline)), feed('b', array(item('new-b'), item('b-old'))));
 $result = observe($round);
@@ -154,6 +166,9 @@ $pending = current(state('qq')['pending']);
 check($pending['attempts'] === 1 && $pending['next_at'] >= time() + 55 && !empty($pending['error']), 'failure persists its retry count, error and cooldown');
 observe();
 check(count(Enhancement_QqOfficialHelper::$messages) === 1, 'ordinary refreshes cannot bypass retry throttling');
+$writeCount = Enhancement_NotifyTransportHelper::$writes;
+observe();
+check(Enhancement_NotifyTransportHelper::$writes === $writeCount, 'a notification waiting for retry cooldown does not rewrite state');
 Enhancement_QqOfficialHelper::$fail = false;
 retryDue('qq');
 $result = observe();
@@ -269,6 +284,16 @@ Enhancement_NotifyTransportHelper::$onWrite = static function ($key, $record) {
 };
 observe(array(feed('a', array(item('must-not-leak')))));
 check(!Enhancement_QqOfficialHelper::$messages, 'recipient identity is checked again immediately before provider delivery');
+resetNotifications(array('enable_friend_posts_by_weixin' => '0'));
+observe(array(feed('a', array(item('old')))));
+Enhancement_NotifyTransportHelper::$onWrite = static function ($key, $record) {
+    if ($key === 'friend_posts_qq' && !empty($record['pending']) && current($record['pending'])['attempts'] > 0) {
+        Enhancement_Plugin::$values['enable_friend_posts_by_qq'] = '0';
+        Enhancement_NotifyTransportHelper::$onWrite = null;
+    }
+};
+observe(array(feed('a', array(item('disabled-while-queueing')))));
+check(!Enhancement_QqOfficialHelper::$messages, 'fresh settings bypass request cache when a channel is disabled immediately before delivery');
 Enhancement_NotifyTransportHelper::$fail = true;
 $result = observe(array(feed('a', array(item('database-unavailable')))));
 check(!$result['success'] && $result['failed'] === 1, 'notification database errors return a failure result instead of interrupting RSS refresh');
@@ -288,6 +313,10 @@ check($result['success'] && !$result['sent'] && isset($header['parts']) && $head
     'twenty feeds with fifty baseline articles use checked chunks instead of overflowing a MySQL TEXT option');
 check(count(state('qq')['feeds']) === 20 && count(state('qq')['feeds'][hash('sha256', $largeNames[0])]['seen']) === 50,
     'all one thousand baseline URLs survive reassembly');
+$writeCount = Enhancement_NotifyTransportHelper::$writes;
+observe(array(), $largeNames);
+observe($largeFeeds, $largeNames);
+check(Enhancement_NotifyTransportHelper::$writes === $writeCount, 'idle refreshes and unchanged large feeds do not rewrite history chunks');
 for ($wave = 0; $wave < 2; $wave++) {
     $updates = array();
     foreach ($largeNames as $friend => $name) {
@@ -313,8 +342,10 @@ observe($largeFeeds, $largeNames);
 observe($updates, $largeNames);
 check(count(Enhancement_QqOfficialHelper::$messages) === $messageCount, 'reloading chunked history and refetching old feeds never republishes historical URLs');
 $rowCount = count(Enhancement_NotifyTransportHelper::$records);
+$writeCount = Enhancement_NotifyTransportHelper::$writes;
 for ($round = 0; $round < 3; $round++) { observe(array(), $largeNames); }
 check(count(Enhancement_NotifyTransportHelper::$records) === $rowCount, 'fixed chunk banks reuse existing option names across repeated writes');
+check(Enhancement_NotifyTransportHelper::$writes === $writeCount, 'completed large notification history stays untouched on later idle refreshes');
 
 $before = state('qq');
 $beforeHeader = Enhancement_NotifyTransportHelper::$records['friend_posts_qq'];

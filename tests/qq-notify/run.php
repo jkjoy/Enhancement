@@ -273,8 +273,9 @@ try {
     qqCheck($response['status'] === 200 && !empty($response['json']['data']['configured'])
         && empty($response['json']['data']['bound']) && !empty($response['json']['data']['moments_enabled'])
         && strpos($response['body'], $secret) === false, 'QQ status shows saved credentials and publication switch without the secret', $response);
-    qqCheck(!empty($response['json']['data']['available']) && ($response['json']['data']['crypto_backend'] ?? '') === 'compat',
-        'QQ status uses bundled pure PHP signature verification without a native extension', $response);
+    $expectedCrypto = !empty($env['ENHANCEMENT_QQ_TEST_NO_SODIUM']) || !function_exists('sodium_crypto_sign_seed_keypair') ? 'compat' : 'native';
+    qqCheck(!empty($response['json']['data']['available']) && ($response['json']['data']['crypto_backend'] ?? '') === $expectedCrypto,
+        'QQ status uses native signatures when available and the bundled fallback otherwise', $response);
     $pending = qqAction($admin, 'qq-binding-start');
     qqCheck($pending['status'] === 200 && preg_match('/^[A-F0-9]{16}$/D', $pending['json']['data']['code'] ?? '') === 1
         && ($pending['json']['data']['expires_at'] ?? 0) > time() + 590, 'Administrator creates a ten-minute private binding command', $pending);

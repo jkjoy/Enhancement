@@ -200,6 +200,63 @@ if (function_exists('sodium_crypto_sign_seed_keypair')) {
     list($body, $headers) = notifyQqSigned($event);
     Enhancement_QqOfficialHelper::webhook($body, $headers, notifyQqTransport($calls, array()));
     notifyCheck($calls === array() && count(Enhancement_BotMomentsHelper::$calls) === 1, 'QQ group chat cannot publish moments');
+
+    notifyReset(notifyQqConfig(array('qq_moments_enabled' => '1'))); notifyQqBind('c2c', 'PUBLISHING_USER'); notifyQqCached();
+    $replyRecord = static function (string $id, string $status, int $updated = 0): array {
+        return array('binding' => Enhancement_QqOfficialHelper::binding(), 'message_id' => $id,
+            'text' => str_repeat('已发布瞬间', 90), 'status' => $status, 'attempts' => 1, 'updated' => $updated ?: time());
+    };
+    $replyBytes = static function (array $records): int { return strlen(json_encode($records, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)); };
+    $records = array('retryable' => $replyRecord('retryable', 'failed'),
+        'expired' => $replyRecord('expired', 'failed', time() - 31 * 86400));
+    for ($index = 0; $replyBytes($records) < 64000; $index++) {
+        $records['completed-' . $index] = $replyRecord('completed-' . $index, 'sent', time() - 1000 + $index);
+    }
+    Enhancement_NotifyTransportHelper::write('qq_replies', $records);
+    Enhancement_BotMomentsHelper::$handler = static function () { return array('success' => true, 'message' => str_repeat('已发布🙂', 1000)); };
+    $event['t'] = 'C2C_MESSAGE_CREATE';
+    $event['d']['id'] = 'bounded-reply';
+    $event['d']['author']['user_openid'] = 'PUBLISHING_USER';
+    list($body, $headers) = notifyQqSigned($event);
+    $calls = array();
+    $result = Enhancement_QqOfficialHelper::webhook($body, $headers, notifyQqTransport($calls, array(array('id' => 'bounded-success'))));
+    $bounded = Enhancement_NotifyTransportHelper::read('qq_replies');
+    $boundedKey = hash('sha256', '123456' . "\n" . 'bounded-reply');
+    notifyCheck($result['status'] === 200 && $replyBytes($bounded) <= 60000 && count($bounded) < count($records),
+        'Completed QQ replies are evicted before the default MySQL TEXT capacity is reached');
+    notifyCheck(isset($bounded['retryable'], $bounded[$boundedKey]) && !isset($bounded['expired']),
+        'Queue compaction preserves retryable replies and removes expired records');
+    notifyCheck(strlen($bounded[$boundedKey]['text']) <= 1800 && preg_match('//u', $bounded[$boundedKey]['text']) === 1,
+        'A long publishing result cannot exceed the reserved reply storage or break UTF-8');
+
+    $records = array('pending' => $replyRecord('pending', 'pending'));
+    for ($index = 0; $replyBytes($records) < 52000; $index++) { $records['failed-' . $index] = $replyRecord('failed-' . $index, 'failed'); }
+    Enhancement_NotifyTransportHelper::write('qq_replies', $records);
+    Enhancement_BotMomentsHelper::$calls = array();
+    $event['d']['id'] = 'queue-full';
+    list($body, $headers) = notifyQqSigned($event);
+    $calls = array();
+    $result = Enhancement_QqOfficialHelper::webhook($body, $headers, notifyQqTransport($calls, array()));
+    notifyCheck($result['status'] === 503 && Enhancement_BotMomentsHelper::$calls === array() && $calls === array()
+        && Enhancement_NotifyTransportHelper::read('qq_replies') === $records,
+        'A full retryable QQ queue rejects new publishing before invoking the publisher');
+    $retry = Enhancement_QqOfficialHelper::retryReplies(notifyQqTransport($calls, array_fill(0, count($records), array('id' => 'retry-success'))));
+    notifyCheck($retry['sent'] === count($records) && count($calls) === count($records)
+        && Enhancement_NotifyTransportHelper::read('qq_replies')['pending']['status'] === 'sent',
+        'Retrying drains failed replies and recovers pending replies left by an interrupted webhook');
+    $calls = array();
+    $result = Enhancement_QqOfficialHelper::webhook($body, $headers, notifyQqTransport($calls, array(array('id' => 'after-drain'))));
+    notifyCheck($result['status'] === 200 && count(Enhancement_BotMomentsHelper::$calls) === 1,
+        'New QQ publishing resumes after queued replies are successfully retried');
+
+    $records = array();
+    for ($index = 0; $replyBytes($records) < 62000; $index++) { $records['legacy-' . $index] = $replyRecord('legacy-' . $index, 'failed'); }
+    notifyCheck($replyBytes($records) > 60000 && $replyBytes($records) <= 65535, 'Legacy retry fixture occupies the former TEXT capacity');
+    Enhancement_NotifyTransportHelper::write('qq_replies', $records);
+    $calls = array();
+    $retry = Enhancement_QqOfficialHelper::retryReplies(notifyQqTransport($calls, array_fill(0, count($records), array('id' => 'legacy-drained'))));
+    notifyCheck($retry['sent'] === count($records) && $replyBytes(Enhancement_NotifyTransportHelper::read('qq_replies')) <= 60000,
+        'A legacy queue above the new cap can still be drained without dropping unsent replies');
     Enhancement_QqOfficialHelper::disconnect();
     notifyCheck(!Enhancement_QqOfficialHelper::status()['bound'], 'Disconnect removes the current verified recipient');
 }

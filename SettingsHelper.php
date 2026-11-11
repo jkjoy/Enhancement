@@ -2,6 +2,9 @@
 
 class Enhancement_SettingsHelper
 {
+    /** Request-local values; long-running workers must reload after reading new settings. */
+    private static $runtimeSettingsCache = null;
+
     private static function settingsBackupNamePrefix()
     {
         return 'enh:bak:';
@@ -85,14 +88,24 @@ class Enhancement_SettingsHelper
         return strcmp($rightTime, $leftTime);
     }
 
-    public static function pluginSettings($options = null)
+    public static function pluginSettings($options = null, $reload = false)
     {
-        $settings = self::readPluginSettingsFromDatabase();
-        if (!empty($settings)) {
-            return self::buildPluginConfigObject(self::encodePluginConfigValue($settings));
+        if ($reload || self::$runtimeSettingsCache === null) {
+            self::$runtimeSettingsCache = self::readPluginSettingsFromDatabase();
         }
 
-        return self::buildPluginConfigObject(self::encodePluginConfigValue(array()));
+        // Each caller gets its own configuration object so mutations cannot poison the cache.
+        return self::configObjectFromSettings(self::$runtimeSettingsCache);
+    }
+
+    public static function reloadPluginSettings($options = null)
+    {
+        return self::pluginSettings($options, true);
+    }
+
+    public static function invalidateRuntimeSettingsCache()
+    {
+        self::$runtimeSettingsCache = null;
     }
 
     public static function readPluginSettingsFromDatabase()
@@ -108,13 +121,21 @@ class Enhancement_SettingsHelper
             );
 
             if (is_array($row) && isset($row['value'])) {
-                return self::decodePluginConfigValue((string)$row['value']);
+                return self::normalizeSmtpAlias(self::decodePluginConfigValue((string)$row['value']));
             }
         } catch (Exception $e) {
             // ignore db read errors
         }
 
         return array();
+    }
+
+    public static function normalizeSmtpAlias(array $settings): array
+    {
+        if (!array_key_exists('SMTPHost', $settings) && array_key_exists('STMPHost', $settings)) {
+            $settings['SMTPHost'] = $settings['STMPHost'];
+        }
+        return $settings;
     }
 
     public static function decodePluginConfigValue($value)
@@ -129,7 +150,7 @@ class Enhancement_SettingsHelper
             return $jsonDecoded;
         }
 
-        $unserialized = @unserialize($text);
+        $unserialized = @unserialize($text, array('allowed_classes' => false));
         if (is_array($unserialized)) {
             return $unserialized;
         }
@@ -242,6 +263,9 @@ class Enhancement_SettingsHelper
 
     public static function syncOptionCache($optionName, $optionValue, $pluginName = 'Enhancement')
     {
+        if ((string)$optionName === 'plugin:Enhancement') {
+            self::invalidateRuntimeSettingsCache();
+        }
         try {
             $options = Typecho_Widget::widget('Widget_Options');
             self::patchOptionsWidgetCache($options, $optionName, $optionValue, $pluginName);
@@ -250,7 +274,7 @@ class Enhancement_SettingsHelper
             $reflector = new ReflectionClass($widgetClass);
             if ($reflector->hasProperty('widgetPool')) {
                 $poolProperty = $reflector->getProperty('widgetPool');
-                $poolProperty->setAccessible(true);
+                if (PHP_VERSION_ID < 80100) { $poolProperty->setAccessible(true); }
                 $pool = $poolProperty->getValue();
                 if (is_array($pool)) {
                     foreach ($pool as $widget) {
@@ -275,7 +299,7 @@ class Enhancement_SettingsHelper
             while ($reflector) {
                 if ($reflector->hasProperty('row')) {
                     $rowProperty = $reflector->getProperty('row');
-                    $rowProperty->setAccessible(true);
+                    if (PHP_VERSION_ID < 80100) { $rowProperty->setAccessible(true); }
 
                     $rows = $rowProperty->getValue($widget);
                     if (!is_array($rows)) {
@@ -297,7 +321,7 @@ class Enhancement_SettingsHelper
             $reflector = new ReflectionObject($widget);
             if ($reflector->hasProperty('pluginConfig')) {
                 $pluginConfigProperty = $reflector->getProperty('pluginConfig');
-                $pluginConfigProperty->setAccessible(true);
+                if (PHP_VERSION_ID < 80100) { $pluginConfigProperty->setAccessible(true); }
 
                 $pluginConfigs = $pluginConfigProperty->getValue($widget);
                 if (!is_array($pluginConfigs)) {
@@ -400,8 +424,11 @@ class Enhancement_SettingsHelper
 
     public static function buildPluginConfigObject($optionValue)
     {
-        $settings = self::decodePluginConfigValue($optionValue);
+        return self::configObjectFromSettings(self::normalizeSmtpAlias(self::decodePluginConfigValue($optionValue)));
+    }
 
+    private static function configObjectFromSettings(array $settings)
+    {
         if (class_exists('Typecho_Config')) {
             return new Typecho_Config($settings);
         }

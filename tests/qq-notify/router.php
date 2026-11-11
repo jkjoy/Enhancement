@@ -22,7 +22,7 @@ Typecho\Widget::widget('Widget_Init');
 require_once dirname(__DIR__, 2) . '/Plugin.php';
 // Every QQ API call is intercepted; this fixture can never send a real QQ message.
 $qqTransport = new ReflectionProperty('Enhancement_QqOfficialHelper', 'transport');
-$qqTransport->setAccessible(true);
+if (PHP_VERSION_ID < 80100) { $qqTransport->setAccessible(true); }
 $qqTransport->setValue(null, static function (string $method, string $url, array $headers = [], ?array $payload = null, int $timeout = 6) use ($directory): array {
     $config = Enhancement_NotifyTransportHelper::read('fixture_qq_api');
     if (empty($config['enabled'])) { throw new RuntimeException('Real QQ network is disabled in fixtures.'); }
@@ -142,14 +142,14 @@ try {
             $action = Typecho_Widget::widget('Enhancement_Action');
             foreach (['db' => $db, 'prefix' => $db->getPrefix()] as $name => $value) {
                 $property = new ReflectionProperty('Enhancement_Action', $name);
-                $property->setAccessible(true);
+                if (PHP_VERSION_ID < 80100) { $property->setAccessible(true); }
                 $property->setValue($action, $value);
             }
             if ($path === '/retry') {
                 $action->retryQqNotifyQueue();
             } else {
                 $method = new ReflectionMethod('Enhancement_Action', 'savePluginSettings');
-                $method->setAccessible(true);
+                if (PHP_VERSION_ID < 80100) { $method->setAccessible(true); }
                 $method->invoke($action, $body);
                 echo '{"ok":true}';
             }
@@ -159,7 +159,7 @@ try {
             break;
         case '/dispatch':
             $method = new ReflectionMethod('Enhancement_QqNotifyHelper', 'dispatchMessage');
-            $method->setAccessible(true);
+            if (PHP_VERSION_ID < 80100) { $method->setAccessible(true); }
             $method->invoke(null, (string)($body['message'] ?? '业务通知'));
             echo '{"ok":true}';
             break;
@@ -186,7 +186,7 @@ try {
             $pluginFile = dirname(__DIR__, 2) . '/Plugin.php';
             foreach (['pluginFileName' => $pluginFile, 'className' => 'Enhancement_Plugin'] as $name => $value) {
                 $property = new ReflectionProperty($config, $name);
-                $property->setAccessible(true);
+                if (PHP_VERSION_ID < 80100) { $property->setAccessible(true); }
                 $property->setValue($config, $value);
             }
             $config->info = Typecho_Plugin::parseInfo($pluginFile);

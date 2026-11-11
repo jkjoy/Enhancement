@@ -84,18 +84,35 @@ foreach ([['friend_posts_interval' => '4'], ['friend_posts_interval' => '1441'],
     check(invalidSettings($values), 'invalid setting rejected: ' . json_encode($values));
 }
 $posts = Enhancement_FriendPostsHelper::getPosts(2, -1);
-check(count(Enhancement_FriendFeedHelper::$calls) === 1, 'cold page refreshes one feed');
+check(!Enhancement_FriendFeedHelper::$calls && !Enhancement_FriendPostsNotifyHelper::$calls
+    && $posts['total'] === 0 && !is_dir($cacheDirectory), 'cold public reads do not fetch, notify or create a cache directory');
+$refreshed = Enhancement_FriendPostsHelper::refresh(1);
+check($refreshed['success'] && $refreshed['notifications'] === ['success' => true, 'sent' => 0, 'failed' => 0]
+    && !Enhancement_FriendPostsNotifyHelper::$calls, 'explicit refresh updates feeds successfully without notification channels');
+$posts = Enhancement_FriendPostsHelper::getPosts(2, -1);
+check(count(Enhancement_FriendFeedHelper::$calls) === 1, 'explicit refresh fetches one feed');
 check($posts['total'] === 3 && $posts['pages'] === 2 && $posts['page'] === 1, 'future filtering and pagination');
 check($posts['items'][0]['title'] === 'Article 1', 'first friend is cached');
 check(!isset($posts['items'][0]['friend']['email'], $posts['items'][0]['friend']['feed']), 'private link fields are omitted');
+Enhancement_FriendPostsHelper::refresh(1);
 $posts = Enhancement_FriendPostsHelper::getPosts(2, 2);
-check(count(Enhancement_FriendFeedHelper::$calls) === 2 && $posts['total'] === 5, 'next view warms next approved friend and deduplicates');
+check(count(Enhancement_FriendFeedHelper::$calls) === 2 && $posts['total'] === 5, 'next explicit refresh warms the next approved friend and deduplicates');
 $all = Enhancement_FriendPostsHelper::getPosts(100);
 check(count(Enhancement_FriendFeedHelper::$calls) === 2, 'fresh caches do not fetch again');
 check($all['items'][0]['title'] === 'Article 2' && end($all['items'])['published'] === 0, 'newest articles first, unknown dates last');
 check($all['updated'] > 0, 'successful refresh timestamp provided');
 check(Enhancement_FriendPostsHelper::getPosts(2, 999)['page'] === 3, 'large page clamped');
 check(count(Enhancement_FriendPostsHelper::status()['feeds']) === 2, 'pending friend excluded from status');
+$firstCache = $cacheDirectory . '/' . hash('sha256', "1\0https://one.test/\0") . '.json';
+$stale = json_decode(file_get_contents($firstCache), true);
+$stale['checked'] = 0;
+file_put_contents($firstCache, json_encode($stale));
+$beforeFetch = count(Enhancement_FriendFeedHelper::$calls);
+$beforeNotify = count(Enhancement_FriendPostsNotifyHelper::$calls);
+check(Enhancement_FriendPostsHelper::getPosts(100)['total'] === 5
+    && count(Enhancement_FriendFeedHelper::$calls) === $beforeFetch
+    && count(Enhancement_FriendPostsNotifyHelper::$calls) === $beforeNotify
+    && file_get_contents($firstCache) === json_encode($stale), 'stale public reads preserve articles without network, notification or cache writes');
 
 Enhancement_FriendFeedHelper::$fail = true;
 $failed = Enhancement_FriendPostsHelper::refresh(1, 1);
@@ -119,6 +136,10 @@ $database->query($database->update('table.links')->rows(['state' => 1])->where('
 Enhancement_Plugin::$values = ['friend_posts_feeds' => 'https://one.test/|-'];
 check(Enhancement_FriendPostsHelper::getPosts()['total'] === 0 && !Enhancement_FriendPostsHelper::status()['feeds'], 'excluded friend hidden immediately');
 Enhancement_Plugin::$values = ['friend_posts_feeds' => 'https://one.test/|https://one.test/custom.xml'];
+$custom = Enhancement_FriendPostsHelper::getPosts(100);
+check($custom['total'] === 0 && count(Enhancement_FriendFeedHelper::$calls) === $callCount,
+    'custom feed changes show an empty cache until an explicit refresh');
+Enhancement_FriendPostsHelper::refresh(1);
 $custom = Enhancement_FriendPostsHelper::getPosts(100);
 check(end(Enhancement_FriendFeedHelper::$calls)[1] === 'https://one.test/custom.xml' && $custom['total'] === 3, 'custom feed change invalidates prior cache');
 Enhancement_Plugin::$values['friend_posts_per_friend'] = '1';

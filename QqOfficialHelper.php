@@ -6,6 +6,9 @@ require_once __DIR__ . '/QqCryptoHelper.php';
 class Enhancement_QqOfficialHelper
 {
     private const API_BASE = 'https://api.bot.qq.com';
+    // Typecho's default MySQL options.value is TEXT. Leave room below its 65535-byte limit.
+    private const MAX_REPLY_BYTES = 60000;
+    private const REPLY_RESERVE_BYTES = 12288;
     private static $transport = null;
 
     private static function settings($settings = null): array
@@ -204,7 +207,7 @@ class Enhancement_QqOfficialHelper
             || ($pending['expires_at'] ?? 0) <= time() || !is_string($pending['code'] ?? null)
             || !hash_equals($pending['code'], strtoupper($match[1]))) { return true; }
         if (!Enhancement_NotifyTransportHelper::compareAndSwap('qq_binding_pending', $pending, array())) { return true; }
-        if (self::credentialsIdentity() !== self::credentialsIdentity($config)) { return true; }
+        if (self::credentialsIdentity(Enhancement_Plugin::runtimeSettings(true)) !== self::credentialsIdentity($config)) { return true; }
         Enhancement_NotifyTransportHelper::write('qq_binding', array('identity' => self::credentialsIdentity($config),
             'target_type' => $type, 'target_id' => $target, 'bound_at' => time()));
         self::syncActivation();
@@ -230,6 +233,37 @@ class Enhancement_QqOfficialHelper
         return !empty($result['success']);
     }
 
+    private static function compactReplies(array $records, int $maximum, string $protected = ''): array
+    {
+        foreach ($records as $key => $record) {
+            if ($key !== $protected && (!is_array($record) || (int)($record['updated'] ?? 0) < time() - 30 * 86400)) {
+                unset($records[$key]);
+            }
+        }
+        uasort($records, static function ($left, $right) { return (int)($left['updated'] ?? 0) <=> (int)($right['updated'] ?? 0); });
+        $size = static function (array $value): int {
+            $json = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if (!is_string($json)) { throw new RuntimeException('QQ 回复记录包含无效文本。'); }
+            return strlen($json);
+        };
+        if ($size($records) <= $maximum) { return $records; }
+        foreach ($records as $key => $record) {
+            if ($key === $protected || (!in_array($record['status'] ?? '', array('sent', 'revoked'), true)
+                && (int)($record['attempts'] ?? 0) < 5)) { continue; }
+            unset($records[$key]);
+            if ($size($records) <= $maximum) { return $records; }
+        }
+        // Keep unsent replies durable. Refuse new work before publishing when they fill the queue.
+        throw new RuntimeException('QQ 回复队列已满，请先重试待发送回复。', 503);
+    }
+
+    private static function writeReplies(array $records, string $protected = '', int $maximum = self::MAX_REPLY_BYTES): array
+    {
+        $records = self::compactReplies($records, $maximum, $protected);
+        Enhancement_NotifyTransportHelper::write('qq_replies', $records);
+        return $records;
+    }
+
     public static function retryReplies(?callable $transport = null): array
     {
         $lease = Enhancement_NotifyTransportHelper::acquireLease('qq_webhook_lock', 120);
@@ -237,12 +271,23 @@ class Enhancement_QqOfficialHelper
         $sent = 0;
         try {
             $records = Enhancement_NotifyTransportHelper::read('qq_replies');
-            foreach ($records as &$record) {
-                if (($record['status'] ?? '') !== 'failed') { continue; }
-                if (self::deliverReply($record, self::settings(), $transport)) { $sent++; }
-                Enhancement_NotifyTransportHelper::write('qq_replies', $records);
+            // Older installations may already exceed the new cap. Allow retries to drain
+            // their existing queue, still within the MySQL TEXT limit, without accepting new work.
+            $maximum = strlen((string)json_encode($records, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) > self::MAX_REPLY_BYTES
+                ? 65535 : self::MAX_REPLY_BYTES;
+            $records = self::compactReplies($records, $maximum);
+            foreach (array_keys($records) as $key) {
+                if (!isset($records[$key]) || !in_array($records[$key]['status'] ?? '', array('failed', 'pending'), true)) { continue; }
+                if (!Enhancement_NotifyTransportHelper::renewLease('qq_webhook_lock', $lease, 120)) {
+                    throw new RuntimeException('QQ webhook busy');
+                }
+                if (self::deliverReply($records[$key], self::settings(Enhancement_Plugin::runtimeSettings(true)), $transport)) { $sent++; }
+                try { $records = self::writeReplies($records); }
+                catch (RuntimeException $exception) {
+                    if ($exception->getCode() !== 503 || $maximum === self::MAX_REPLY_BYTES) { throw $exception; }
+                    $records = self::writeReplies($records, '', $maximum);
+                }
             }
-            unset($record);
         } finally { Enhancement_NotifyTransportHelper::releaseLease('qq_webhook_lock', $lease); }
         return array('success' => true, 'sent' => $sent);
     }
@@ -272,21 +317,20 @@ class Enhancement_QqOfficialHelper
         $lease = Enhancement_NotifyTransportHelper::acquireLease('qq_webhook_lock', 120);
         if ($lease === null) { throw new RuntimeException('QQ webhook busy'); }
         try {
-            $records = Enhancement_NotifyTransportHelper::read('qq_replies');
+            $records = self::compactReplies(Enhancement_NotifyTransportHelper::read('qq_replies'), self::MAX_REPLY_BYTES);
             $key = hash('sha256', $config['qq_app_id'] . "\n" . $data['id']);
             if (!isset($records[$key])) {
+                $records = self::compactReplies($records, self::MAX_REPLY_BYTES - self::REPLY_RESERVE_BYTES);
                 $result = Enhancement_BotMomentsHelper::handle('qq', $message);
                 if ($result === null || !is_string($result['message'] ?? null) || $result['message'] === '') { return; }
-                $records[$key] = array('binding' => $binding, 'message_id' => $data['id'], 'text' => $result['message'],
+                $records[$key] = array('binding' => $binding, 'message_id' => $data['id'],
+                    'text' => Enhancement_NotifyTransportHelper::text($result['message'], true, 1800),
                     'status' => 'pending', 'attempts' => 0, 'updated' => time());
                 // Persist the completed publishing reply before attempting the QQ API.
-                Enhancement_NotifyTransportHelper::write('qq_replies', $records);
+                $records = self::writeReplies($records, $key);
             }
             self::deliverReply($records[$key], $config, $transport);
-            foreach ($records as $recordKey => $record) {
-                if (($record['updated'] ?? 0) < time() - 30 * 86400) { unset($records[$recordKey]); }
-            }
-            Enhancement_NotifyTransportHelper::write('qq_replies', $records);
+            self::writeReplies($records, $key);
         } finally { Enhancement_NotifyTransportHelper::releaseLease('qq_webhook_lock', $lease); }
     }
 
@@ -307,23 +351,27 @@ class Enhancement_QqOfficialHelper
             if ($appId === '') { $appId = null; }
             if ($timestamp === '') { $timestamp = null; }
             if ($signature === '') { $signature = null; }
-            $keypair = self::keypair($config['qq_app_secret']);
             if ($appId !== null && (!is_string($appId) || !hash_equals($config['qq_app_id'], $appId))) { return $failure(403); }
             $hasSignature = $timestamp !== null || $signature !== null;
+            // Reject cheap syntax/time failures before deriving keys or verifying signatures.
             if ($event['op'] !== 13 || $hasSignature) {
                 if (!is_string($timestamp)
                     || !preg_match('/\A[0-9]{1,12}\z/D', $timestamp) || abs(time() - (int)$timestamp) > 300
-                    || !is_string($signature) || !preg_match('/\A[a-fA-F0-9]{128}\z/D', $signature)
-                    || !Enhancement_QqCryptoHelper::verify(hex2bin($signature), $timestamp . $body, Enhancement_QqCryptoHelper::publicKey($keypair))) { return $failure(403); }
+                    || !is_string($signature) || !preg_match('/\A[a-fA-F0-9]{128}\z/D', $signature)) { return $failure(403); }
             }
-            $state = Enhancement_NotifyTransportHelper::read('qq_webhook');
-            if (($state['identity'] ?? '') !== self::credentialsIdentity($config)) { $state = array('identity' => self::credentialsIdentity($config)); }
             if ($event['op'] === 13) {
                 $plain = $event['d']['plain_token'] ?? null;
                 $eventTs = $event['d']['event_ts'] ?? null;
                 if (!is_string($plain) || !preg_match('/\A[A-Za-z0-9_-]{1,256}\z/D', $plain)
                     || !is_string($eventTs) || !preg_match('/\A[0-9]{1,20}\z/D', $eventTs)) { return $failure(400); }
                 if (!$hasSignature && abs(time() - (int)$eventTs) > 300) { return $failure(403); }
+            } elseif ($event['op'] !== 0 || !is_string($event['t'] ?? null)) { return $failure(400); }
+            $keypair = self::keypair($config['qq_app_secret']);
+            if (($event['op'] !== 13 || $hasSignature)
+                && !Enhancement_QqCryptoHelper::verify(hex2bin($signature), $timestamp . $body, Enhancement_QqCryptoHelper::publicKey($keypair))) { return $failure(403); }
+            $state = Enhancement_NotifyTransportHelper::read('qq_webhook');
+            if (($state['identity'] ?? '') !== self::credentialsIdentity($config)) { $state = array('identity' => self::credentialsIdentity($config)); }
+            if ($event['op'] === 13) {
                 $state['last_challenge_at'] = time();
                 Enhancement_NotifyTransportHelper::write('qq_webhook', $state);
                 return array('status' => 200, 'body' => array('plain_token' => $plain,
@@ -334,6 +382,6 @@ class Enhancement_QqOfficialHelper
             $state['last_event_at'] = time();
             Enhancement_NotifyTransportHelper::write('qq_webhook', $state);
             return array('status' => 200, 'body' => array('op' => 12, 'd' => 0));
-        } catch (Throwable $exception) { return $failure(500); }
+        } catch (Throwable $exception) { return $failure($exception->getCode() === 503 ? 503 : 500); }
     }
 }

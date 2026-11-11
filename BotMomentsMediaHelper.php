@@ -140,7 +140,8 @@ class Enhancement_BotMomentsMediaHelper
             $ok = curl_exec($handle);
             $status = (int)curl_getinfo($handle, CURLINFO_HTTP_CODE);
         } finally {
-            curl_close($handle);
+            if (PHP_VERSION_ID < 80000) { curl_close($handle); }
+            unset($handle);
         }
         if ($ok === false || $status !== 200 || $bytes === '') { throw new RuntimeException(self::ERROR); }
         return $bytes;
@@ -173,7 +174,8 @@ class Enhancement_BotMomentsMediaHelper
         }
         $decoded = @imagecreatefromstring($bytes);
         if ($decoded === false) { throw new RuntimeException(self::ERROR); }
-        @imagedestroy($decoded);
+        if (PHP_VERSION_ID < 80000) { imagedestroy($decoded); }
+        unset($decoded);
         return array('name' => 'bot-moment-' . bin2hex(random_bytes(12)) . '.' . $types[$info[2]][1],
             'type' => $types[$info[2]][0], 'size' => strlen($bytes));
     }

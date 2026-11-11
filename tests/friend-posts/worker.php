@@ -197,15 +197,25 @@ PHP
         friendWorkerCheck($result['exit'] === 0 && !$result['timed_out'] && count(friendWorkerCalls()) === 1,
             'Weixin alone or both notification channels can run the cron', $result);
     }
-    foreach (['inactive', 'disabled', 'channels-disabled'] as $case) {
-        friendWorkerReset($case === 'disabled' ? ['enable_friend_posts' => '0']
-            : ($case === 'channels-disabled' ? ['enable_friend_posts_by_qq' => '0', 'enable_friend_posts_by_weixin' => '0'] : []),
-            $case !== 'inactive');
+    friendWorkerReset(['enable_friend_posts_by_qq' => '0', 'enable_friend_posts_by_weixin' => '0']);
+    $result = friendWorkerRun(['--once']);
+    $calls = friendWorkerCalls();
+    friendWorkerCheck($result['exit'] === 0 && !$result['timed_out'] && count($calls) === 1
+        && ($calls[0]['qq'] ?? '') === '0' && ($calls[0]['weixin'] ?? '') === '0'
+        && $result['stdout'] === "status=success\nnotifications_sent=0 notifications_failed=0\n" && $result['stderr'] === '',
+        'Cron refreshes cached articles with both notification channels disabled', $result);
+    foreach (['inactive', 'disabled'] as $case) {
+        friendWorkerReset($case === 'disabled' ? ['enable_friend_posts' => '0'] : [], $case !== 'inactive');
         $result = friendWorkerRun(['--once']);
         friendWorkerCheck($result['exit'] === 1 && !$result['timed_out'] && friendWorkerCalls() === []
             && $result['stdout'] === '' && $result['stderr'] !== '' && strpos($result['stderr'], '停止') !== false,
             'Disabled task stops before refreshing: ' . $case, $result);
     }
+    friendWorkerReset(['enable_friend_posts' => '0', 'enable_friend_posts_by_qq' => '0', 'enable_friend_posts_by_weixin' => '0']);
+    $result = friendWorkerRun(['--once']);
+    friendWorkerCheck($result['exit'] === 1 && !$result['timed_out'] && friendWorkerCalls() === []
+        && $result['stdout'] === '' && strpos($result['stderr'], '朋友文章功能已关闭') !== false,
+        'The master friend-post switch still stops a cache-only cron before refresh', $result);
     foreach (['bootstrap-error', 'bootstrap-warning', 'refresh-error', 'refresh-warning', 'refresh-failure'] as $case) {
         friendWorkerReset();
         $result = friendWorkerRun(['--once'], $case);

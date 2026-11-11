@@ -91,21 +91,21 @@ class Enhancement_FriendPostsHelper
         return $friends;
     }
 
-    private static function cacheDirectory()
+    private static function cacheDirectory($create = true)
     {
         $options = Typecho_Widget::widget('Widget_Options');
         $root = defined('__TYPECHO_ROOT_DIR__') ? __TYPECHO_ROOT_DIR__ : __DIR__;
         $key = hash('sha256', $root . "\0" . (string)$options->siteUrl);
         $directory = rtrim(sys_get_temp_dir(), '/\\') . '/typecho-enhancement-friends-' . $key;
-        if (is_link($directory) || (!is_dir($directory) && !@mkdir($directory, 0700, true))) {
+        if (is_link($directory) || ($create && !is_dir($directory) && !@mkdir($directory, 0700, true))) {
             throw new RuntimeException('朋友文章缓存目录不可写。');
         }
         return $directory;
     }
 
-    private static function cacheFile(array $friend)
+    private static function cacheFile(array $friend, $create = true)
     {
-        return self::cacheDirectory() . '/' . self::friendKey($friend) . '.json';
+        return self::cacheDirectory($create) . '/' . self::friendKey($friend) . '.json';
     }
 
     private static function friendKey(array $friend): string
@@ -140,7 +140,7 @@ class Enhancement_FriendPostsHelper
         }
     }
 
-    /** A shared lock and oldest-check-first order bound public work to one feed per view. */
+    /** Explicit admin and worker refreshes share a lock and check the oldest feeds first. */
     public static function refresh($limit = 1, $lid = 0)
     {
         $settings = self::settings();
@@ -239,7 +239,7 @@ class Enhancement_FriendPostsHelper
         $settings = self::settings();
         $result = array('enabled' => (bool)$settings->enable_friend_posts, 'updated' => 0, 'feeds' => array());
         foreach (self::friends($settings) as $friend) {
-            $cache = self::readCache(self::cacheFile($friend));
+            $cache = self::readCache(self::cacheFile($friend, false));
             $result['updated'] = max($result['updated'], (int)$cache['updated']);
             $result['feeds'][] = array(
                 'lid' => $friend['lid'], 'name' => $friend['name'], 'url' => $friend['url'],
@@ -260,16 +260,11 @@ class Enhancement_FriendPostsHelper
         if (!$result['enabled']) {
             return $result;
         }
-        try {
-            self::refresh();
-        } catch (Throwable $error) {
-            // Public pages can still show cached articles if a refresh fails.
-        }
         $items = array();
         $seen = array();
         try {
             foreach (self::friends($settings) as $friend) {
-                $cache = self::readCache(self::cacheFile($friend));
+                $cache = self::readCache(self::cacheFile($friend, false));
                 $result['updated'] = max($result['updated'], (int)$cache['updated']);
                 $friendCount = 0;
                 foreach ($cache['items'] as $item) {

@@ -1,10 +1,13 @@
 <?php
 
-/** Official QQ Ed25519 signatures using the bundled PHP implementation. */
+/** Official QQ Ed25519 signatures, with a PHP fallback for servers without sodium. */
 class Enhancement_QqCryptoHelper
 {
     public static function backend(): string
     {
+        if (function_exists('sodium_crypto_sign_seed_keypair') && function_exists('sodium_crypto_sign_publickey')
+            && function_exists('sodium_crypto_sign_secretkey') && function_exists('sodium_crypto_sign_detached')
+            && function_exists('sodium_crypto_sign_verify_detached')) { return 'native'; }
         if (!class_exists('ParagonIE_Sodium_Compat')) {
             $autoload = __DIR__ . '/vendor/sodium_compat/autoload-php7.php';
             if (!is_file($autoload)) { return 'unavailable'; }
@@ -22,7 +25,10 @@ class Enhancement_QqCryptoHelper
     private static function call(string $method, array $arguments)
     {
         if (!self::available()) { throw new RuntimeException('QQ 签名组件缺失，请更新完整插件。'); }
-        // Keep QQ independent of ext-sodium without changing other callers of the library.
+        if (self::backend() === 'native') {
+            return call_user_func_array('sodium_' . $method, $arguments);
+        }
+        // The bundled implementation also works when the native extension is absent.
         $previous = ParagonIE_Sodium_Compat::$disableFallbackForUnitTests;
         ParagonIE_Sodium_Compat::$disableFallbackForUnitTests = true;
         try { return call_user_func_array(array('ParagonIE_Sodium_Compat', $method), $arguments); }

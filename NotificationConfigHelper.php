@@ -20,9 +20,9 @@ class Enhancement_NotificationConfigHelper
         $containerCommand = "docker exec --user '<PHP运行用户>' '<PHP容器名>' php '/容器内站点路径/usr/plugins/Enhancement/FriendPosts/worker.php' --once";
         self::addPanel($form, 'enhancement_friend_posts_notifications_panel',
             '<section id="enhancement-friend-posts-notifications"><h4>朋友文章更新通知与定时检查</h4>'
-            . '<p>首次成功读取订阅时只建立基线，不推送已有旧文；之后同一站点一次发现多篇新文章时合并通知。通知随 RSS / Atom 刷新处理；访问朋友文章页面或后台手动刷新均可触发。须保持“获取朋友的最近文章”启用。</p>'
+            . '<p>首次成功读取订阅时只建立基线，不推送已有旧文；之后同一站点一次发现多篇新文章时合并通知。通知随后台手动刷新或计划任务的 RSS / Atom 抓取处理。朋友文章页面仅读取缓存。须保持“获取朋友的最近文章”启用。</p>'
             . '<details><summary>宝塔 / 1Panel 定时检查朋友文章</summary>'
-            . '<p>无人访问时，可单独建立此任务，建议每 15 分钟运行一次。实际检查仍受上方“缓存有效期（分钟）”（friend_posts_interval）控制，默认 60 分钟；希望每 15 分钟检查时请同时将该值设为 15。此任务刷新朋友文章并发送更新通知，与微信瞬间接收任务分开。</p>'
+            . '<p>需要持续更新文章时，请单独建立此任务，建议每 15 分钟运行一次。实际检查仍受上方“缓存有效期（分钟）”（friend_posts_interval）控制，默认 60 分钟；希望每 15 分钟检查时请同时将该值设为 15。此任务刷新朋友文章，并按通知开关发送更新通知；两个通知均关闭时仍更新缓存。它与微信瞬间接收任务分开。</p>'
             . '<label for="enhancement-friend-posts-worker-path">当前 PHP 看到的朋友文章 worker 完整路径</label>'
             . '<input id="enhancement-friend-posts-worker-path" type="text" readonly spellcheck="false" style="width:100%;margin:8px 0" value="' . self::escape($workerPath) . '">'
             . '<h5>宝塔：主机 PHP</h5>'

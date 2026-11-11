@@ -104,7 +104,7 @@ class Enhancement_WeixinNotifyHelper
         return false;
     }
 
-    private static function error(array $response): RuntimeException
+    private static function error(array $response, ?array $requestAccount = null): RuntimeException
     {
         $data = isset($response['data']) && is_array($response['data']) ? $response['data'] : array();
         $code = Enhancement_NotifyTransportHelper::apiCode($data);
@@ -116,9 +116,12 @@ class Enhancement_WeixinNotifyHelper
         }
         if (in_array($data['ret'] ?? null, array(-14, '-14'), true) || in_array($data['errcode'] ?? null, array(-14, '-14'), true) || (int)($response['status'] ?? 0) === 401) {
             $account = Enhancement_NotifyTransportHelper::read('weixin_account');
-            if ($account !== array()) {
-                $account['expired'] = true;
-                Enhancement_NotifyTransportHelper::write('weixin_account', $account);
+            if ($requestAccount !== null && $account !== array()
+                && ($account['token'] ?? null) === ($requestAccount['token'] ?? null)
+                && ($account['account_id'] ?? null) === ($requestAccount['account_id'] ?? null)) {
+                $expired = $account;
+                $expired['expired'] = true;
+                Enhancement_NotifyTransportHelper::compareAndSwap('weixin_account', $account, $expired);
             }
             return new RuntimeException('微信登录凭证已失效，请重新扫码并同步接收人（错误码 -14 或 HTTP 401）。');
         }
@@ -318,7 +321,7 @@ class Enhancement_WeixinNotifyHelper
                 return array('status' => 'wait', 'message' => '微信连接已变更，请重新同步。', 'candidates' => array()) + $counts;
             }
             if (self::failed($response)) {
-                throw self::error($response);
+                throw self::error($response, $account);
             }
             $data = $response['data'];
             $context = is_array($sync['context_tokens'] ?? null) ? $sync['context_tokens'] : array();
@@ -461,7 +464,7 @@ class Enhancement_WeixinNotifyHelper
             // A timeout can occur after acceptance. This call makes one attempt.
             $response = self::request($transport, 'POST', $account['base_url'] . '/ilink/bot/sendmessage', self::headers($account['token']), array('msg' => $msg, 'base_info' => self::baseInfo()));
             if (self::failed($response)) {
-                throw self::error($response);
+                throw self::error($response, $account);
             }
             $data = $response['data'];
             $id = $data['message_id'] ?? '';

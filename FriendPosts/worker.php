@@ -19,7 +19,7 @@ if ($friendWorkerHelp) {
         . "用法：php FriendPosts/worker.php [--once]\n"
         . "  --once  检查一次后退出（默认），最多刷新 100 个到期订阅\n"
         . "  --help  显示说明，不加载站点配置\n"
-        . "请启用 Enhancement、朋友文章及至少一种朋友文章 QQ / 微信通知。\n"
+        . "请启用 Enhancement 和朋友文章；QQ / 微信通知可按需开启。\n"
         . "无需开启发布瞬间。每个订阅仍遵守后台设置的刷新间隔。\n"
         . "可在宝塔或 1Panel 计划任务中每 15 分钟执行一次。\n";
     exit(0);
@@ -77,11 +77,6 @@ try {
     Enhancement_SettingsHelper::syncOptionCache('plugin:Enhancement', $friendWorkerConfigValue, 'Enhancement');
     if (($friendWorkerSettings['enable_friend_posts'] ?? '1') !== '1') {
         fwrite(STDERR, "朋友文章功能已关闭，检查任务已停止。\n");
-        exit(1);
-    }
-    if (($friendWorkerSettings['enable_friend_posts_by_qq'] ?? '0') !== '1'
-        && ($friendWorkerSettings['enable_friend_posts_by_weixin'] ?? '0') !== '1') {
-        fwrite(STDERR, "朋友文章 QQ 和微信通知均未开启，检查任务已停止。\n");
         exit(1);
     }
     ob_start();

@@ -1,7 +1,10 @@
 <?php
 
+require_once __DIR__ . '/PublicApiHelper.php';
+
 class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 {
+    use Enhancement_PublicApiHelper;
     private $db;
     private $options;
     private $prefix;
@@ -36,6 +39,12 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             $normalized[$key] = $value;
         }
 
+        if (array_key_exists('SMTPHost', $normalized)) {
+            $normalized['STMPHost'] = $normalized['SMTPHost'];
+        } elseif (array_key_exists('STMPHost', $normalized)) {
+            $normalized['SMTPHost'] = $normalized['STMPHost'];
+        }
+
         return $normalized;
     }
 
@@ -51,7 +60,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             return $decoded;
         }
 
-        $unserialized = @unserialize($text);
+        $unserialized = @unserialize($text, array('allowed_classes' => false));
         if (is_array($unserialized)) {
             return $unserialized;
         }
@@ -148,436 +157,6 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         }
 
         return $settings;
-    }
-
-    private function metingCacheDir()
-    {
-        $root = defined('__TYPECHO_ROOT_DIR__')
-            ? (string)__TYPECHO_ROOT_DIR__
-            : dirname(dirname(dirname(dirname(__FILE__))));
-
-        $root = rtrim(str_replace('\\', '/', $root), '/');
-        return $root . '/usr/cache';
-    }
-
-    private function metingCacheEnsureDir()
-    {
-        $dir = $this->metingCacheDir();
-        if (!is_dir($dir)) {
-            @mkdir($dir, 0755, true);
-        }
-
-        if (!is_dir($dir) || !is_writable($dir)) {
-            return '';
-        }
-
-        return $dir;
-    }
-
-    private function metingCacheFile($key)
-    {
-        $key = trim((string)$key);
-        if ($key === '') {
-            return '';
-        }
-
-        $dir = $this->metingCacheEnsureDir();
-        if ($dir === '') {
-            return '';
-        }
-
-        return $dir . DIRECTORY_SEPARATOR . 'enhancement_meting_' . md5($key) . '.json';
-    }
-
-    private function metingCacheGet($key, $ttl = 300)
-    {
-        $key = trim((string)$key);
-        if ($key === '') {
-            return null;
-        }
-
-        $ttl = intval($ttl);
-        if ($ttl <= 0) {
-            $ttl = 300;
-        }
-
-        $now = time();
-        if (isset(self::$metingCache[$key]) && is_array(self::$metingCache[$key])) {
-            $item = self::$metingCache[$key];
-            if (isset($item['expires'], $item['data']) && intval($item['expires']) > $now) {
-                return $item['data'];
-            }
-
-            if (isset($item['time'], $item['data']) && ($now - intval($item['time']) <= $ttl)) {
-                return $item['data'];
-            }
-        }
-
-        $file = $this->metingCacheFile($key);
-        if ($file === '' || !is_file($file)) {
-            return null;
-        }
-
-        $raw = @file_get_contents($file);
-        if (!is_string($raw) || $raw === '') {
-            return null;
-        }
-
-        $decoded = json_decode($raw, true);
-        if (!is_array($decoded)) {
-            @unlink($file);
-            return null;
-        }
-
-        if (isset($decoded['expires'], $decoded['data'])) {
-            if (intval($decoded['expires']) <= $now) {
-                @unlink($file);
-                return null;
-            }
-
-            self::$metingCache[$key] = array(
-                'expires' => intval($decoded['expires']),
-                'data' => $decoded['data']
-            );
-            return $decoded['data'];
-        }
-
-        if (isset($decoded['time'], $decoded['data']) && ($now - intval($decoded['time']) <= $ttl)) {
-            self::$metingCache[$key] = array(
-                'expires' => $now + $ttl,
-                'data' => $decoded['data']
-            );
-            return $decoded['data'];
-        }
-
-        @unlink($file);
-        return null;
-    }
-
-    private function metingCacheSet($key, $data, $ttl = 300)
-    {
-        $key = trim((string)$key);
-        if ($key === '') {
-            return;
-        }
-
-        $ttl = intval($ttl);
-        if ($ttl <= 0) {
-            $ttl = 300;
-        }
-
-        $expires = time() + $ttl;
-        self::$metingCache[$key] = array(
-            'expires' => $expires,
-            'data' => $data
-        );
-
-        $file = $this->metingCacheFile($key);
-        if ($file === '') {
-            return;
-        }
-
-        $payload = json_encode(array(
-            'expires' => $expires,
-            'data' => $data
-        ), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-
-        if ($payload !== false) {
-            @file_put_contents($file, $payload, LOCK_EX);
-        }
-    }
-
-    private function metingApiResponseJson($data)
-    {
-        $this->metingApiDiscardBufferedOutput();
-        $this->response->setStatus(200);
-        $this->response->setContentType('application/json; charset=UTF-8');
-        echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    }
-
-    private function metingApiResponseError($message, $status = 400)
-    {
-        $this->metingApiDiscardBufferedOutput();
-        $this->response->setStatus(intval($status));
-        $this->response->setContentType('application/json; charset=UTF-8');
-        echo json_encode(array('error' => trim((string)$message)), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    }
-
-    private function metingApiBeginOutputGuard()
-    {
-        $this->metingOutputBaseLevel = ob_get_level();
-        @ob_start();
-        $this->metingDisplayErrorsBackup = ini_get('display_errors');
-        $this->metingErrorReportingBackup = error_reporting();
-        @ini_set('display_errors', '0');
-        @error_reporting(E_ALL & ~E_WARNING & ~E_NOTICE & ~E_DEPRECATED & ~E_STRICT);
-    }
-
-    private function metingApiDiscardBufferedOutput()
-    {
-        $base = intval($this->metingOutputBaseLevel);
-        if ($base < 0) {
-            $base = 0;
-        }
-
-        while (ob_get_level() > $base) {
-            @ob_end_clean();
-        }
-    }
-
-    private function metingApiEndOutputGuard()
-    {
-        $this->metingApiDiscardBufferedOutput();
-
-        if ($this->metingDisplayErrorsBackup !== null) {
-            @ini_set('display_errors', (string)$this->metingDisplayErrorsBackup);
-        }
-
-        if ($this->metingErrorReportingBackup !== null) {
-            @error_reporting(intval($this->metingErrorReportingBackup));
-        }
-    }
-
-    private function metingApiNormalizeServer($server)
-    {
-        $server = strtolower(trim((string)$server));
-        $allow = array('netease', 'tencent', 'kugou', 'kuwo', 'xiami', 'baidu');
-        if (!in_array($server, $allow, true)) {
-            return '';
-        }
-
-        return $server;
-    }
-
-    private function metingApiNormalizeType($type)
-    {
-        $type = strtolower(trim((string)$type));
-        $allow = array('song', 'album', 'artist', 'playlist', 'search');
-        if (!in_array($type, $allow, true)) {
-            return '';
-        }
-
-        return $type;
-    }
-
-    private function metingApiNormalizeId($id)
-    {
-        $id = trim((string)$id);
-        if ($id === '' || strlen($id) > 128) {
-            return '';
-        }
-        if (!preg_match('/^[A-Za-z0-9_\-]+$/', $id)) {
-            return '';
-        }
-
-        return $id;
-    }
-
-    private function metingApiBuildAudioList($songs)
-    {
-        if (!is_array($songs)) {
-            return array();
-        }
-
-        $rows = array();
-        foreach ($songs as $song) {
-            if (!is_array($song)) {
-                continue;
-            }
-
-            $source = isset($song['source']) ? trim((string)$song['source']) : '';
-            $urlId = isset($song['url_id']) ? trim((string)$song['url_id']) : '';
-            $picId = isset($song['pic_id']) ? trim((string)$song['pic_id']) : '';
-            $lyricId = isset($song['lyric_id']) ? trim((string)$song['lyric_id']) : '';
-            if ($source === '' || $urlId === '' || $picId === '' || $lyricId === '') {
-                continue;
-            }
-
-            $name = isset($song['name']) ? trim((string)$song['name']) : '';
-            $album = isset($song['album']) ? trim((string)$song['album']) : '';
-            $artists = array();
-            if (isset($song['artist']) && is_array($song['artist'])) {
-                foreach ($song['artist'] as $artist) {
-                    $artistName = trim((string)$artist);
-                    if ($artistName !== '') {
-                        $artists[] = $artistName;
-                    }
-                }
-            }
-
-            $base = Typecho_Common::url('action/enhancement-edit', $this->options->index) . '?do=meting-api';
-            $rows[] = array(
-                'name' => $name,
-                'artist' => implode(' / ', $artists),
-                'album' => $album,
-                'url' => $base . '&server=' . rawurlencode($source) . '&type=url&id=' . rawurlencode($urlId),
-                'cover' => $base . '&server=' . rawurlencode($source) . '&type=pic&id=' . rawurlencode($picId),
-                'lrc' => $base . '&server=' . rawurlencode($source) . '&type=lrc&id=' . rawurlencode($lyricId)
-            );
-        }
-
-        return $rows;
-    }
-
-    public function metingApi()
-    {
-        $this->metingApiBeginOutputGuard();
-
-        if (!function_exists('curl_init')) {
-            $this->metingApiResponseError('缺少 cURL 扩展', 500);
-            return;
-        }
-
-        $server = $this->metingApiNormalizeServer($this->request->get('server'));
-        $type = strtolower(trim((string)$this->request->get('type')));
-        $id = trim((string)$this->request->get('id'));
-
-        if ($server === '' || $type === '' || $id === '') {
-            $this->metingApiResponseError('参数不完整', 400);
-            return;
-        }
-
-        $metingFile = dirname(__FILE__) . '/Meting/Meting.php';
-        if (!is_file($metingFile)) {
-            $this->metingApiResponseError('本地 Meting 文件不存在', 500);
-            return;
-        }
-
-        require_once $metingFile;
-        if (!class_exists('Metowolf\\Meting')) {
-            $this->metingApiResponseError('本地 Meting 类加载失败', 500);
-            return;
-        }
-
-        try {
-            $api = new \Metowolf\Meting($server);
-            $api->format(true);
-
-            if ($server === 'netease') {
-                $settings = class_exists('Enhancement_Plugin') && method_exists('Enhancement_Plugin', 'runtimeSettings')
-                    ? Enhancement_Plugin::runtimeSettings()
-                    : (object) array();
-                $cookie = isset($settings->music_netease_cookie) ? trim((string)$settings->music_netease_cookie) : '';
-                if ($cookie !== '') {
-                    $api->cookie($cookie);
-                }
-            }
-
-            if ($type === 'url') {
-                $id = $this->metingApiNormalizeId($id);
-                if ($id === '') {
-                    $this->metingApiResponseError('id 参数无效', 400);
-                    return;
-                }
-
-                $cacheKey = 'url:' . $server . ':' . $id;
-                $data = $this->metingCacheGet($cacheKey, 1200);
-                if ($data === null) {
-                    $data = $api->url($id, 320);
-                    $this->metingCacheSet($cacheKey, $data, 1200);
-                }
-
-                $parsed = json_decode((string)$data, true);
-                $url = is_array($parsed) && isset($parsed['url']) ? trim((string)$parsed['url']) : '';
-                if ($url === '' && $server === 'netease') {
-                    $url = 'https://music.163.com/song/media/outer/url?id=' . rawurlencode($id) . '.mp3';
-                }
-
-                $this->metingApiDiscardBufferedOutput();
-                $this->response->setStatus(302);
-                $this->response->redirect($url);
-                return;
-            }
-
-            if ($type === 'pic') {
-                $id = $this->metingApiNormalizeId($id);
-                if ($id === '') {
-                    $this->metingApiResponseError('id 参数无效', 400);
-                    return;
-                }
-
-                $cacheKey = 'pic:' . $server . ':' . $id;
-                $data = $this->metingCacheGet($cacheKey, 86400);
-                if ($data === null) {
-                    $data = $api->pic($id, 300);
-                    $this->metingCacheSet($cacheKey, $data, 86400);
-                }
-
-                $parsed = json_decode((string)$data, true);
-                $url = is_array($parsed) && isset($parsed['url']) ? trim((string)$parsed['url']) : '';
-                $this->metingApiDiscardBufferedOutput();
-                $this->response->setStatus(302);
-                $this->response->redirect($url);
-                return;
-            }
-
-            if ($type === 'lrc') {
-                $id = $this->metingApiNormalizeId($id);
-                if ($id === '') {
-                    $this->metingApiResponseError('id 参数无效', 400);
-                    return;
-                }
-
-                $cacheKey = 'lrc:' . $server . ':' . $id;
-                $data = $this->metingCacheGet($cacheKey, 86400);
-                if ($data === null) {
-                    $data = $api->lyric($id);
-                    $this->metingCacheSet($cacheKey, $data, 86400);
-                }
-
-                $parsed = json_decode((string)$data, true);
-                $lyric = is_array($parsed) && isset($parsed['lyric']) ? (string)$parsed['lyric'] : '';
-                $this->metingApiDiscardBufferedOutput();
-                $this->response->setStatus(200);
-                $this->response->setContentType('text/plain; charset=UTF-8');
-                echo $lyric;
-                return;
-            }
-
-            $normalizedType = $this->metingApiNormalizeType($type);
-            if ($normalizedType === '') {
-                $this->metingApiResponseError('type 参数无效', 400);
-                return;
-            }
-
-            if ($normalizedType === 'search') {
-                $keyword = trim((string)$id);
-                if ($keyword === '') {
-                    $this->metingApiResponseError('搜索关键词不能为空', 400);
-                    return;
-                }
-
-                $cacheKey = 'search:' . $server . ':' . md5($keyword);
-                $data = $this->metingCacheGet($cacheKey, 300);
-                if ($data === null) {
-                    $data = $api->search($keyword, array('limit' => 30, 'page' => 1));
-                    $this->metingCacheSet($cacheKey, $data, 300);
-                }
-            } else {
-                $id = $this->metingApiNormalizeId($id);
-                if ($id === '') {
-                    $this->metingApiResponseError('id 参数无效', 400);
-                    return;
-                }
-
-                $cacheKey = $normalizedType . ':' . $server . ':' . $id;
-                $data = $this->metingCacheGet($cacheKey, 3600);
-                if ($data === null) {
-                    $data = $api->$normalizedType($id);
-                    $this->metingCacheSet($cacheKey, $data, 3600);
-                }
-            }
-
-            $songs = json_decode((string)$data, true);
-            $rows = $this->metingApiBuildAudioList($songs);
-            $this->metingApiResponseJson($rows);
-        } catch (Error $e) {
-            $this->metingApiResponseError('本地 Meting 解析失败：' . $e->getMessage(), 500);
-        } catch (Exception $e) {
-            $this->metingApiResponseError('本地 Meting 解析失败：' . $e->getMessage(), 500);
-        } finally {
-            $this->metingApiEndOutputGuard();
-        }
     }
 
     private function savePluginSettings(array $settings)
@@ -804,7 +383,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         );
     }
 
-    private function backupResponse($success, $message, $statusCode = 200)
+    private function actionResponse($success, $message, $statusCode = 200)
     {
         $statusCode = intval($statusCode);
         if ($statusCode > 0) {
@@ -825,52 +404,21 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             $success ? 'success' : 'error'
         );
         $this->response->goBack();
+    }
+
+    private function backupResponse($success, $message, $statusCode = 200)
+    {
+        return $this->actionResponse($success, $message, $statusCode);
     }
 
     private function testActionResponse($success, $message, $statusCode = 200)
     {
-        $statusCode = intval($statusCode);
-        if ($statusCode > 0) {
-            $this->response->setStatus($statusCode);
-        }
-
-        if ($this->request->isAjax()) {
-            $this->response->throwJson(array(
-                'success' => (bool)$success,
-                'message' => (string)$message
-            ));
-            return;
-        }
-
-        $this->widget('Widget_Notice')->set(
-            (string)$message,
-            null,
-            $success ? 'success' : 'error'
-        );
-        $this->response->goBack();
+        return $this->actionResponse($success, $message, $statusCode);
     }
 
     private function qqQueueResponse($success, $message, $statusCode = 200)
     {
-        $statusCode = intval($statusCode);
-        if ($statusCode > 0) {
-            $this->response->setStatus($statusCode);
-        }
-
-        if ($this->request->isAjax()) {
-            $this->response->throwJson(array(
-                'success' => (bool)$success,
-                'message' => (string)$message
-            ));
-            return;
-        }
-
-        $this->widget('Widget_Notice')->set(
-            (string)$message,
-            null,
-            $success ? 'success' : 'error'
-        );
-        $this->response->goBack();
+        return $this->actionResponse($success, $message, $statusCode);
     }
 
     private function shouldUseJsonUploadResponse()
@@ -1930,7 +1478,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 
     public function sendSmtpTestMail()
     {
-        $host = trim((string)$this->request->get('STMPHost'));
+        $host = trim((string)$this->request->get('SMTPHost', $this->request->get('STMPHost')));
         $username = trim((string)$this->request->get('SMTPUserName'));
         $password = (string)$this->request->get('SMTPPassword');
         $from = trim((string)$this->request->get('from'));
@@ -1973,32 +1521,22 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         }
 
         try {
-            require_once __DIR__ . '/CommentNotifier/PHPMailer/PHPMailer.php';
-            require_once __DIR__ . '/CommentNotifier/PHPMailer/SMTP.php';
-            require_once __DIR__ . '/CommentNotifier/PHPMailer/Exception.php';
-
-            $mail = new \PHPMailer\PHPMailer\PHPMailer(false);
-            $mail->CharSet = \PHPMailer\PHPMailer\PHPMailer::CHARSET_UTF8;
-            $mail->Encoding = \PHPMailer\PHPMailer\PHPMailer::ENCODING_BASE64;
-            $mail->isSMTP();
-            $mail->Host = $host;
-            $mail->SMTPAuth = true;
-            $mail->Username = $username;
-            $mail->Password = $password;
-            $mail->Port = (int)$port;
-            $mail->Timeout = 10;
-            if ($secure !== '') {
-                $mail->SMTPSecure = $secure;
-            }
+            $mail = Enhancement_MailHelper::createMailer(array(
+                'SMTPHost' => $host,
+                'SMTPUserName' => $username,
+                'SMTPPassword' => $password,
+                'SMTPPort' => $port,
+                'SMTPSecure' => $secure,
+                'from' => $from,
+                'fromName' => $fromName
+            ));
 
             $siteUrl = isset($this->options->siteUrl) ? trim((string)$this->options->siteUrl) : '';
             $safeSiteUrl = htmlspecialchars($siteUrl !== '' ? $siteUrl : 'unknown', ENT_QUOTES, 'UTF-8');
             $sentAt = date('Y-m-d H:i:s');
 
-            $mail->setFrom($from, $fromName);
             $mail->addAddress($recipient);
             $mail->Subject = _t('Enhancement SMTP 发信测试');
-            $mail->isHTML(true);
             $mail->Body = '<p>这是一封 Enhancement SMTP 测试邮件。</p>'
                 . '<p>站点：' . $safeSiteUrl . '<br>发送时间：' . htmlspecialchars($sentAt, ENT_QUOTES, 'UTF-8') . '</p>'
                 . '<p>如果收到此邮件，说明当前 SMTP 配置可以正常发信。</p>';
@@ -2017,7 +1555,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             }
 
             $this->testActionResponse(true, _t('测试邮件发送成功，已发送到 %s，请检查收件箱。', $recipient), 200);
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             $this->testActionResponse(false, _t('SMTP 测试失败：%s', $e->getMessage()), 500);
         }
     }
@@ -2162,11 +1700,11 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 
     private function getClientIpAddress()
     {
-        $ip = trim((string)$this->request->getIp());
-        if ($ip === '') {
-            return '0.0.0.0';
-        }
-        return $ip;
+        // Typecho otherwise accepts client supplied forwarding headers by default.
+        $ip = defined('__TYPECHO_IP_SOURCE__')
+            ? trim((string)$this->request->getIp())
+            : trim((string)$this->request->getServer('REMOTE_ADDR'));
+        return filter_var($ip, FILTER_VALIDATE_IP) ? $ip : '0.0.0.0';
     }
 
     private function getRateLimitWindowSeconds()
@@ -2181,59 +1719,18 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 
     private function getRateLimitStorePath()
     {
-        return __DIR__ . '/runtime/rate-limit-links.json';
+        return $this->publicStorageDirectory() . '/rate-limit-links.json';
     }
 
     private function checkSubmitRateLimit(&$retryAfter = 0)
     {
-        $file = $this->getRateLimitStorePath();
-        $dir = dirname($file);
-        if (!is_dir($dir)) {
-            @mkdir($dir, 0755, true);
-        }
-
-        $window = $this->getRateLimitWindowSeconds();
-        $maxAttempts = $this->getRateLimitMaxAttempts();
-        $now = time();
-        $ip = $this->getClientIpAddress();
-
-        $records = array();
-        if (is_file($file)) {
-            $raw = @file_get_contents($file);
-            $decoded = json_decode((string)$raw, true);
-            if (is_array($decoded)) {
-                $records = $decoded;
-            }
-        }
-
-        foreach ($records as $recordIp => $timestamps) {
-            if (!is_array($timestamps)) {
-                unset($records[$recordIp]);
-                continue;
-            }
-            $records[$recordIp] = array_values(array_filter($timestamps, function ($timestamp) use ($now, $window) {
-                $timestamp = (int)$timestamp;
-                return $timestamp > 0 && ($now - $timestamp) < $window;
-            }));
-            if (empty($records[$recordIp])) {
-                unset($records[$recordIp]);
-            }
-        }
-
-        $attempts = isset($records[$ip]) && is_array($records[$ip]) ? count($records[$ip]) : 0;
-        if ($attempts >= $maxAttempts) {
-            $oldest = isset($records[$ip][0]) ? (int)$records[$ip][0] : $now;
-            $retryAfter = max(1, $window - ($now - $oldest));
-            @file_put_contents($file, json_encode($records, JSON_UNESCAPED_UNICODE));
-            return false;
-        }
-
-        if (!isset($records[$ip]) || !is_array($records[$ip])) {
-            $records[$ip] = array();
-        }
-        $records[$ip][] = $now;
-        @file_put_contents($file, json_encode($records, JSON_UNESCAPED_UNICODE));
-        return true;
+        return $this->consumePublicRateLimit(
+            $this->getRateLimitStorePath(),
+            array($this->getClientIpAddress() => $this->getRateLimitMaxAttempts()),
+            $this->getRateLimitWindowSeconds(),
+            $retryAfter,
+            __DIR__ . '/runtime/rate-limit-links.json'
+        );
     }
 
     private function denySubmission($message, $statusCode = 400, $retryAfter = 0)
@@ -2314,7 +1811,8 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             return false;
         }
 
-        $required = array('STMPHost', 'SMTPUserName', 'SMTPPassword', 'SMTPPort', 'from');
+        $settings = Enhancement_SettingsHelper::normalizeSmtpAlias($settings);
+        $required = array('SMTPHost', 'SMTPUserName', 'SMTPPassword', 'SMTPPort', 'from');
         foreach ($required as $key) {
             $value = isset($settings[$key]) ? trim((string)$settings[$key]) : '';
             if ($value === '') {
@@ -2413,35 +1911,14 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         }
 
         try {
-            require_once __DIR__ . '/CommentNotifier/PHPMailer/PHPMailer.php';
-            require_once __DIR__ . '/CommentNotifier/PHPMailer/SMTP.php';
-            require_once __DIR__ . '/CommentNotifier/PHPMailer/Exception.php';
-
-            $mail = new \PHPMailer\PHPMailer\PHPMailer(false);
-            $mail->CharSet = \PHPMailer\PHPMailer\PHPMailer::CHARSET_UTF8;
-            $mail->Encoding = \PHPMailer\PHPMailer\PHPMailer::ENCODING_BASE64;
-            $mail->isSMTP();
-            $mail->Host = trim((string)$settings['STMPHost']);
-            $mail->SMTPAuth = true;
-            $mail->Username = trim((string)$settings['SMTPUserName']);
-            $mail->Password = trim((string)$settings['SMTPPassword']);
-
-            $smtpSecure = isset($settings['SMTPSecure']) ? trim((string)$settings['SMTPSecure']) : '';
-            if ($smtpSecure !== '') {
-                $mail->SMTPSecure = $smtpSecure;
-            }
-
-            $smtpPort = isset($settings['SMTPPort']) ? intval($settings['SMTPPort']) : 0;
-            $mail->Port = $smtpPort > 0 ? $smtpPort : 25;
-
-            $mail->setFrom($from, $fromName);
+            $settings['fromName'] = $fromName;
+            $mail = Enhancement_MailHelper::createMailer($settings);
             $mail->addAddress($email, trim((string)$toName));
             $mail->Subject = (string)$subject;
-            $mail->isHTML();
             $mail->Body = (string)$html;
 
             return (bool)$mail->send();
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             return false;
         }
     }
@@ -2523,15 +2000,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             return false;
         }
 
-        $required = array('STMPHost', 'SMTPUserName', 'SMTPPassword', 'SMTPPort', 'from');
-        foreach ($required as $key) {
-            $value = isset($settings[$key]) ? trim((string)$settings[$key]) : '';
-            if ($value === '') {
-                return false;
-            }
-        }
-
-        return true;
+        return $this->canUseLinkNotificationMail($settings);
     }
 
     private function sendLinkApprovalMail(array $link, ?array $settings = null): bool
@@ -2569,47 +2038,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             . '<p>站点地址：<a href="' . $safeSiteUrl . '" target="_blank" rel="noopener noreferrer">' . $safeSiteUrl . '</a></p>'
             . '<p>感谢支持。</p>';
 
-        $from = isset($settings['from']) ? trim((string)$settings['from']) : '';
-        if ($from === '') {
-            return false;
-        }
-        $fromName = isset($settings['fromName']) ? trim((string)$settings['fromName']) : '';
-        if ($fromName === '') {
-            $fromName = $siteTitle;
-        }
-
-        try {
-            require_once __DIR__ . '/CommentNotifier/PHPMailer/PHPMailer.php';
-            require_once __DIR__ . '/CommentNotifier/PHPMailer/SMTP.php';
-            require_once __DIR__ . '/CommentNotifier/PHPMailer/Exception.php';
-
-            $mail = new \PHPMailer\PHPMailer\PHPMailer(false);
-            $mail->CharSet = \PHPMailer\PHPMailer\PHPMailer::CHARSET_UTF8;
-            $mail->Encoding = \PHPMailer\PHPMailer\PHPMailer::ENCODING_BASE64;
-            $mail->isSMTP();
-            $mail->Host = trim((string)$settings['STMPHost']);
-            $mail->SMTPAuth = true;
-            $mail->Username = trim((string)$settings['SMTPUserName']);
-            $mail->Password = trim((string)$settings['SMTPPassword']);
-
-            $smtpSecure = isset($settings['SMTPSecure']) ? trim((string)$settings['SMTPSecure']) : '';
-            if ($smtpSecure !== '') {
-                $mail->SMTPSecure = $smtpSecure;
-            }
-
-            $smtpPort = isset($settings['SMTPPort']) ? intval($settings['SMTPPort']) : 0;
-            $mail->Port = $smtpPort > 0 ? $smtpPort : 25;
-
-            $mail->setFrom($from, $fromName);
-            $mail->addAddress($email, $toName);
-            $mail->Subject = $subject;
-            $mail->isHTML();
-            $mail->Body = $html;
-
-            return (bool)$mail->send();
-        } catch (Exception $e) {
-            return false;
-        }
+        return $this->sendLinkNotificationMail($email, $toName, $subject, $html, $settings);
     }
 
     public function insertEnhancement()
@@ -2640,8 +2069,8 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         /** 提示信息 */
         $this->widget('Widget_Notice')->set(_t(
             '友链 <a href="%s">%s</a> 已经被增加',
-            $item['url'],
-            $item['name']
+            htmlspecialchars((string)$item['url'], ENT_QUOTES, 'UTF-8'),
+            htmlspecialchars((string)$item['name'], ENT_QUOTES, 'UTF-8')
         ), null, 'success');
 
         /** 转向原页 */
@@ -2671,8 +2100,13 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         }
 
         $retryAfter = 0;
-        if (!$this->checkSubmitRateLimit($retryAfter)) {
-            $this->denySubmission(_t('提交过于频繁，请稍后再试'), 429, $retryAfter);
+        try {
+            if (!$this->checkSubmitRateLimit($retryAfter)) {
+                $this->denySubmission(_t('提交过于频繁，请稍后再试'), 429, $retryAfter);
+                return;
+            }
+        } catch (RuntimeException $error) {
+            $this->denySubmission(_t('友链申请暂时不可用，请稍后重试'), 503);
             return;
         }
 
@@ -2778,8 +2212,8 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         /** 提示信息 */
         $this->widget('Widget_Notice')->set(_t(
             '友链 <a href="%s">%s</a> 已经被更新',
-            $item['url'],
-            $item['name']
+            htmlspecialchars((string)$item['url'], ENT_QUOTES, 'UTF-8'),
+            htmlspecialchars((string)$item['name'], ENT_QUOTES, 'UTF-8')
         ), null, 'success');
 
         /** 转向原页 */

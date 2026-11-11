@@ -128,7 +128,8 @@ class Enhancement_NotifyTransportHelper
             $readTimeout = curl_errno($handle) === CURLE_OPERATION_TIMEDOUT
                 && (float)curl_getinfo($handle, CURLINFO_APPCONNECT_TIME) > 0;
         } finally {
-            curl_close($handle);
+            if (PHP_VERSION_ID < 80000) { curl_close($handle); }
+            unset($handle);
         }
         if ($ok === false) {
             throw new RuntimeException('通知接口连接失败或超时，请检查服务器网络和 HTTPS 证书。', $readTimeout ? 28 : 0);

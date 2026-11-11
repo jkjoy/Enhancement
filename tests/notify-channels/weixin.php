@@ -242,6 +242,21 @@ weixinBindOwner();
 $unauthorized = Enhancement_WeixinNotifyHelper::send('通知', array(), weixinResponse(array(), 401));
 notifyCheck(!$unauthorized['success'] && Enhancement_WeixinNotifyHelper::status()['expired'], 'HTTP 401 marks Weixin credentials expired');
 
+foreach (array('token', 'account_id', 'disconnect') as $connectionChange) {
+    weixinConnect();
+    weixinBindOwner();
+    $newAccount = array();
+    $stale = Enhancement_WeixinNotifyHelper::send('旧请求', array(), static function () use ($connectionChange, &$newAccount): array {
+        $newAccount = Enhancement_NotifyTransportHelper::read('weixin_account');
+        if ($connectionChange === 'disconnect') { $newAccount = array(); }
+        else { $newAccount[$connectionChange] = 'replacement-connection'; }
+        Enhancement_NotifyTransportHelper::write('weixin_account', $newAccount);
+        return array('status' => 401, 'data' => array('ret' => -14));
+    });
+    notifyCheck(!$stale['success'] && Enhancement_NotifyTransportHelper::read('weixin_account') === $newAccount,
+        'A stale Weixin send failure cannot expire a replacement or disconnected account: ' . $connectionChange);
+}
+
 notifyReset();
 weixinConnect('');
 $selection = Enhancement_WeixinNotifyHelper::sync(weixinResponse(array('msgs' => array(

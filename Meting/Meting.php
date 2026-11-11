@@ -25,6 +25,8 @@ class Meting
     public $proxy = null;
     public $format = false;
     public $header;
+    private $deadline;
+    private $responseBytes = 0;
 
     public function __construct($value = 'netease')
     {
@@ -61,6 +63,14 @@ class Meting
         return $this;
     }
 
+    /** One budget shared by every request used to resolve a song or playlist. */
+    public function timeout($seconds = 8)
+    {
+        $this->deadline = microtime(true) + max(1, min(8, (float)$seconds));
+        $this->responseBytes = 0;
+        return $this;
+    }
+
     private function exec($api)
     {
         if (isset($api['encode'])) {
@@ -93,37 +103,53 @@ class Meting
 
     private function curl($url, $payload = null, $headerOnly = 0)
     {
-        $header = array_map(function ($k, $v) {
-            return $k.': '.$v;
-        }, array_keys($this->header), $this->header);
+        if ($this->deadline === null) { $this->timeout(); }
+        $milliseconds = (int)floor(($this->deadline - microtime(true)) * 1000);
+        if ($milliseconds <= 0) { throw new \RuntimeException('音乐服务请求超时。', 504); }
+        // All upstreams are fixed in this class; never send account cookies over plain HTTP.
+        $url = preg_replace('/^http:/i', 'https:', $url);
+        $header = array_map(function ($key, $value) { return $key . ': ' . $value; }, array_keys($this->header), $this->header);
         $curl = curl_init();
-        if (!is_null($payload)) {
-            curl_setopt($curl, CURLOPT_POST, 1);
-            curl_setopt($curl, CURLOPT_POSTFIELDS, is_array($payload) ? http_build_query($payload) : $payload);
-        }
-        curl_setopt($curl, CURLOPT_HEADER, $headerOnly);
-        curl_setopt($curl, CURLOPT_TIMEOUT, 20);
-        curl_setopt($curl, CURLOPT_ENCODING, 'gzip');
-        curl_setopt($curl, CURLOPT_IPRESOLVE, 1);
-        curl_setopt($curl, CURLOPT_RETURNTRANSFER, 1);
-        curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, 0);
-        curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 10);
-        curl_setopt($curl, CURLOPT_URL, $url);
-        curl_setopt($curl, CURLOPT_HTTPHEADER, $header);
-        if ($this->proxy) {
-            curl_setopt($curl, CURLOPT_PROXY, $this->proxy);
-        }
-        for ($i = 0; $i < 3; $i++) {
-            $this->raw = curl_exec($curl);
+        $body = '';
+        $oversized = false;
+        try {
+            $options = array(
+                CURLOPT_URL => $url, CURLOPT_HEADER => $headerOnly,
+                CURLOPT_TIMEOUT_MS => $milliseconds, CURLOPT_CONNECTTIMEOUT_MS => min(2500, $milliseconds),
+                CURLOPT_NOSIGNAL => true, CURLOPT_ENCODING => 'gzip', CURLOPT_IPRESOLVE => 1,
+                CURLOPT_SSL_VERIFYPEER => true, CURLOPT_SSL_VERIFYHOST => 2,
+                CURLOPT_FOLLOWLOCATION => false, CURLOPT_HTTPHEADER => $header,
+                CURLOPT_WRITEFUNCTION => function ($handle, $chunk) use (&$body, &$oversized) {
+                    $this->responseBytes += strlen($chunk);
+                    if ($this->responseBytes > 1048576) { $oversized = true; return 0; }
+                    $body .= $chunk;
+                    return strlen($chunk);
+                }
+            );
+            if (defined('CURLOPT_PROTOCOLS_STR')) { $options[constant('CURLOPT_PROTOCOLS_STR')] = 'https'; }
+            else { $options[CURLOPT_PROTOCOLS] = CURLPROTO_HTTPS; }
+            if (!is_null($payload)) {
+                $options[CURLOPT_POST] = 1;
+                $options[CURLOPT_POSTFIELDS] = is_array($payload) ? http_build_query($payload) : $payload;
+            }
+            if ($this->proxy) { $options[CURLOPT_PROXY] = $this->proxy; }
+            curl_setopt_array($curl, $options);
+            $ok = curl_exec($curl);
             $this->info = curl_getinfo($curl);
             $this->error = curl_errno($curl);
             $this->status = $this->error ? curl_error($curl) : '';
-            if (!$this->error) {
-                break;
+            if ($oversized) { throw new \RuntimeException('音乐服务响应过大。', 502); }
+            if ($ok === false) {
+                throw new \RuntimeException($this->error === CURLE_OPERATION_TIMEDOUT ? '音乐服务请求超时。' : '音乐服务请求失败。', $this->error === CURLE_OPERATION_TIMEDOUT ? 504 : 502);
             }
+            if (($this->info['http_code'] ?? 0) < 200 || ($this->info['http_code'] ?? 0) >= 300) {
+                throw new \RuntimeException('音乐服务返回错误状态。', 502);
+            }
+            $this->raw = $body;
+        } finally {
+            if (PHP_VERSION_ID < 80000) { curl_close($curl); }
+            unset($curl);
         }
-        curl_close($curl);
-
         return $this;
     }
 
