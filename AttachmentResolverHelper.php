@@ -4,33 +4,7 @@ class Enhancement_AttachmentResolverHelper
 {
     public static function extractPathFromContent($content)
     {
-        $path = '';
-
-        if (is_array($content)) {
-            if (isset($content['attachment'])) {
-                if (is_object($content['attachment']) && isset($content['attachment']->path)) {
-                    $path = (string)$content['attachment']->path;
-                } elseif (is_array($content['attachment']) && isset($content['attachment']['path'])) {
-                    $path = (string)$content['attachment']['path'];
-                }
-            }
-            if ($path === '' && isset($content['path'])) {
-                $path = (string)$content['path'];
-            }
-        } elseif (is_object($content)) {
-            if (isset($content->attachment)) {
-                if (is_object($content->attachment) && isset($content->attachment->path)) {
-                    $path = (string)$content->attachment->path;
-                } elseif (is_array($content->attachment) && isset($content->attachment['path'])) {
-                    $path = (string)$content->attachment['path'];
-                }
-            }
-            if ($path === '' && isset($content->path)) {
-                $path = (string)$content->path;
-            }
-        }
-
-        return ltrim(trim($path), '/');
+        return self::extractAttachmentMeta($content)['path'];
     }
 
     public static function extractAttachmentMeta($content)
@@ -42,50 +16,25 @@ class Enhancement_AttachmentResolverHelper
             'type' => '',
             'mime' => ''
         );
+        $read = function ($source, $key) {
+            if (is_object($source)) {
+                return isset($source->{$key}) ? $source->{$key} : null;
+            }
+            return is_array($source) && isset($source[$key]) ? $source[$key] : null;
+        };
 
-        if (is_array($content)) {
-            if (isset($content['attachment'])) {
-                $attachment = $content['attachment'];
-                if (is_object($attachment)) {
-                    $meta['name'] = isset($attachment->name) ? (string)$attachment->name : '';
-                    $meta['path'] = isset($attachment->path) ? (string)$attachment->path : '';
-                    $meta['size'] = isset($attachment->size) ? intval($attachment->size) : 0;
-                    $meta['type'] = isset($attachment->type) ? (string)$attachment->type : '';
-                    $meta['mime'] = isset($attachment->mime) ? (string)$attachment->mime : '';
-                } elseif (is_array($attachment)) {
-                    $meta['name'] = isset($attachment['name']) ? (string)$attachment['name'] : '';
-                    $meta['path'] = isset($attachment['path']) ? (string)$attachment['path'] : '';
-                    $meta['size'] = isset($attachment['size']) ? intval($attachment['size']) : 0;
-                    $meta['type'] = isset($attachment['type']) ? (string)$attachment['type'] : '';
-                    $meta['mime'] = isset($attachment['mime']) ? (string)$attachment['mime'] : '';
-                }
-            }
-            if ($meta['path'] === '' && isset($content['path'])) {
-                $meta['path'] = (string)$content['path'];
-            }
-        } elseif (is_object($content)) {
-            if (isset($content->attachment)) {
-                $attachment = $content->attachment;
-                if (is_object($attachment)) {
-                    $meta['name'] = isset($attachment->name) ? (string)$attachment->name : '';
-                    $meta['path'] = isset($attachment->path) ? (string)$attachment->path : '';
-                    $meta['size'] = isset($attachment->size) ? intval($attachment->size) : 0;
-                    $meta['type'] = isset($attachment->type) ? (string)$attachment->type : '';
-                    $meta['mime'] = isset($attachment->mime) ? (string)$attachment->mime : '';
-                } elseif (is_array($attachment)) {
-                    $meta['name'] = isset($attachment['name']) ? (string)$attachment['name'] : '';
-                    $meta['path'] = isset($attachment['path']) ? (string)$attachment['path'] : '';
-                    $meta['size'] = isset($attachment['size']) ? intval($attachment['size']) : 0;
-                    $meta['type'] = isset($attachment['type']) ? (string)$attachment['type'] : '';
-                    $meta['mime'] = isset($attachment['mime']) ? (string)$attachment['mime'] : '';
-                }
-            }
-            if ($meta['path'] === '' && isset($content->path)) {
-                $meta['path'] = (string)$content->path;
+        $attachment = $read($content, 'attachment');
+        foreach ($meta as $key => $default) {
+            $value = $read($attachment, $key);
+            if ($value !== null) {
+                $meta[$key] = $key === 'size' ? intval($value) : (string)$value;
             }
         }
+        if ($meta['path'] === '') {
+            $meta['path'] = (string)$read($content, 'path');
+        }
 
-        $meta['path'] = ltrim(trim((string)$meta['path']), '/');
+        $meta['path'] = ltrim(trim($meta['path']), '/');
         return $meta;
     }
 

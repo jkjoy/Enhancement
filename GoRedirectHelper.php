@@ -11,21 +11,13 @@ class Enhancement_GoRedirectHelper
     public static function blankTargetEnabled(): bool
     {
         $settings = self::settings();
-        if (!isset($settings->enable_blank_target)) {
-            return false;
-        }
-
-        return $settings->enable_blank_target == '1';
+        return isset($settings->enable_blank_target) && $settings->enable_blank_target == '1';
     }
 
     public static function goRedirectEnabled(): bool
     {
         $settings = self::settings();
-        if (!isset($settings->enable_go_redirect)) {
-            return true;
-        }
-
-        return $settings->enable_go_redirect == '1';
+        return !isset($settings->enable_go_redirect) || $settings->enable_go_redirect == '1';
     }
 
     public static function parseGoRedirectWhitelist(): array
@@ -77,12 +69,7 @@ class Enhancement_GoRedirectHelper
             return false;
         }
 
-        $whitelist = self::parseGoRedirectWhitelist();
-        if (empty($whitelist)) {
-            return false;
-        }
-
-        foreach ($whitelist as $domain) {
+        foreach (self::parseGoRedirectWhitelist() as $domain) {
             $domain = self::normalizeHost($domain);
             if ($domain === '') {
                 continue;
@@ -203,11 +190,6 @@ class Enhancement_GoRedirectHelper
         return true;
     }
 
-    public static function isGoRedirectHref($href): bool
-    {
-        return self::decodeGoRedirectUrl($href) !== '';
-    }
-
     public static function decodeGoRedirectUrl($href): string
     {
         $href = trim(html_entity_decode((string)$href, ENT_QUOTES, 'UTF-8'));
@@ -305,25 +287,6 @@ class Enhancement_GoRedirectHelper
 
         $goUrl = self::buildGoRedirectUrl($url);
         return $goUrl !== '' ? $goUrl : $url;
-    }
-
-    public static function upgradeCommentUrlByCoid($coid, $url)
-    {
-        $coid = intval($coid);
-        $url = trim((string)$url);
-        if ($coid <= 0 || $url === '') {
-            return;
-        }
-
-        try {
-            $db = Typecho_Db::get();
-            $db->query(
-                $db->update('table.comments')
-                    ->rows(array('url' => $url))
-                    ->where('coid = ?', $coid)
-            );
-        } catch (Exception $e) {
-        }
     }
 
     public static function upgradeCommentWidgetUrl($widget)
@@ -498,14 +461,14 @@ class Enhancement_GoRedirectHelper
         );
     }
 
-    public static function rewriteExternalLinks($content)
+    private static function mapAnchors($content, array $fallback, callable $each)
     {
         if (!is_string($content) || $content === '' || stripos($content, '<a') === false) {
             return $content;
         }
 
         if (!class_exists('DOMDocument')) {
-            return self::rewriteExternalLinksByRegex($content);
+            return call_user_func($fallback, $content);
         }
 
         $libxmlState = libxml_use_internal_errors(true);
@@ -523,30 +486,35 @@ class Enhancement_GoRedirectHelper
         libxml_use_internal_errors($libxmlState);
 
         if (!$loaded) {
-            return self::rewriteExternalLinksByRegex($content);
+            return call_user_func($fallback, $content);
         }
 
-        $links = $dom->getElementsByTagName('a');
-        foreach ($links as $link) {
-            $className = strtolower(trim((string)$link->getAttribute('class')));
-            if ($className !== '' && strpos($className, 'enhancement-') !== false) {
-                continue;
-            }
-
-            $href = trim((string)$link->getAttribute('href'));
-            $targetUrl = self::convertExternalUrlToGo($href);
-            if ($targetUrl === '' || $targetUrl === $href) {
-                continue;
-            }
-            $link->setAttribute('href', $targetUrl);
+        foreach ($dom->getElementsByTagName('a') as $link) {
+            $each($link);
         }
 
         $result = $dom->saveHTML();
         if ($result === false) {
-            return self::rewriteExternalLinksByRegex($content);
+            return call_user_func($fallback, $content);
         }
 
         return str_replace('<?xml encoding="UTF-8">', '', $result);
+    }
+
+    public static function rewriteExternalLinks($content)
+    {
+        return self::mapAnchors($content, array(__CLASS__, 'rewriteExternalLinksByRegex'), function ($link) {
+            $className = strtolower(trim((string)$link->getAttribute('class')));
+            if ($className !== '' && strpos($className, 'enhancement-') !== false) {
+                return;
+            }
+
+            $href = trim((string)$link->getAttribute('href'));
+            $targetUrl = self::convertExternalUrlToGo($href);
+            if ($targetUrl !== '' && $targetUrl !== $href) {
+                $link->setAttribute('href', $targetUrl);
+            }
+        });
     }
 
     public static function appendBlankTargetByRegex($content)
@@ -590,38 +558,7 @@ class Enhancement_GoRedirectHelper
 
     public static function addBlankTarget($content)
     {
-        if (!is_string($content) || $content === '') {
-            return $content;
-        }
-
-        if (stripos($content, '<a') === false) {
-            return $content;
-        }
-
-        if (!class_exists('DOMDocument')) {
-            return self::appendBlankTargetByRegex($content);
-        }
-
-        $libxmlState = libxml_use_internal_errors(true);
-        $dom = new DOMDocument();
-        $loadFlags = 0;
-        if (defined('LIBXML_HTML_NOIMPLIED')) {
-            $loadFlags |= LIBXML_HTML_NOIMPLIED;
-        }
-        if (defined('LIBXML_HTML_NODEFDTD')) {
-            $loadFlags |= LIBXML_HTML_NODEFDTD;
-        }
-
-        $loaded = $dom->loadHTML('<?xml encoding="UTF-8">' . $content, $loadFlags);
-        libxml_clear_errors();
-        libxml_use_internal_errors($libxmlState);
-
-        if (!$loaded) {
-            return self::appendBlankTargetByRegex($content);
-        }
-
-        $links = $dom->getElementsByTagName('a');
-        foreach ($links as $link) {
+        return self::mapAnchors($content, array(__CLASS__, 'appendBlankTargetByRegex'), function ($link) {
             $link->setAttribute('target', '_blank');
             $existingRel = trim((string)$link->getAttribute('rel'));
             $rels = preg_split('/\s+/', strtolower($existingRel), -1, PREG_SPLIT_NO_EMPTY);
@@ -633,13 +570,6 @@ class Enhancement_GoRedirectHelper
                 $rels[] = 'noreferrer';
             }
             $link->setAttribute('rel', implode(' ', $rels));
-        }
-
-        $result = $dom->saveHTML();
-        if ($result === false) {
-            return self::appendBlankTargetByRegex($content);
-        }
-
-        return str_replace('<?xml encoding="UTF-8">', '', $result);
+        });
     }
 }

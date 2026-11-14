@@ -10,11 +10,7 @@ class Enhancement_CommentNotifier_Action extends Typecho_Widget implements Widge
 
     public function action($data = "")
     {
-        if (class_exists('Enhancement_Plugin') && method_exists('Enhancement_Plugin', 'runtimeSettings')) {
-            $plugin = Enhancement_Plugin::runtimeSettings();
-        } else {
-            $plugin = (object) array();
-        }
+        $plugin = Enhancement_Plugin::runtimeSettings();
 
         $this->response->setHeader('Cache-Control', 'no-store');
         if (!$this->request->isPost()) {

@@ -77,15 +77,10 @@ trait Enhancement_PublicApiHelper
         }
     }
 
-    private function metingCacheDir()
-    {
-        $root = defined('__TYPECHO_ROOT_DIR__') ? (string)__TYPECHO_ROOT_DIR__ : dirname(__DIR__, 3);
-        return rtrim(str_replace('\\', '/', $root), '/') . '/usr/cache';
-    }
-
     private function metingCacheFile($key)
     {
-        $directory = $this->metingCacheDir();
+        $root = defined('__TYPECHO_ROOT_DIR__') ? (string)__TYPECHO_ROOT_DIR__ : dirname(__DIR__, 3);
+        $directory = rtrim(str_replace('\\', '/', $root), '/') . '/usr/cache';
         if (!is_dir($directory)) { @mkdir($directory, 0755, true); }
         if (is_link($directory) || !is_dir($directory) || !is_writable($directory)) {
             return '';
@@ -212,20 +207,17 @@ trait Enhancement_PublicApiHelper
         }
     }
 
-    private function metingApiResponseJson($data)
+    private function metingApiResponseJson($data, $status = 200)
     {
         $this->metingApiDiscardBufferedOutput();
-        $this->response->setStatus(200);
+        $this->response->setStatus(intval($status));
         $this->response->setContentType('application/json; charset=UTF-8');
         echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     }
 
     private function metingApiResponseError($message, $status = 400)
     {
-        $this->metingApiDiscardBufferedOutput();
-        $this->response->setStatus(intval($status));
-        $this->response->setContentType('application/json; charset=UTF-8');
-        echo json_encode(array('error' => trim((string)$message)), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $this->metingApiResponseJson(array('error' => trim((string)$message)), $status);
     }
 
     private function metingApiBeginOutputGuard()
@@ -240,11 +232,7 @@ trait Enhancement_PublicApiHelper
 
     private function metingApiDiscardBufferedOutput()
     {
-        $base = intval($this->metingOutputBaseLevel);
-        if ($base < 0) {
-            $base = 0;
-        }
-
+        $base = max(0, intval($this->metingOutputBaseLevel));
         while (ob_get_level() > $base) {
             @ob_end_clean();
         }
@@ -266,23 +254,7 @@ trait Enhancement_PublicApiHelper
     private function metingApiNormalizeServer($server)
     {
         $server = strtolower(trim((string)$server));
-        $allow = array('netease', 'tencent', 'kugou', 'kuwo', 'xiami', 'baidu');
-        if (!in_array($server, $allow, true)) {
-            return '';
-        }
-
-        return $server;
-    }
-
-    private function metingApiNormalizeType($type)
-    {
-        $type = strtolower(trim((string)$type));
-        $allow = array('song', 'album', 'artist', 'playlist', 'search');
-        if (!in_array($type, $allow, true)) {
-            return '';
-        }
-
-        return $type;
+        return in_array($server, array('netease', 'tencent', 'kugou', 'kuwo', 'xiami', 'baidu'), true) ? $server : '';
     }
 
     private function metingApiNormalizeId($id)

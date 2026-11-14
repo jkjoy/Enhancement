@@ -170,9 +170,8 @@ class Enhancement_BotMomentsHelper
             } catch (Typecho_Widget_Exception $exception) {
                 return self::failure('请填写有效的文字或 Markdown 图片链接，最多 20000 字节，不支持 HTML 或脚本。');
             }
-            if ($attachments && count($attachments) + count($media) > 9) { return self::failure('一条图文瞬间最多包含 9 张图片。'); }
+            if (($attachments || $mode === 'start') && count($attachments) + count($media) > 9) { return self::failure('一条图文瞬间最多包含 9 张图片。'); }
             if ($mode === 'start') {
-                if (count($attachments) + count($media) > 9) { return self::failure('一条图文瞬间最多包含 9 张图片。'); }
                 $next = array('draft_id' => bin2hex(random_bytes(16)), 'identity' => $identity, 'created' => $timestamp, 'body' => $body, 'status' => $command['status'],
                     'attachments' => $attachments, 'state' => 'pending');
                 return self::changeDraft($db, $scope, $draftRow, $next)
@@ -274,8 +273,7 @@ class Enhancement_BotMomentsHelper
                 $draft = array();
             }
             // Ordinary pictures never create a moment or a draft by themselves.
-            if ($command === null && (!$draft || $timestamp < (int)($draft['created'] ?? 0))) { return null; }
-            if ($draft && $timestamp < (int)($draft['created'] ?? 0)) { return null; }
+            if (($command === null && !$draft) || ($draft && $timestamp < (int)($draft['created'] ?? 0))) { return null; }
         }
         $table = $db->getPrefix() . 'bot_moments_receipts';
         $db->query('CREATE TABLE IF NOT EXISTS ' . $table . ' (request_id VARCHAR(64) PRIMARY KEY, fingerprint VARCHAR(64) NOT NULL, result TEXT, created INTEGER NOT NULL)', Typecho_Db::WRITE);

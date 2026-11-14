@@ -377,7 +377,6 @@ class Enhancement_QqOfficialHelper
                 return array('status' => 200, 'body' => array('plain_token' => $plain,
                     'signature' => bin2hex(Enhancement_QqCryptoHelper::sign($eventTs . $plain, Enhancement_QqCryptoHelper::secretKey($keypair)))));
             }
-            if ($event['op'] !== 0 || !is_string($event['t'] ?? null)) { return $failure(400); }
             if (!self::bindEvent($event, $config)) { self::momentEvent($event, $config, $transport); }
             $state['last_event_at'] = time();
             Enhancement_NotifyTransportHelper::write('qq_webhook', $state);

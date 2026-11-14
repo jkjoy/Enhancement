@@ -125,32 +125,14 @@ class Enhancement_LifecycleHelper
                     ->where('name = ?', 'plugins')
             );
 
-            if (!is_array($rows) || empty($rows)) {
-                $db->query(
-                    $db->insert('table.options')->rows(array(
-                        'name' => 'plugins',
-                        'user' => 0,
-                        'value' => self::encodeCorePluginsOption($defaultPlugins)
-                    ))
-                );
-                return;
-            }
-
             $hasGlobalRow = false;
-            foreach ($rows as $row) {
+            foreach (is_array($rows) ? $rows : array() as $row) {
                 $userId = isset($row['user']) ? intval($row['user']) : 0;
-                $plugins = self::decodeCorePluginsOption(isset($row['value']) ? (string)$row['value'] : '');
-
-                if (!is_array($plugins)) {
-                    $plugins = $defaultPlugins;
-                }
-
-                if (!isset($plugins['activated']) || !is_array($plugins['activated'])) {
-                    $plugins['activated'] = array();
-                }
-
-                if (!isset($plugins['handles']) || !is_array($plugins['handles'])) {
-                    $plugins['handles'] = array();
+                $plugins = Enhancement_SettingsHelper::decodePluginConfigValue(isset($row['value']) ? (string)$row['value'] : '');
+                foreach (array('activated', 'handles') as $key) {
+                    if (!isset($plugins[$key]) || !is_array($plugins[$key])) {
+                        $plugins[$key] = array();
+                    }
                 }
 
                 if ($userId === 0) {
@@ -180,26 +162,6 @@ class Enhancement_LifecycleHelper
         } catch (Exception $e) {
             // Typecho itself will report plugin option errors if repair is not possible.
         }
-    }
-
-    private static function decodeCorePluginsOption($value)
-    {
-        $value = trim((string)$value);
-        if ($value === '') {
-            return null;
-        }
-
-        $decoded = json_decode($value, true);
-        if (is_array($decoded)) {
-            return $decoded;
-        }
-
-        $unserialized = @unserialize($value, array('allowed_classes' => false));
-        if (is_array($unserialized)) {
-            return $unserialized;
-        }
-
-        return null;
     }
 
     private static function encodeCorePluginsOption(array $plugins)
@@ -238,24 +200,12 @@ class Enhancement_LifecycleHelper
 
     public static function deactivate($commentNotifierPanel, $settings)
     {
-        $legacyDeleteTables = isset($settings->delete_tables_on_deactivate) && $settings->delete_tables_on_deactivate == '1';
-        $deleteLinksTable = isset($settings->delete_links_table_on_deactivate) && $settings->delete_links_table_on_deactivate == '1';
-        $deleteMomentsTable = isset($settings->delete_moments_table_on_deactivate) && $settings->delete_moments_table_on_deactivate == '1';
+        $legacy = isset($settings->delete_tables_on_deactivate) && $settings->delete_tables_on_deactivate == '1';
+        $deleteLinksTable = isset($settings->delete_links_table_on_deactivate) ? $settings->delete_links_table_on_deactivate == '1' : $legacy;
+        $deleteMomentsTable = isset($settings->delete_moments_table_on_deactivate) ? $settings->delete_moments_table_on_deactivate == '1' : $legacy;
         $deleteQqQueueTable = isset($settings->delete_qq_queue_table_on_deactivate)
-            ? ($settings->delete_qq_queue_table_on_deactivate == '1')
-            : $deleteMomentsTable;
-
-        if ($legacyDeleteTables) {
-            if (!isset($settings->delete_links_table_on_deactivate)) {
-                $deleteLinksTable = true;
-            }
-            if (!isset($settings->delete_moments_table_on_deactivate)) {
-                $deleteMomentsTable = true;
-            }
-            if (!isset($settings->delete_qq_queue_table_on_deactivate)) {
-                $deleteQqQueueTable = true;
-            }
-        }
+            ? $settings->delete_qq_queue_table_on_deactivate == '1'
+            : ($deleteMomentsTable || $legacy);
 
         Helper::removeRoute('sitemap');
         Helper::removeRoute('memos_api');
@@ -324,30 +274,13 @@ class Enhancement_LifecycleHelper
         $db = Typecho_Db::get();
         $prefix = $db->getPrefix();
         $type = explode('_', $db->getAdapterName());
-        $type = array_pop($type);
+        $quote = 'Pgsql' == array_pop($type) ? '"' : '`';
 
         try {
-            if ('Pgsql' == $type) {
-                if ($deleteLinksTable) {
-                    $db->query('DROP TABLE IF EXISTS "' . $prefix . 'links"');
+            foreach (array('links' => $deleteLinksTable, 'moments' => $deleteMomentsTable, 'qq_notify_queue' => $deleteQqQueueTable) as $table => $drop) {
+                if ($drop) {
+                    $db->query('DROP TABLE IF EXISTS ' . $quote . $prefix . $table . $quote);
                 }
-                if ($deleteMomentsTable) {
-                    $db->query('DROP TABLE IF EXISTS "' . $prefix . 'moments"');
-                }
-                if ($deleteQqQueueTable) {
-                    $db->query('DROP TABLE IF EXISTS "' . $prefix . 'qq_notify_queue"');
-                }
-                return;
-            }
-
-            if ($deleteLinksTable) {
-                $db->query('DROP TABLE IF EXISTS `' . $prefix . 'links`');
-            }
-            if ($deleteMomentsTable) {
-                $db->query('DROP TABLE IF EXISTS `' . $prefix . 'moments`');
-            }
-            if ($deleteQqQueueTable) {
-                $db->query('DROP TABLE IF EXISTS `' . $prefix . 'qq_notify_queue`');
             }
         } catch (Exception $e) {
             // ignore drop errors on deactivate

@@ -14,15 +14,7 @@ class Enhancement_S3Upload_StreamUploader
     public function __construct()
     {
         $this->s3Client = Enhancement_S3Upload_S3Client::getInstance();
-        $this->settings = null;
-
-        if (class_exists('Enhancement_Plugin') && method_exists('Enhancement_Plugin', 'runtimeSettings')) {
-            $this->settings = Enhancement_Plugin::runtimeSettings();
-        }
-
-        if (!is_object($this->settings)) {
-            $this->settings = (object) array();
-        }
+        $this->settings = Enhancement_Plugin::runtimeSettings();
     }
 
     public function handleUpload($file)
@@ -53,12 +45,12 @@ class Enhancement_S3Upload_StreamUploader
         }
         $result = $this->s3Client->putObject($path, $file['tmp_name'], $timeout);
 
-        if ($this->shouldSaveLocal()) {
+        if (isset($this->settings->s3_save_local) && trim((string)$this->settings->s3_save_local) === '1') {
             $this->saveLocalCopy($file, $path);
         }
 
         $extension = $this->getFileExt(isset($file['name']) ? (string)$file['name'] : '');
-        $mimeType = $this->getMimeType(isset($file['tmp_name']) ? (string)$file['tmp_name'] : '');
+        $mimeType = Enhancement_S3Upload_Utils::getMimeType(isset($file['tmp_name']) ? (string)$file['tmp_name'] : '');
         $size = isset($file['size']) ? intval($file['size']) : 0;
         if ($size <= 0 && isset($file['tmp_name']) && is_string($file['tmp_name']) && is_file($file['tmp_name'])) {
             $size = intval(filesize($file['tmp_name']));
@@ -100,16 +92,6 @@ class Enhancement_S3Upload_StreamUploader
     {
         $ext = pathinfo((string)$filename, PATHINFO_EXTENSION);
         return $ext ? strtolower((string)$ext) : '';
-    }
-
-    private function getMimeType($file)
-    {
-        return Enhancement_S3Upload_Utils::getMimeType((string)$file);
-    }
-
-    private function shouldSaveLocal(): bool
-    {
-        return isset($this->settings->s3_save_local) && trim((string)$this->settings->s3_save_local) === '1';
     }
 
     private function saveLocalCopy($file, $path)

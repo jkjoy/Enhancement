@@ -11,12 +11,8 @@ class Enhancement_CommentNotifierHelper
         return is_object($settings) ? $settings : (object) array();
     }
 
-    private static function notifierEnabled($settings = null): bool
+    private static function notifierEnabled($settings): bool
     {
-        if (!is_object($settings)) {
-            $settings = self::settings();
-        }
-
         return !isset($settings->enable_comment_notifier) || $settings->enable_comment_notifier == '1';
     }
 
@@ -83,15 +79,7 @@ class Enhancement_CommentNotifierHelper
                 self::sendMail($edit, array($adminRecipient), 0);
             }
 
-            if (empty($recipients) || empty($recipients[0]['mail'])) {
-                return;
-            }
-
-            if ($recipients[0]['mail'] == $edit->mail) {
-                return;
-            }
-
-            if ($recipients[0]['mail'] == $from) {
+            if (empty($recipients[0]['mail']) || $recipients[0]['mail'] == $edit->mail || $recipients[0]['mail'] == $from) {
                 return;
             }
 
@@ -160,11 +148,6 @@ class Enhancement_CommentNotifierHelper
     private static function sendMail($comment, array $recipients, $type)
     {
         if (empty($recipients)) {
-            return;
-        }
-
-        $plugin = self::settings();
-        if (!self::notifierEnabled($plugin)) {
             return;
         }
 
@@ -324,7 +307,6 @@ class Enhancement_CommentNotifierHelper
             $post = Helper::widgetById('Contents', $comment->cid);
             $postAuthor = $post->author->screenName;
         } catch (Exception $e) {
-            $postAuthor = '';
         }
 
         if (isset($plugin->biaoqing) && is_callable($plugin->biaoqing)) {
@@ -346,52 +328,28 @@ class Enhancement_CommentNotifierHelper
             'waiting' => '待审',
             'spam' => '垃圾',
         );
-        $search = array(
-            '{title}',
-            '{PostAuthor}',
-            '{time}',
-            '{commentText}',
-            '{author}',
-            '{mail}',
-            '{md5}',
-            '{avatar}',
-            '{ip}',
-            '{permalink}',
-            '{siteUrl}',
-            '{siteTitle}',
-            '{Pname}',
-            '{Ptext}',
-            '{Pmail}',
-            '{Pmd5}',
-            '{Pavatar}',
-            '{url}',
-            '{manageurl}',
-            '{status}',
-        );
-        $replace = array(
-            Enhancement_MailHelper::escape($comment->title),
-            Enhancement_MailHelper::escape($postAuthor),
-            Enhancement_MailHelper::escape($commentAt),
-            $commentText,
-            Enhancement_MailHelper::escape($comment->author),
-            Enhancement_MailHelper::escape($commentMail),
-            md5($commentMail),
-            Enhancement_MailHelper::escape(Enhancement_MailHelper::safeUrl($avatarUrl)),
-            Enhancement_MailHelper::escape($comment->ip),
-            Enhancement_MailHelper::escape(Enhancement_MailHelper::safeUrl($comment->permalink)),
-            Enhancement_MailHelper::escape(Enhancement_MailHelper::safeUrl($options->siteUrl)),
-            Enhancement_MailHelper::escape($options->title),
-            Enhancement_MailHelper::escape($Pname),
-            $Ptext,
-            Enhancement_MailHelper::escape($Pmail),
-            $Pmd5,
-            Enhancement_MailHelper::escape(Enhancement_MailHelper::safeUrl($PavatarUrl)),
-            Enhancement_MailHelper::escape(Enhancement_MailHelper::safeUrl($options->pluginUrl . '/Enhancement/CommentNotifier/template/' . $template . '/')),
-            Enhancement_MailHelper::escape(Enhancement_MailHelper::safeUrl($options->adminUrl . '/manage-comments.php')),
-            Enhancement_MailHelper::escape(isset($status[$comment->status]) ? $status[$comment->status] : $comment->status)
-        );
-
-        return strtr($content, array_combine($search, $replace));
+        return strtr($content, array(
+            '{title}' => Enhancement_MailHelper::escape($comment->title),
+            '{PostAuthor}' => Enhancement_MailHelper::escape($postAuthor),
+            '{time}' => Enhancement_MailHelper::escape($commentAt),
+            '{commentText}' => $commentText,
+            '{author}' => Enhancement_MailHelper::escape($comment->author),
+            '{mail}' => Enhancement_MailHelper::escape($commentMail),
+            '{md5}' => md5($commentMail),
+            '{avatar}' => Enhancement_MailHelper::escape(Enhancement_MailHelper::safeUrl($avatarUrl)),
+            '{ip}' => Enhancement_MailHelper::escape($comment->ip),
+            '{permalink}' => Enhancement_MailHelper::escape(Enhancement_MailHelper::safeUrl($comment->permalink)),
+            '{siteUrl}' => Enhancement_MailHelper::escape(Enhancement_MailHelper::safeUrl($options->siteUrl)),
+            '{siteTitle}' => Enhancement_MailHelper::escape($options->title),
+            '{Pname}' => Enhancement_MailHelper::escape($Pname),
+            '{Ptext}' => $Ptext,
+            '{Pmail}' => Enhancement_MailHelper::escape($Pmail),
+            '{Pmd5}' => $Pmd5,
+            '{Pavatar}' => Enhancement_MailHelper::escape(Enhancement_MailHelper::safeUrl($PavatarUrl)),
+            '{url}' => Enhancement_MailHelper::escape(Enhancement_MailHelper::safeUrl($options->pluginUrl . '/Enhancement/CommentNotifier/template/' . $template . '/')),
+            '{manageurl}' => Enhancement_MailHelper::escape(Enhancement_MailHelper::safeUrl($options->adminUrl . '/manage-comments.php')),
+            '{status}' => Enhancement_MailHelper::escape(isset($status[$comment->status]) ? $status[$comment->status] : $comment->status),
+        ));
     }
 
     private static function getTemplate($template = 'owner')

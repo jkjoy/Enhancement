@@ -152,7 +152,7 @@ try {
     $count = calls();
     check(endpoint('all-slots-busy')['status'] === 503 && calls() === $count, 'Global upstream concurrency limit rejects excess work');
     foreach ($slots as $slot) { flock($slot, LOCK_UN); fclose($slot); }
-    foreach (['backupResponse', 'testActionResponse', 'qqQueueResponse'] as $method) {
+    foreach (['actionResponse'] as $method) {
         $action->response = new AuditResponse();
         auditPrivate($action, $method, [false, 'shared response', 418]);
         check($action->response->status === 418 && $action->response->json === ['success' => false, 'message' => 'shared response'], 'Shared administrator response preserves JSON shape and status');

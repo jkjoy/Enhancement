@@ -4,48 +4,32 @@ class Enhancement_ConfigFormHelper
 {
     public static function build(Typecho_Widget_Helper_Form $form)
     {
-        $pattern_text = new Typecho_Widget_Helper_Form_Element_Textarea(
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Textarea(
             'pattern_text',
             null,
             '<li><a href="{url}" title="{title}" target="_blank" rel="noopener">{name}</a></li>',
             _t('<h3 class="enhancement-title">友链输出设置</h3><hr/>SHOW_TEXT模式源码规则'),
             _t('使用SHOW_TEXT(仅文字)模式输出时的源码，可按上表规则替换其中字段')
-        );
-        $form->addInput($pattern_text);
-        $pattern_img = new Typecho_Widget_Helper_Form_Element_Textarea(
+        ));
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Textarea(
             'pattern_img',
             null,
             '<li><a href="{url}" title="{title}" target="_blank" rel="noopener"><img src="{image}" alt="{name}" width="{size}" height="{size}" /></a></li>',
             _t('SHOW_IMG模式源码规则'),
             _t('使用SHOW_IMG(仅图片)模式输出时的源码，可按上表规则替换其中字段')
-        );
-        $form->addInput($pattern_img);
-        $pattern_mix = new Typecho_Widget_Helper_Form_Element_Textarea(
+        ));
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Textarea(
             'pattern_mix',
             null,
             '<li><a href="{url}" title="{title}" target="_blank" rel="noopener"><img src="{image}" alt="{name}" width="{size}" height="{size}" /><span>{name}</span></a></li>',
             _t('SHOW_MIX模式源码规则'),
             _t('使用SHOW_MIX(图文混合)模式输出时的源码，可按上表规则替换其中字段')
-        );
-        $form->addInput($pattern_mix);
-        $dsize = new Typecho_Widget_Helper_Form_Element_Text(
-            'dsize',
-            null,
-            '32',
-            _t('默认输出图片尺寸'),
-            _t('调用时如果未指定尺寸参数默认输出的图片大小(单位px不用填写)')
-        );
-        $dsize->input->setAttribute('class', 'w-10');
-        $form->addInput($dsize->addRule('isInteger', _t('请填写整数数字')));
+        ));
+        self::addIntegerText($form, 'dsize', '32', _t('默认输出图片尺寸'), _t('调用时如果未指定尺寸参数默认输出的图片大小(单位px不用填写)'));
 
-        $enableFriendPosts = new Typecho_Widget_Helper_Form_Element_Radio(
-            'enable_friend_posts',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '1',
+        self::addToggle($form, 'enable_friend_posts', '1',
             _t('<h3 class="enhancement-title">朋友文章</h3><hr/>获取朋友的最近文章'),
-            _t('默认启用。朋友文章页面仅读取缓存，请在“管理 → 朋友文章”手动刷新，或配置下方计划任务持续更新；每站抓取最多 8 秒。关闭后停止抓取与前台输出。')
-        );
-        $form->addInput($enableFriendPosts);
+            _t('默认启用。朋友文章页面仅读取缓存，请在“管理 → 朋友文章”手动刷新，或配置下方计划任务持续更新；每站抓取最多 8 秒。关闭后停止抓取与前台输出。'));
 
         $friendPostsInterval = new Typecho_Widget_Helper_Form_Element_Text(
             'friend_posts_interval', null, '60', _t('缓存有效期（分钟）'),
@@ -59,11 +43,10 @@ class Enhancement_ConfigFormHelper
         );
         $form->addInput($friendPostsPerFriend->addRule('isInteger', _t('请填写 1–20 的整数')));
 
-        $friendPostsFeeds = new Typecho_Widget_Helper_Form_Element_Textarea(
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Textarea(
             'friend_posts_feeds', null, '', _t('自定义订阅地址 / 排除站点'),
             _t('默认从已审核友链自动发现 RSS 2.0 / Atom 订阅。一行一条：友链地址|订阅地址，例如 https://friend.example/|https://friend.example/feed/；填写 友链地址|- 可排除该站，空行忽略。缓存保存在服务器临时目录，无需修改数据表。')
-        );
-        $form->addInput($friendPostsFeeds);
+        ));
         Enhancement_NotificationConfigHelper::addFriendPostsInputs($form);
 
         $momentsToken = new Typecho_Widget_Helper_Form_Element_Text(
@@ -94,59 +77,29 @@ class Enhancement_ConfigFormHelper
         );
         $form->addInput($momentsImageText->addRule('maxLength', _t('占位文本最多50个字符'), 50));
 
-        $enableCommentSync = new Typecho_Widget_Helper_Form_Element_Radio(
-            'enable_comment_sync',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '1',
+        self::addToggle($form, 'enable_comment_sync', '1',
             _t('<h3 class="enhancement-title">功能开关</h3><hr/>评论同步'),
-            _t('同步游客/登录用户历史评论中的网址、昵称和邮箱')
-        );
-        $form->addInput($enableCommentSync);
+            _t('同步游客/登录用户历史评论中的网址、昵称和邮箱'));
 
-        $enableCommentSmiley = new Typecho_Widget_Helper_Form_Element_Radio(
-            'enable_comment_smiley',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '1',
+        self::addToggle($form, 'enable_comment_smiley', '1',
             _t('评论表情'),
-            _t('评论框显示表情面板，并自动解析评论内容中的表情短代码')
-        );
-        $form->addInput($enableCommentSmiley);
+            _t('评论框显示表情面板，并自动解析评论内容中的表情短代码'));
 
-        $enableTagsHelper = new Typecho_Widget_Helper_Form_Element_Radio(
-            'enable_tags_helper',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '1',
+        self::addToggle($form, 'enable_tags_helper', '1',
             _t('标签助手'),
-            _t('后台写文章时显示标签快捷选择列表')
-        );
-        $form->addInput($enableTagsHelper);
+            _t('后台写文章时显示标签快捷选择列表'));
 
-        $enableSitemap = new Typecho_Widget_Helper_Form_Element_Radio(
-            'enable_sitemap',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '1',
+        self::addToggle($form, 'enable_sitemap', '1',
             _t('Sitemap'),
-            _t('访问 /sitemap.xml')
-        );
-        $form->addInput($enableSitemap);
+            _t('访问 /sitemap.xml'));
 
-        $enableVideoParser = new Typecho_Widget_Helper_Form_Element_Radio(
-            'enable_video_parser',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '0',
+        self::addToggle($form, 'enable_video_parser', '0',
             _t('视频链接解析'),
-            _t('将 YouTube、Bilibili、优酷链接自动替换为播放器')
-        );
-        $form->addInput($enableVideoParser);
+            _t('将 YouTube、Bilibili、优酷链接自动替换为播放器'));
 
-        $enableMusicParser = new Typecho_Widget_Helper_Form_Element_Radio(
-            'enable_music_parser',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '0',
+        self::addToggle($form, 'enable_music_parser', '0',
             _t('音乐链接解析'),
-            _t('将网易云音乐、QQ音乐、酷狗音乐链接自动替换为 APlayer 播放器')
-        );
-        $form->addInput($enableMusicParser);
+            _t('将网易云音乐、QQ音乐、酷狗音乐链接自动替换为 APlayer 播放器'));
 
         $defaultMetingApi = Enhancement_MediaHelper::defaultLocalMetingApiTemplate(Typecho_Widget::widget('Widget_Options'));
 
@@ -159,32 +112,17 @@ class Enhancement_ConfigFormHelper
         );
         $form->addInput($musicMetingApi->addRule('maxLength', _t('Meting API 地址最多500个字符'), 500));
 
-        $enableAttachmentPreview = new Typecho_Widget_Helper_Form_Element_Radio(
-            'enable_attachment_preview',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '0',
+        self::addToggle($form, 'enable_attachment_preview', '0',
             _t('附件预览增强'),
-            _t('后台写文章/页面时，启用附件预览与批量插入增强（默认关闭）')
-        );
-        $form->addInput($enableAttachmentPreview);
+            _t('后台写文章/页面时，启用附件预览与批量插入增强（默认关闭）'));
 
-        $enableBlankTarget = new Typecho_Widget_Helper_Form_Element_Radio(
-            'enable_blank_target',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '0',
+        self::addToggle($form, 'enable_blank_target', '0',
             _t('外链新窗口打开'),
-            _t('给文章内容中的 a 标签添加 target="_blank" 与 rel="noopener noreferrer"')
-        );
-        $form->addInput($enableBlankTarget);
+            _t('给文章内容中的 a 标签添加 target="_blank" 与 rel="noopener noreferrer"'));
 
-        $enableGoRedirect = new Typecho_Widget_Helper_Form_Element_Radio(
-            'enable_go_redirect',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '1',
+        self::addToggle($form, 'enable_go_redirect', '1',
             _t('外链 go 跳转'),
-            _t('启用后文章、评论与评论者网站外链统一使用 /go/xxx 跳转页')
-        );
-        $form->addInput($enableGoRedirect);
+            _t('启用后文章、评论与评论者网站外链统一使用 /go/xxx 跳转页'));
 
         $goRedirectWhitelist = new Typecho_Widget_Helper_Form_Element_Textarea(
             'go_redirect_whitelist',
@@ -195,14 +133,9 @@ class Enhancement_ConfigFormHelper
         );
         $form->addInput($goRedirectWhitelist->addRule('maxLength', _t('白名单最多2000个字符'), 2000));
 
-        $enableAvatarMirror = new Typecho_Widget_Helper_Form_Element_Radio(
-            'enable_avatar_mirror',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '1',
+        self::addToggle($form, 'enable_avatar_mirror', '1',
             _t('Gravatar镜像加速'),
-            _t('启用后使用镜像地址加载Gavatar头像，改善国内访问速度')
-        );
-        $form->addInput($enableAvatarMirror);
+            _t('启用后使用镜像地址加载Gavatar头像，改善国内访问速度'));
 
         $avatarMirrorUrl = new Typecho_Widget_Helper_Form_Element_Text(
             'avatar_mirror_url',
@@ -213,62 +146,46 @@ class Enhancement_ConfigFormHelper
         );
         $form->addInput($avatarMirrorUrl->addRule('maxLength', _t('地址最多200个字符'), 200));
 
-        $enableRestApi = new Typecho_Widget_Helper_Form_Element_Radio(
-            'enable_rest_api',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '0',
+        self::addToggle($form, 'enable_rest_api', '0',
             _t('<h3 class="enhancement-title">REST API 设置</h3><hr/>启用 REST API'),
-            _t('提供兼容 WordPress 的 /wp-json/wp/v2 接口，支持文章、页面、分类、标签、友链、评论与用户。默认关闭，保存后生效；请勿与独立 RestAPI 插件同时启用。')
-        );
-        $form->addInput($enableRestApi);
+            _t('提供兼容 WordPress 的 /wp-json/wp/v2 接口，支持文章、页面、分类、标签、友链、评论与用户。默认关闭，保存后生效；请勿与独立 RestAPI 插件同时启用。'));
 
-        $restApiTitle = new Typecho_Widget_Helper_Form_Element_Text(
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Text(
             'rest_api_site_title', null, '', _t('API 网站标题'),
             _t('仅用于 REST API 返回值，留空使用站点标题')
-        );
-        $form->addInput($restApiTitle);
+        ));
 
-        $restApiDescription = new Typecho_Widget_Helper_Form_Element_Textarea(
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Textarea(
             'rest_api_site_description', null, '', _t('API 网站描述'),
             _t('仅用于 REST API 返回值，留空使用站点描述')
-        );
-        $form->addInput($restApiDescription);
+        ));
 
-        $restApiHead = new Typecho_Widget_Helper_Form_Element_Textarea(
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Textarea(
             'rest_api_head_html', null, '', _t('API 头部 HTML'),
             _t('通过 settings 接口的 head_html 字段返回，供客户端使用')
-        );
-        $form->addInput($restApiHead);
+        ));
 
-        $restApiFooter = new Typecho_Widget_Helper_Form_Element_Textarea(
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Textarea(
             'rest_api_site_footer_text', null, '', _t('API 页脚文本'),
             _t('通过 settings 接口的 site_footer_text 字段返回')
-        );
-        $form->addInput($restApiFooter);
+        ));
 
-        $restApiIcp = new Typecho_Widget_Helper_Form_Element_Text(
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Text(
             'rest_api_site_icp', null, '', _t('API 备案号'),
             _t('通过 settings 接口的 site_icp 字段返回')
-        );
-        $form->addInput($restApiIcp);
+        ));
 
-        $enableTurnstile = new Typecho_Widget_Helper_Form_Element_Radio(
-            'enable_turnstile',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '0',
+        self::addToggle($form, 'enable_turnstile', '0',
             _t('<h3 class="enhancement-title">安全设置</h3><hr/>Turnstile 人机验证'),
-            _t('统一保护评论提交与友情链接提交')
-        );
-        $form->addInput($enableTurnstile);
+            _t('统一保护评论提交与友情链接提交'));
 
-        $turnstileCommentGuestOnly = new Typecho_Widget_Helper_Form_Element_Radio(
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
             'turnstile_comment_guest_only',
             array('1' => _t('是'), '0' => _t('否（所有评论都验证）')),
             '1',
             _t('仅游客评论启用 Turnstile'),
             _t('开启后登录用户评论无需验证，游客评论仍需通过验证')
-        );
-        $form->addInput($turnstileCommentGuestOnly);
+        ));
 
         $turnstileSiteKey = new Typecho_Widget_Helper_Form_Element_Text(
             'turnstile_site_key',
@@ -289,32 +206,23 @@ class Enhancement_ConfigFormHelper
         $turnstileSecretKey->input->setAttribute('autocomplete', 'off');
         $form->addInput($turnstileSecretKey->addRule('maxLength', _t('Secret Key 最多200个字符'), 200));
 
-        $enableCommentGuard = new Typecho_Widget_Helper_Form_Element_Radio(
-            'enable_comment_guard',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '0',
+        self::addToggle($form, 'enable_comment_guard', '0',
             _t('<h3 class="enhancement-title">评论防御</h3><hr/>启用评论防御'),
-            _t('统一检查普通评论与 REST API 评论，适用于游客和登录用户。默认关闭；命中规则直接拒绝，超频时提示稍后重试。')
-        );
-        $form->addInput($enableCommentGuard);
+            _t('统一检查普通评论与 REST API 评论，适用于游客和登录用户。默认关闭；命中规则直接拒绝，超频时提示稍后重试。'));
 
-        $commentGuardXss = new Typecho_Widget_Helper_Form_Element_Radio(
-            'comment_guard_block_xss', array('1' => _t('启用'), '0' => _t('禁用')), '1',
-            _t('拦截 XSS 特征'), _t('拒绝危险 HTML 标签、事件属性和可执行链接协议，识别常见实体与编码混淆；保留 Typecho 原有的输出过滤。')
-        );
-        $form->addInput($commentGuardXss);
+        self::addToggle($form, 'comment_guard_block_xss', '1',
+            _t('拦截 XSS 特征'),
+            _t('拒绝危险 HTML 标签、事件属性和可执行链接协议，识别常见实体与编码混淆；保留 Typecho 原有的输出过滤。'));
 
-        $commentGuardHtml = new Typecho_Widget_Helper_Form_Element_Radio(
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
             'comment_guard_block_html', array('1' => _t('禁止'), '0' => _t('允许安全 HTML')), '0',
             _t('禁止评论包含 HTML'), _t('开启后拒绝所有 HTML 标签（包括安全标签），普通文字和 Markdown 仍可提交。')
-        );
-        $form->addInput($commentGuardHtml);
+        ));
 
-        $commentGuardChinese = new Typecho_Widget_Helper_Form_Element_Radio(
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
             'comment_guard_require_chinese', array('1' => _t('必须包含中文'), '0' => _t('不限制')), '0',
             _t('中文要求'), _t('开启后评论正文至少包含一个汉字，HTML 标签属性中的中文不计入。')
-        );
-        $form->addInput($commentGuardChinese);
+        ));
 
         $commentGuardBlockedWords = new Typecho_Widget_Helper_Form_Element_Textarea(
             'comment_guard_blocked_keywords', null, '', _t('禁止字符或关键词'),
@@ -344,11 +252,9 @@ class Enhancement_ConfigFormHelper
             ->addRule('maxLength', _t('IP 规则最多10000个字符'), 10000)
             ->addRule(array('Enhancement_CommentGuardHelper', 'validIpRules'), _t('可信代理格式错误，请检查每一行')));
 
-        $commentGuardRate = new Typecho_Widget_Helper_Form_Element_Radio(
-            'comment_guard_rate_limit', array('1' => _t('启用'), '0' => _t('禁用')), '1',
-            _t('IP 与同网段限频'), _t('对所有文章累计提交次数，同时限制单 IP 和 IPv4 /24、IPv6 /64 网段，防止同段轮换 IP 刷评论；被内容规则拦截的提交也会计数。')
-        );
-        $form->addInput($commentGuardRate);
+        self::addToggle($form, 'comment_guard_rate_limit', '1',
+            _t('IP 与同网段限频'),
+            _t('对所有文章累计提交次数，同时限制单 IP 和 IPv4 /24、IPv6 /64 网段，防止同段轮换 IP 刷评论；被内容规则拦截的提交也会计数。'));
 
         $commentGuardWindow = new Typecho_Widget_Helper_Form_Element_Text(
             'comment_guard_window', null, '300', _t('防刷时间窗口（秒）'),
@@ -367,29 +273,17 @@ class Enhancement_ConfigFormHelper
         );
         $form->addInput($commentGuardSubnetLimit->addRule(array('Enhancement_CommentGuardHelper', 'validLimit'), _t('请填写1–10000的整数'), 1, 10000));
 
-        $commentGuardDuplicates = new Typecho_Widget_Helper_Form_Element_Radio(
-            'comment_guard_block_duplicates', array('1' => _t('启用'), '0' => _t('禁用')), '1',
-            _t('拦截重复评论'), _t('同一 IP 在时间窗口内重复提交相同正文时拒绝；此规则可独立于限频开关使用。')
-        );
-        $form->addInput($commentGuardDuplicates);
+        self::addToggle($form, 'comment_guard_block_duplicates', '1',
+            _t('拦截重复评论'),
+            _t('同一 IP 在时间窗口内重复提交相同正文时拒绝；此规则可独立于限频开关使用。'));
 
-        $enableAiSummary = new Typecho_Widget_Helper_Form_Element_Radio(
-            'enable_ai_summary',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '0',
+        self::addToggle($form, 'enable_ai_summary', '0',
             _t('<h3 class="enhancement-title">AI 设置</h3><hr/>自动生成文章摘要'),
-            _t('发布文章时调用 AI 生成摘要，并写入自定义字段')
-        );
-        $form->addInput($enableAiSummary);
+            _t('发布文章时调用 AI 生成摘要，并写入自定义字段'));
 
-        $enableAiSlugTranslate = new Typecho_Widget_Helper_Form_Element_Radio(
-            'enable_ai_slug_translate',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '0',
+        self::addToggle($form, 'enable_ai_slug_translate', '0',
             _t('AI Slug 自动翻译'),
-            _t('在编辑页将 slug 输入框清空后，失焦时调用 AI 生成英文 slug 并自动回填')
-        );
-        $form->addInput($enableAiSlugTranslate);
+            _t('在编辑页将 slug 输入框清空后，失焦时调用 AI 生成英文 slug 并自动回填'));
 
         $aiSummaryApiUrl = new Typecho_Widget_Helper_Form_Element_Text(
             'ai_summary_api_url',
@@ -437,43 +331,25 @@ class Enhancement_ConfigFormHelper
         );
         $form->addInput($aiSummaryField->addRule('maxLength', _t('字段名最多64个字符'), 64));
 
-        $aiSummaryUpdateMode = new Typecho_Widget_Helper_Form_Element_Radio(
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
             'ai_summary_update_mode',
             array('empty' => _t('仅字段为空时生成（推荐）'), 'always' => _t('每次发布都覆盖')),
             'empty',
             _t('摘要更新策略'),
             _t('避免手动写入的摘要被自动覆盖，可选择“仅字段为空时生成”')
-        );
-        $form->addInput($aiSummaryUpdateMode);
+        ));
 
-        $aiSummaryMaxLength = new Typecho_Widget_Helper_Form_Element_Text(
-            'ai_summary_max_length',
-            null,
-            '180',
-            _t('摘要最大长度'),
-            _t('保存前会进行截断，建议 120-300')
-        );
-        $aiSummaryMaxLength->input->setAttribute('class', 'w-10');
-        $form->addInput($aiSummaryMaxLength->addRule('isInteger', _t('请填写整数数字')));
+        self::addIntegerText($form, 'ai_summary_max_length', '180', _t('摘要最大长度'), _t('保存前会进行截断，建议 120-300'));
 
-        $aiSummaryInputLimit = new Typecho_Widget_Helper_Form_Element_Text(
-            'ai_summary_input_limit',
-            null,
-            '6000',
-            _t('送审内容最大长度'),
-            _t('发送给 AI 的正文最大字符数，避免内容过长导致接口报错或费用增加')
-        );
-        $aiSummaryInputLimit->input->setAttribute('class', 'w-10');
-        $form->addInput($aiSummaryInputLimit->addRule('isInteger', _t('请填写整数数字')));
+        self::addIntegerText($form, 'ai_summary_input_limit', '6000', _t('送审内容最大长度'), _t('发送给 AI 的正文最大字符数，避免内容过长导致接口报错或费用增加'));
 
-        $aiSslVerify = new Typecho_Widget_Helper_Form_Element_Radio(
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
             'ai_ssl_verify',
             array('1' => _t('启用（推荐）'), '0' => _t('禁用')),
             '1',
             _t('AI 请求 SSL 证书验证'),
             _t('建议启用，避免中间人攻击；仅在目标接口证书异常时临时关闭排查')
-        );
-        $form->addInput($aiSslVerify);
+        ));
 
         $aiSlugPrompt = new Typecho_Widget_Helper_Form_Element_Textarea(
             'ai_slug_prompt',
@@ -484,42 +360,23 @@ class Enhancement_ConfigFormHelper
         );
         $form->addInput($aiSlugPrompt->addRule('maxLength', _t('Prompt 最多5000个字符'), 5000));
 
-        $aiSlugUpdateMode = new Typecho_Widget_Helper_Form_Element_Radio(
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
             'ai_slug_update_mode',
             array('empty' => _t('仅 slug 为空时生成（推荐）'), 'always' => _t('每次保存都覆盖')),
             'empty',
             _t('Slug 更新策略'),
             _t('建议选择“仅 slug 为空时生成”，避免覆盖手动设置的 slug')
-        );
-        $form->addInput($aiSlugUpdateMode);
+        ));
 
-        $aiSlugMaxLength = new Typecho_Widget_Helper_Form_Element_Text(
-            'ai_slug_max_length',
-            null,
-            '80',
-            _t('Slug 最大长度'),
-            _t('生成后会进行截断，建议 30-100')
-        );
-        $aiSlugMaxLength->input->setAttribute('class', 'w-10');
-        $form->addInput($aiSlugMaxLength->addRule('isInteger', _t('请填写整数数字')));
+        self::addIntegerText($form, 'ai_slug_max_length', '80', _t('Slug 最大长度'), _t('生成后会进行截断，建议 30-100'));
 
-        $enableCommentByQQ = new Typecho_Widget_Helper_Form_Element_Radio(
-            'enable_comment_by_qq',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '0',
+        self::addToggle($form, 'enable_comment_by_qq', '0',
             _t('<h3 class="enhancement-title">QQ 通知设置</h3><hr/>QQ评论通知'),
-            _t('评论通过时通过官方 QQ 机器人推送通知')
-        );
-        $form->addInput($enableCommentByQQ);
+            _t('评论通过时通过官方 QQ 机器人推送通知'));
 
-        $enableLinkSubmitByQQ = new Typecho_Widget_Helper_Form_Element_Radio(
-            'enable_link_submit_by_qq',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '0',
+        self::addToggle($form, 'enable_link_submit_by_qq', '0',
             _t('友情链接申请通知'),
-            _t('前台提交新的友情链接申请时，通过官方 QQ 机器人推送通知')
-        );
-        $form->addInput($enableLinkSubmitByQQ);
+            _t('前台提交新的友情链接申请时，通过官方 QQ 机器人推送通知'));
 
         $qqNotifyProvider = new class(
             'qq_notify_provider',
@@ -541,29 +398,16 @@ class Enhancement_ConfigFormHelper
         Enhancement_NotificationConfigHelper::addQqInputs($form);
 
         $qqTestNotifyUrl = Helper::security()->getIndex('/action/enhancement-edit?do=qq-test-notify');
-        $qqActionRow = new Typecho_Widget_Helper_Form_Element_Fake('qq_action_row', null);
-        $qqActionRow->setAttribute('class', 'typecho-option enhancement-option-no-bullet');
-        $qqActionRow->input->setAttribute('type', 'hidden');
-        $qqActionRow->description(
-            '<div class="enhancement-action-row">'
-            . '<a class="btn enhancement-action-btn" href="' . htmlspecialchars($qqTestNotifyUrl, ENT_QUOTES, 'UTF-8') . '">' . _t('发送QQ通知测试') . '</a>'
+        self::addActionRow($form, 'qq_action_row',
+            '<a class="btn enhancement-action-btn" href="' . htmlspecialchars($qqTestNotifyUrl, ENT_QUOTES, 'UTF-8') . '">' . _t('发送QQ通知测试') . '</a>'
             . '<span class="enhancement-action-note">' . _t('先保存配置并完成接收人绑定，再测试；官方接口受理后仍需检查 QQ 实际接收结果') . '</span>'
-            . '</div>'
         );
-        if (isset($qqActionRow->container)) {
-            $qqActionRow->container->setAttribute('style', 'list-style:none;margin:0;padding:0;');
-        }
-        $form->addInput($qqActionRow);
 
         $qqQueueStats = Enhancement_QqNotifyHelper::getQueueStats();
         $qqQueueRetryUrl = Helper::security()->getIndex('/action/enhancement-edit?do=qq-queue-retry');
         $qqQueueClearUrl = Helper::security()->getIndex('/action/enhancement-edit?do=qq-queue-clear');
-        $qqQueueRow = new Typecho_Widget_Helper_Form_Element_Fake('qq_queue_row', null);
-        $qqQueueRow->setAttribute('class', 'typecho-option enhancement-option-no-bullet');
-        $qqQueueRow->input->setAttribute('type', 'hidden');
-        $qqQueueRow->description(
-            '<div class="enhancement-action-row">'
-            . '<a class="btn enhancement-action-btn" href="' . htmlspecialchars($qqQueueRetryUrl, ENT_QUOTES, 'UTF-8') . '">' . _t('重试失败队列') . '</a>'
+        self::addActionRow($form, 'qq_queue_row',
+            '<a class="btn enhancement-action-btn" href="' . htmlspecialchars($qqQueueRetryUrl, ENT_QUOTES, 'UTF-8') . '">' . _t('重试失败队列') . '</a>'
             . '<a class="btn enhancement-action-btn" href="' . htmlspecialchars($qqQueueClearUrl, ENT_QUOTES, 'UTF-8') . '" onclick="return window.confirm(\'确定要清空QQ通知队列吗？\');">' . _t('清空QQ队列') . '</a>'
             . '<span class="enhancement-action-note">' . _t(
                 '本地队列：待投递 %d / 失败 %d / 已受理 %d / 总计 %d（已受理表示 QQ 官方接口接受，仍需核对实际送达）',
@@ -572,58 +416,36 @@ class Enhancement_ConfigFormHelper
                 intval($qqQueueStats['success']),
                 intval($qqQueueStats['total'])
             ) . '</span>'
-            . '</div>'
         );
-        if (isset($qqQueueRow->container)) {
-            $qqQueueRow->container->setAttribute('style', 'list-style:none;margin:0;padding:0;');
-        }
-        $form->addInput($qqQueueRow);
         Enhancement_NotificationConfigHelper::addWeixinInputs($form);
 
-        $enableCommentNotifier = new Typecho_Widget_Helper_Form_Element_Radio(
-            'enable_comment_notifier',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '0',
+        self::addToggle($form, 'enable_comment_notifier', '0',
             _t('<h3 class="enhancement-title">邮件提醒设置（SMTP）</h3><hr/>评论邮件提醒'),
-            _t('评论通过/回复时发送邮件提醒')
-        );
-        $form->addInput($enableCommentNotifier);
+            _t('评论通过/回复时发送邮件提醒'));
 
-        $enableLinkApprovalMailNotifier = new Typecho_Widget_Helper_Form_Element_Radio(
-            'enable_link_approval_mail_notifier',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '0',
+        self::addToggle($form, 'enable_link_approval_mail_notifier', '0',
             _t('友情链接审核通过邮件提醒'),
-            _t('开启后，友情链接审核通过时会向该友链填写的邮箱发送提醒（需已配置 SMTP）')
-        );
-        $form->addInput($enableLinkApprovalMailNotifier);
+            _t('开启后，友情链接审核通过时会向该友链填写的邮箱发送提醒（需已配置 SMTP）'));
 
-        $enableLinkSubmitAdminMailNotifier = new Typecho_Widget_Helper_Form_Element_Radio(
-            'enable_link_submit_admin_mail_notifier',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '0',
+        self::addToggle($form, 'enable_link_submit_admin_mail_notifier', '0',
             _t('新友情链接申请通知管理员'),
-            _t('开启后，前台提交新的友情链接申请时会向站长收件邮箱发送审核提醒；若未填写站长收件邮箱，则回退到 SMTP 邮箱地址（需已配置 SMTP）')
-        );
-        $form->addInput($enableLinkSubmitAdminMailNotifier);
+            _t('开启后，前台提交新的友情链接申请时会向站长收件邮箱发送审核提醒；若未填写站长收件邮箱，则回退到 SMTP 邮箱地址（需已配置 SMTP）'));
 
-        $fromName = new Typecho_Widget_Helper_Form_Element_Text(
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Text(
             'fromName',
             null,
             null,
             _t('发件人昵称'),
             _t('邮件显示的发件人昵称')
-        );
-        $form->addInput($fromName);
+        ));
 
-        $adminfrom = new Typecho_Widget_Helper_Form_Element_Text(
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Text(
             'adminfrom',
             null,
             null,
             _t('站长收件邮箱'),
             _t('待审核评论或作者邮箱为空时发送到该邮箱')
-        );
-        $form->addInput($adminfrom);
+        ));
 
         $smtpHost = new Typecho_Widget_Helper_Form_Element_Text(
             'SMTPHost',
@@ -685,64 +507,42 @@ class Enhancement_ConfigFormHelper
         $form->addInput($smtpPort);
 
         $smtpTestUrl = Helper::security()->getIndex('/action/enhancement-edit?do=smtp-test-mail');
-        $smtpActionRow = new Typecho_Widget_Helper_Form_Element_Fake('smtp_action_row', null);
-        $smtpActionRow->setAttribute('class', 'typecho-option enhancement-option-no-bullet');
-        $smtpActionRow->input->setAttribute('type', 'hidden');
-        $smtpActionRow->description(
-            '<div class="enhancement-action-row">'
-            . '<a class="btn enhancement-action-btn enhancement-smtp-test" href="' . htmlspecialchars($smtpTestUrl, ENT_QUOTES, 'UTF-8') . '">' . _t('发送测试邮件') . '</a>'
+        self::addActionRow($form, 'smtp_action_row',
+            '<a class="btn enhancement-action-btn enhancement-smtp-test" href="' . htmlspecialchars($smtpTestUrl, ENT_QUOTES, 'UTF-8') . '">' . _t('发送测试邮件') . '</a>'
             . '<span class="enhancement-action-note enhancement-smtp-test-status" aria-live="polite">' . _t('使用当前填写的设置测试，无需先保存；邮件发送到站长收件邮箱，未填写时发送到 SMTP 邮箱地址') . '</span>'
-            . '</div>'
         );
-        if (isset($smtpActionRow->container)) {
-            $smtpActionRow->container->setAttribute('style', 'list-style:none;margin:0;padding:0;');
-        }
-        $form->addInput($smtpActionRow);
 
-        $log = new Typecho_Widget_Helper_Form_Element_Radio(
-            'log',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '0',
+        self::addToggle($form, 'log', '0',
             _t('记录日志'),
-            _t('启用后在服务器临时目录生成 enhancement-mail-*.log，需保证 PHP 可写；日志最多保留约 1 MiB')
-        );
-        $form->addInput($log);
+            _t('启用后在服务器临时目录生成 enhancement-mail-*.log，需保证 PHP 可写；日志最多保留约 1 MiB'));
 
-        $yibu = new Typecho_Widget_Helper_Form_Element_Radio(
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
             'yibu',
             array('0' => _t('不启用'), '1' => _t('启用')),
             '0',
             _t('异步提交'),
             _t('异步回调可减小评论提交速度影响')
-        );
-        $form->addInput($yibu);
+        ));
 
-        $zznotice = new Typecho_Widget_Helper_Form_Element_Radio(
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
             'zznotice',
             array('0' => _t('通知'), '1' => _t('不通知')),
             '0',
             _t('是否通知站长'),
             _t('开启“通知”后，新评论和待审评论会发送到站长收件邮箱')
-        );
-        $form->addInput($zznotice);
+        ));
 
-        $biaoqing = new Typecho_Widget_Helper_Form_Element_Text(
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Text(
             'biaoqing',
             null,
             null,
             _t('表情重载'),
             _t('填写评论表情解析函数名，留空则不处理')
-        );
-        $form->addInput($biaoqing);
+        ));
 
-        $enableS3Upload = new Typecho_Widget_Helper_Form_Element_Radio(
-            'enable_s3_upload',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '0',
+        self::addToggle($form, 'enable_s3_upload', '0',
             _t('<h3 class="enhancement-title">附件上传（S3）</h3><hr/>S3 远程上传'),
-            _t('启用后接管附件上传到 S3 兼容存储；未完整配置时自动回退本地上传')
-        );
-        $form->addInput($enableS3Upload);
+            _t('启用后接管附件上传到 S3 兼容存储；未完整配置时自动回退本地上传'));
 
         $s3Endpoint = new Typecho_Widget_Helper_Form_Element_Text(
             's3_endpoint',
@@ -800,23 +600,21 @@ class Enhancement_ConfigFormHelper
         );
         $form->addInput($s3CustomDomain->addRule('maxLength', _t('自定义域名最多200个字符'), 200));
 
-        $s3UseHttps = new Typecho_Widget_Helper_Form_Element_Radio(
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
             's3_use_https',
             array('1' => _t('使用'), '0' => _t('不使用')),
             '1',
             _t('使用 HTTPS'),
             _t('上传与生成访问链接时使用 https 协议')
-        );
-        $form->addInput($s3UseHttps);
+        ));
 
-        $s3UrlStyle = new Typecho_Widget_Helper_Form_Element_Radio(
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
             's3_url_style',
             array('path' => _t('路径形式'), 'virtual' => _t('虚拟主机形式')),
             'path',
             _t('URL 访问方式'),
             _t('路径形式：endpoint/bucket/object；虚拟主机形式：bucket.endpoint/object')
-        );
-        $form->addInput($s3UrlStyle);
+        ));
 
         $s3CustomPath = new Typecho_Widget_Helper_Form_Element_Text(
             's3_custom_path',
@@ -827,42 +625,23 @@ class Enhancement_ConfigFormHelper
         );
         $form->addInput($s3CustomPath->addRule('maxLength', _t('路径前缀最多200个字符'), 200));
 
-        $s3SaveLocal = new Typecho_Widget_Helper_Form_Element_Radio(
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
             's3_save_local',
             array('1' => _t('保存'), '0' => _t('不保存')),
             '0',
             _t('保存本地备份'),
             _t('启用后会同时在本地 uploads 目录保留一份文件副本')
-        );
-        $form->addInput($s3SaveLocal);
+        ));
 
-        $s3CompressImages = new Typecho_Widget_Helper_Form_Element_Radio(
-            's3_compress_images',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '0',
+        self::addToggle($form, 's3_compress_images', '0',
             _t('图片压缩'),
-            _t('启用后仅对大于 100KB 的图片进行压缩并转 WebP')
-        );
-        $form->addInput($s3CompressImages);
+            _t('启用后仅对大于 100KB 的图片进行压缩并转 WebP'));
 
-        $s3CompressQuality = new Typecho_Widget_Helper_Form_Element_Text(
-            's3_compress_quality',
-            null,
-            '85',
-            _t('压缩质量'),
-            _t('1-100，数值越大质量越高但文件越大')
-        );
-        $s3CompressQuality->input->setAttribute('class', 'w-10');
-        $form->addInput($s3CompressQuality->addRule('isInteger', _t('请填写整数数字')));
+        self::addIntegerText($form, 's3_compress_quality', '85', _t('压缩质量'), _t('1-100，数值越大质量越高但文件越大'));
 
-        $s3SslVerify = new Typecho_Widget_Helper_Form_Element_Radio(
-            's3_ssl_verify',
-            array('1' => _t('启用'), '0' => _t('禁用')),
-            '1',
+        self::addToggle($form, 's3_ssl_verify', '1',
             _t('SSL 证书验证'),
-            _t('若目标存储证书配置异常导致上传失败，可临时关闭排查')
-        );
-        $form->addInput($s3SslVerify);
+            _t('若目标存储证书配置异常导致上传失败，可临时关闭排查'));
 
         $legacyCommentSmileySize = new Typecho_Widget_Helper_Form_Element_Hidden('comment_smiley_size');
         $legacyCommentSmileySize->value('20px');
@@ -870,38 +649,33 @@ class Enhancement_ConfigFormHelper
 
         $settings = Enhancement_Plugin::runtimeSettings();
         $legacyDeleteTables = isset($settings->delete_tables_on_deactivate) && $settings->delete_tables_on_deactivate == '1';
-        $deleteLinksDefault = $legacyDeleteTables ? '1' : '0';
-        $deleteMomentsDefault = $legacyDeleteTables ? '1' : '0';
+        $deleteTablesDefault = $legacyDeleteTables ? '1' : '0';
         $deleteQqQueueDefault = isset($settings->delete_qq_queue_table_on_deactivate)
             ? ($settings->delete_qq_queue_table_on_deactivate == '1' ? '1' : '0')
-            : $deleteMomentsDefault;
-
-        $deleteLinksTable = new Typecho_Widget_Helper_Form_Element_Radio(
+            : $deleteTablesDefault;
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
             'delete_links_table_on_deactivate',
             array('0' => _t('否（不删除）'), '1' => _t('是（删除）')),
-            $deleteLinksDefault,
+            $deleteTablesDefault,
             _t('<h3 class="enhancement-title">维护设置</h3><hr/>禁用插件时删除友情链接表（links）'),
             _t('谨慎开启，会删除 links 表数据')
-        );
-        $form->addInput($deleteLinksTable);
+        ));
 
-        $deleteMomentsTable = new Typecho_Widget_Helper_Form_Element_Radio(
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
             'delete_moments_table_on_deactivate',
             array('0' => _t('否（不删除）'), '1' => _t('是（删除）')),
-            $deleteMomentsDefault,
+            $deleteTablesDefault,
             _t('禁用插件时删除说说表（moments）'),
             _t('谨慎开启，会删除 moments 表数据')
-        );
-        $form->addInput($deleteMomentsTable);
+        ));
 
-        $deleteQqQueueTable = new Typecho_Widget_Helper_Form_Element_Radio(
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
             'delete_qq_queue_table_on_deactivate',
             array('0' => _t('否（不删除）'), '1' => _t('是（删除）')),
             $deleteQqQueueDefault,
             _t('禁用插件时删除QQ通知队列表（qq_notify_queue）'),
             _t('谨慎开启，会删除QQ通知历史与失败重试记录')
-        );
-        $form->addInput($deleteQqQueueTable);
+        ));
 
         $backupUrl = Helper::security()->getIndex('/action/enhancement-edit?do=backup-settings');
         Enhancement_ConfigUiHelper::renderBackupActions($backupUrl);
@@ -950,5 +724,35 @@ class Enhancement_ConfigFormHelper
             $placeholder->input->setAttribute('type', 'hidden');
             $form->addInput($placeholder);
         }
+    }
+
+    private static function addIntegerText($form, $name, $default, $label, $description)
+    {
+        $input = new Typecho_Widget_Helper_Form_Element_Text($name, null, $default, $label, $description);
+        $input->input->setAttribute('class', 'w-10');
+        $form->addInput($input->addRule('isInteger', _t('请填写整数数字')));
+    }
+
+    private static function addActionRow($form, $name, $html)
+    {
+        $row = new Typecho_Widget_Helper_Form_Element_Fake($name, null);
+        $row->setAttribute('class', 'typecho-option enhancement-option-no-bullet');
+        $row->input->setAttribute('type', 'hidden');
+        $row->description('<div class="enhancement-action-row">' . $html . '</div>');
+        if (isset($row->container)) {
+            $row->container->setAttribute('style', 'list-style:none;margin:0;padding:0;');
+        }
+        $form->addInput($row);
+    }
+
+    private static function addToggle($form, $name, $default, $label, $description)
+    {
+        $form->addInput(new Typecho_Widget_Helper_Form_Element_Radio(
+            $name,
+            array('1' => _t('启用'), '0' => _t('禁用')),
+            $default,
+            $label,
+            $description
+        ));
     }
 }

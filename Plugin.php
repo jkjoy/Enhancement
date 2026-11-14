@@ -5,7 +5,7 @@
  * 具体功能包含:插件/主题zip上传,友情链接,朋友文章RSS聚合,瞬间,REST API,网站地图,编辑器增强,站外链接跳转,评论邮件通知,QQ/微信通知,常见视频链接 音乐链接 解析,AI摘要生成等
  * @package Enhancement
  * @author 老孙博客
- * @version 1.13.3
+ * @version 1.13.4
  * @link HTTPS://www.IMSUN.ORG
  * @dependence 14.10.10-*
  */
@@ -67,69 +67,9 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         return 'Enhancement_Plugin';
     }
 
-    private static function settingsBackupNamePrefix()
-    {
-        return 'enh:bak:';
-    }
-
-    private static function listSettingsBackups($limit = 5)
-    {
-        return Enhancement_SettingsHelper::listSettingsBackups($limit);
-    }
-
-    private static function pluginSettings($options = null, $reload = false)
-    {
-        return Enhancement_SettingsHelper::pluginSettings($options, $reload);
-    }
-
     public static function runtimeSettings($reload = false)
     {
-        return self::pluginSettings(Typecho_Widget::widget('Widget_Options'), $reload);
-    }
-
-    private static function readPluginSettingsFromDatabase()
-    {
-        return Enhancement_SettingsHelper::readPluginSettingsFromDatabase();
-    }
-
-    private static function decodePluginConfigValue($value)
-    {
-        return Enhancement_SettingsHelper::decodePluginConfigValue($value);
-    }
-
-    private static function encodePluginConfigValue($settings)
-    {
-        return Enhancement_SettingsHelper::encodePluginConfigValue($settings);
-    }
-
-    private static function ensurePluginConfigOptionExists()
-    {
-        Enhancement_SettingsHelper::ensurePluginConfigOptionExists();
-    }
-
-    private static function normalizeOptionRows($optionName, $ensureGlobalRow = false, $defaultValue = null)
-    {
-        return Enhancement_SettingsHelper::normalizeOptionRows($optionName, $ensureGlobalRow, $defaultValue);
-    }
-
-    private static function normalizePluginConfigValue($value)
-    {
-        return Enhancement_SettingsHelper::normalizePluginConfigValue($value);
-    }
-
-    private static function syncOptionCache($optionName, $optionValue, $pluginName = 'Enhancement')
-    {
-        Enhancement_SettingsHelper::syncOptionCache($optionName, $optionValue, $pluginName);
-    }
-
-    private static function patchOptionsWidgetCache($widget, $optionName, $optionValue, $pluginName = 'Enhancement')
-    {
-        Enhancement_SettingsHelper::patchOptionsWidgetCache($widget, $optionName, $optionValue, $pluginName);
-    }
-
-    private static function buildPluginConfigObject($optionValue)
-    {
-        return Enhancement_SettingsHelper::buildPluginConfigObject($optionValue);
+        return Enhancement_SettingsHelper::pluginSettings(Typecho_Widget::widget('Widget_Options'), $reload);
     }
 
     public static function getPluginVersion(): string
@@ -235,15 +175,10 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
             $stylePrinted = true;
         }
 
-        $labels = array();
-        foreach ($missing as $extension) {
-            $labels[] = strtoupper((string)$extension);
-        }
-
         echo '<div class="enh-php-ext-warning">'
             . '<strong>环境提醒：</strong>'
             . '当前缺少 PHP 扩展 '
-            . htmlspecialchars(implode(', ', $labels), ENT_QUOTES, 'UTF-8')
+            . htmlspecialchars(implode(', ', array_map('strtoupper', $missing)), ENT_QUOTES, 'UTF-8')
             . '，请在服务器安装并启用后再使用相关功能（如网络请求、图片处理、ZIP 上传）。'
             . '</div>';
     }
@@ -283,7 +218,7 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
     public static function config(Typecho_Widget_Helper_Form $form)
     {
         self::botMomentsCronTick();
-        self::ensurePluginConfigOptionExists();
+        Enhancement_SettingsHelper::ensurePluginConfigOptionExists();
         Enhancement_LifecycleHelper::ensureFriendPostsPanel();
 
         $pluginVersion = self::getPluginVersion();
@@ -585,19 +520,14 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         return Enhancement_AvatarHelper::buildUrl($email, $size, $default, $extra);
     }
 
-    private static function writeEditorBottom($includeTagsList = false)
-    {
-        Enhancement_EditorUiHelper::renderBottom($includeTagsList);
-    }
-
     public static function writePostBottom()
     {
-        self::writeEditorBottom(true);
+        Enhancement_EditorUiHelper::renderBottom(true);
     }
 
     public static function writePageBottom()
     {
-        self::writeEditorBottom(false);
+        Enhancement_EditorUiHelper::renderBottom(false);
     }
 
     public static function aiSlugEditorHelper()
@@ -641,40 +571,30 @@ class Enhancement_Plugin implements Typecho_Plugin_Interface
         return Enhancement_LinkOutputHelper::parseCallback($matches);
     }
 
+    private static function settingEnabled($key, $default): bool
+    {
+        $settings = self::runtimeSettings();
+        return isset($settings->{$key}) ? $settings->{$key} == '1' : $default;
+    }
+
     public static function videoParserEnabled(): bool
     {
-        $settings = self::pluginSettings(Typecho_Widget::widget('Widget_Options'));
-        if (!isset($settings->enable_video_parser)) {
-            return false;
-        }
-        return $settings->enable_video_parser == '1';
+        return self::settingEnabled('enable_video_parser', false);
     }
 
     public static function musicParserEnabled(): bool
     {
-        $settings = self::pluginSettings(Typecho_Widget::widget('Widget_Options'));
-        if (!isset($settings->enable_music_parser)) {
-            return false;
-        }
-        return $settings->enable_music_parser == '1';
+        return self::settingEnabled('enable_music_parser', false);
     }
 
     public static function commentSmileyEnabled(): bool
     {
-        $settings = self::pluginSettings(Typecho_Widget::widget('Widget_Options'));
-        if (!isset($settings->enable_comment_smiley)) {
-            return true;
-        }
-        return $settings->enable_comment_smiley == '1';
+        return self::settingEnabled('enable_comment_smiley', true);
     }
 
     public static function attachmentPreviewEnabled(): bool
     {
-        $settings = self::pluginSettings(Typecho_Widget::widget('Widget_Options'));
-        if (!isset($settings->enable_attachment_preview)) {
-            return false;
-        }
-        return $settings->enable_attachment_preview == '1';
+        return self::settingEnabled('enable_attachment_preview', false);
     }
 
     public static function s3UploadEnabled(): bool

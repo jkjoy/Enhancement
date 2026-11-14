@@ -55,7 +55,7 @@ include 'manage-page-start.php';
                                 </tr>
                             </thead>
                             <tbody>
-                                <?php if (!empty($items)): $alt = 0;?>
+                                <?php if (!empty($items)): ?>
                                 <?php foreach ($items as $item): ?>
                                 <tr id="enhancement-<?php echo (int)$item['lid']; ?>">
                                     <td><input type="checkbox" value="<?php echo (int)$item['lid']; ?>" name="lid[]"/></td>
@@ -68,20 +68,13 @@ include 'manage-page-start.php';
                                             $safeName = htmlspecialchars((string)$item['name'], ENT_QUOTES, 'UTF-8');
                                             echo '<a href="' . $safeImage . '" title="' . _t('点击放大') . '" target="_blank"><img class="avatar" src="' . $safeImage . '" alt="' . $safeName . '" width="32" height="32"/></a>';
                                         } else {
-                                            $options = Typecho_Widget::widget('Widget_Options');
                                             $nopic_url = Enhancement_Plugin::appendVersionToAssetUrl(
                                                 Typecho_Common::url('usr/plugins/Enhancement/nopic.png', $options->siteUrl)
                                             );
                                             echo '<img class="avatar" src="'.$nopic_url.'" alt="NOPIC" width="32" height="32"/>';
                                         }
                                     ?></td>
-                                    <td><?php
-                                        if ($item['state'] == 1) {
-                                            echo '已通过';
-                                        } else {
-                                            echo '待审核';
-                                        }
-                                    ?></td>
+                                    <td><?php echo $item['state'] == 1 ? '已通过' : '待审核'; ?></td>
                                 </tr>
                                 <?php endforeach; ?>
                                 <?php else: ?>

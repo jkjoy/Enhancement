@@ -14,31 +14,7 @@ class Enhancement_CommentUiHelper
             return;
         }
 
-        $baseUrl = Enhancement_CommentSmileyHelper::baseUrl();
-        if ($baseUrl === '') {
-            return;
-        }
-
-        $items = array();
-        foreach (Enhancement_CommentSmileyHelper::definitions() as $item) {
-            $code = isset($item[0]) ? trim((string)$item[0]) : '';
-            $image = isset($item[1]) ? trim((string)$item[1]) : '';
-            $title = isset($item[3]) ? trim((string)$item[3]) : '';
-            if ($title === '' && isset($item[2])) {
-                $title = trim((string)$item[2]);
-            }
-
-            if ($code === '' || $image === '') {
-                continue;
-            }
-
-            $items[] = array(
-                'code' => $code,
-                'title' => $title !== '' ? $title : $code,
-                'image' => Enhancement_Plugin::appendVersionToAssetUrl($baseUrl . '/' . ltrim($image, '/')),
-            );
-        }
-
+        $items = Enhancement_CommentSmileyHelper::items();
         if (empty($items)) {
             return;
         }

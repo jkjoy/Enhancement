@@ -13,21 +13,13 @@ class Enhancement_AiHelper
     public static function summaryEnabled(): bool
     {
         $settings = self::settings();
-        if (!isset($settings->enable_ai_summary)) {
-            return false;
-        }
-
-        return $settings->enable_ai_summary == '1';
+        return isset($settings->enable_ai_summary) && $settings->enable_ai_summary == '1';
     }
 
     public static function slugTranslateEnabled(): bool
     {
         $settings = self::settings();
-        if (!isset($settings->enable_ai_slug_translate)) {
-            return false;
-        }
-
-        return trim((string)$settings->enable_ai_slug_translate) === '1';
+        return isset($settings->enable_ai_slug_translate) && trim((string)$settings->enable_ai_slug_translate) === '1';
     }
 
     public static function handlePostFinishPublish($contents, $edit)
@@ -37,21 +29,17 @@ class Enhancement_AiHelper
 
     public static function previewSlug(string $title, int $cid = 0): array
     {
-        $result = array(
-            'success' => false,
-            'slug' => '',
-            'message' => ''
-        );
+        $fail = function ($message) {
+            return array('success' => false, 'slug' => '', 'message' => $message);
+        };
 
         if (!self::slugTranslateEnabled()) {
-            $result['message'] = 'AI slug 翻译未启用';
-            return $result;
+            return $fail('AI slug 翻译未启用');
         }
 
         $title = trim($title);
         if ($title === '') {
-            $result['message'] = '标题不能为空';
-            return $result;
+            return $fail('标题不能为空');
         }
 
         $settings = self::settings();
@@ -64,70 +52,51 @@ class Enhancement_AiHelper
             'AI 接口未返回 slug 内容'
         );
         if (empty($apiResult['success'])) {
-            $result['message'] = isset($apiResult['error']) && trim((string)$apiResult['error']) !== ''
+            return $fail(isset($apiResult['error']) && trim((string)$apiResult['error']) !== ''
                 ? trim((string)$apiResult['error'])
-                : 'AI slug 生成失败';
-            return $result;
+                : 'AI slug 生成失败');
         }
 
         $slugRaw = isset($apiResult['content']) ? (string)$apiResult['content'] : '';
         $slug = self::normalizeSlugResult($slugRaw, $settings);
         if ($slug === '') {
-            $result['message'] = 'AI 未返回有效 slug';
-            return $result;
+            return $fail('AI 未返回有效 slug');
         }
 
         $slug = self::buildUniqueSlugCandidate($cid, $slug);
         if ($slug === '') {
-            $result['message'] = 'slug 去重失败';
-            return $result;
+            return $fail('slug 去重失败');
         }
 
-        $result['success'] = true;
-        $result['slug'] = $slug;
-        $result['message'] = 'ok';
-        return $result;
+        return array('success' => true, 'slug' => $slug, 'message' => 'ok');
     }
 
     public static function autoGeneratePostSummary($contents, $edit, $force = false)
     {
-        $result = array(
-            'status' => 'skipped',
-            'message' => ''
-        );
-
         if (!self::summaryEnabled()) {
-            $result['message'] = 'ai summary disabled';
-            return $result;
+            return array('status' => 'skipped', 'message' => 'ai summary disabled');
         }
 
         if (!is_object($edit) || !isset($edit->cid)) {
-            $result['status'] = 'error';
-            $result['message'] = 'invalid post object';
-            return $result;
+            return array('status' => 'error', 'message' => 'invalid post object');
         }
 
         $cid = intval($edit->cid);
         if ($cid <= 0) {
-            $result['status'] = 'error';
-            $result['message'] = 'invalid cid';
-            return $result;
+            return array('status' => 'error', 'message' => 'invalid cid');
         }
 
         $force = ($force === true || $force === 1 || $force === '1');
         $settings = self::settings();
         $fieldName = self::summaryFieldName($settings);
         if ($fieldName === '') {
-            $result['status'] = 'error';
-            $result['message'] = 'invalid field name';
-            return $result;
+            return array('status' => 'error', 'message' => 'invalid field name');
         }
 
         $updateMode = isset($settings->ai_summary_update_mode) ? trim((string)$settings->ai_summary_update_mode) : 'empty';
         $existingSummary = self::readSummaryFieldValue($cid, $fieldName);
         if (!$force && $updateMode !== 'always' && $existingSummary !== '') {
-            $result['message'] = 'summary exists';
-            return $result;
+            return array('status' => 'skipped', 'message' => 'summary exists');
         }
 
         $title = '';
@@ -148,8 +117,7 @@ class Enhancement_AiHelper
 
         $sourceText = self::buildSummarySourceText($title, $contentText, $settings);
         if ($sourceText === '') {
-            $result['message'] = 'empty content';
-            return $result;
+            return array('status' => 'skipped', 'message' => 'empty content');
         }
 
         $apiResult = self::callApi(
@@ -165,16 +133,12 @@ class Enhancement_AiHelper
             if ($error !== '') {
                 error_log('[Enhancement][AISummary] ' . $error);
             }
-            $result['status'] = 'error';
-            $result['message'] = ($error !== '' ? $error : 'ai api error');
-            return $result;
+            return array('status' => 'error', 'message' => ($error !== '' ? $error : 'ai api error'));
         }
 
         $summary = isset($apiResult['content']) ? self::normalizeSummaryResult((string)$apiResult['content'], $settings) : '';
         if ($summary === '') {
-            $result['status'] = 'error';
-            $result['message'] = 'empty summary';
-            return $result;
+            return array('status' => 'error', 'message' => 'empty summary');
         }
 
         $saved = false;
@@ -192,14 +156,10 @@ class Enhancement_AiHelper
         }
 
         if (!$saved) {
-            $result['status'] = 'error';
-            $result['message'] = 'save summary failed';
-            return $result;
+            return array('status' => 'error', 'message' => 'save summary failed');
         }
 
-        $result['status'] = 'generated';
-        $result['message'] = 'ok';
-        return $result;
+        return array('status' => 'generated', 'message' => 'ok');
     }
 
     private static function callApi(
@@ -210,19 +170,16 @@ class Enhancement_AiHelper
         string $missingConfigError,
         string $emptyContentError
     ): array {
-        $result = array(
-            'success' => false,
-            'content' => '',
-            'error' => ''
-        );
+        $fail = function ($error) {
+            return array('success' => false, 'content' => '', 'error' => $error);
+        };
 
         $endpoint = self::apiEndpoint(isset($settings->ai_summary_api_url) ? (string)$settings->ai_summary_api_url : '');
         $token = isset($settings->ai_summary_api_token) ? trim((string)$settings->ai_summary_api_token) : '';
         $model = isset($settings->ai_summary_model) ? trim((string)$settings->ai_summary_model) : '';
 
         if ($endpoint === '' || $token === '' || $model === '') {
-            $result['error'] = $missingConfigError;
-            return $result;
+            return $fail($missingConfigError);
         }
 
         if ($prompt === '') {
@@ -232,8 +189,7 @@ class Enhancement_AiHelper
         }
 
         if (!function_exists('curl_init')) {
-            $result['error'] = 'curl 扩展未启用';
-            return $result;
+            return $fail('curl 扩展未启用');
         }
 
         $payload = array(
@@ -253,8 +209,7 @@ class Enhancement_AiHelper
 
         $jsonPayload = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         if ($jsonPayload === false) {
-            $result['error'] = 'AI 请求数据编码失败';
-            return $result;
+            return $fail('AI 请求数据编码失败');
         }
 
         $headers = array(
@@ -275,13 +230,11 @@ class Enhancement_AiHelper
             CURLOPT_HTTPHEADER => $headers,
             CURLOPT_SSL_VERIFYPEER => $sslVerify,
             CURLOPT_SSL_VERIFYHOST => $sslVerify ? 2 : 0,
+            CURLOPT_NOSIGNAL => true,
         );
 
         if (defined('CURLOPT_IPRESOLVE') && defined('CURL_IPRESOLVE_V4')) {
             $curlOptions[CURLOPT_IPRESOLVE] = CURL_IPRESOLVE_V4;
-        }
-        if (defined('CURLOPT_NOSIGNAL')) {
-            $curlOptions[CURLOPT_NOSIGNAL] = true;
         }
 
         curl_setopt_array($ch, $curlOptions);
@@ -294,40 +247,27 @@ class Enhancement_AiHelper
         unset($ch);
 
         if ($errno !== 0) {
-            $result['error'] = 'AI 请求失败：' . $error;
-            return $result;
+            return $fail('AI 请求失败：' . $error);
         }
 
         if ($httpCode < 200 || $httpCode >= 300) {
-            $bodyPreview = trim((string)$response);
-            if ($bodyPreview !== '') {
-                $bodyPreview = self::truncate($bodyPreview, 180);
-            }
-            $result['error'] = $bodyPreview === ''
-                ? ('AI 接口响应异常（HTTP ' . $httpCode . '）')
-                : ('AI 接口响应异常（HTTP ' . $httpCode . '）：' . $bodyPreview);
-            return $result;
+            $bodyPreview = self::truncate((string)$response, 180);
+            return $fail('AI 接口响应异常（HTTP ' . $httpCode . '）' . ($bodyPreview === '' ? '' : '：' . $bodyPreview));
         }
 
         $decoded = json_decode((string)$response, true);
         if (!is_array($decoded)) {
-            $result['error'] = 'AI 接口响应格式错误';
-            return $result;
+            return $fail('AI 接口响应格式错误');
         }
 
         $content = self::extractContent($decoded);
         if ($content === '') {
-            if (isset($decoded['error']['message']) && trim((string)$decoded['error']['message']) !== '') {
-                $result['error'] = 'AI 接口返回错误：' . trim((string)$decoded['error']['message']);
-            } else {
-                $result['error'] = $emptyContentError;
-            }
-            return $result;
+            return $fail(isset($decoded['error']['message']) && trim((string)$decoded['error']['message']) !== ''
+                ? 'AI 接口返回错误：' . trim((string)$decoded['error']['message'])
+                : $emptyContentError);
         }
 
-        $result['success'] = true;
-        $result['content'] = $content;
-        return $result;
+        return array('success' => true, 'content' => $content, 'error' => '');
     }
 
     private static function normalizeSlugResult(string $slug, $settings): string
@@ -355,10 +295,6 @@ class Enhancement_AiHelper
     private static function summaryFieldName($settings): string
     {
         $name = isset($settings->ai_summary_field) ? trim((string)$settings->ai_summary_field) : 'summary';
-        if ($name === '') {
-            $name = 'summary';
-        }
-
         if (!preg_match('/^[_a-z][_a-z0-9]*$/i', $name)) {
             $name = 'summary';
         }
@@ -491,23 +427,13 @@ class Enhancement_AiHelper
         if ($value <= 0) {
             $value = $default;
         }
-        if ($value < $min) {
-            $value = $min;
-        }
-        if ($value > $max) {
-            $value = $max;
-        }
 
-        return $value;
+        return max($min, min($max, $value));
     }
 
     private static function sslVerifyEnabled($settings): bool
     {
-        if (!isset($settings->ai_ssl_verify)) {
-            return true;
-        }
-
-        return trim((string)$settings->ai_ssl_verify) !== '0';
+        return !isset($settings->ai_ssl_verify) || trim((string)$settings->ai_ssl_verify) !== '0';
     }
 
     private static function apiEndpoint(string $rawUrl): string
@@ -580,19 +506,13 @@ class Enhancement_AiHelper
             $resultSlug = $baseSlug;
             $count = 1;
             while (true) {
+                $query = $db->select(array('COUNT(cid)' => 'num'))
+                    ->from('table.contents')
+                    ->where('slug = ?', $resultSlug);
                 if ($cid > 0) {
-                    $exists = $db->fetchObject(
-                        $db->select(array('COUNT(cid)' => 'num'))
-                            ->from('table.contents')
-                            ->where('slug = ? AND cid <> ?', $resultSlug, $cid)
-                    );
-                } else {
-                    $exists = $db->fetchObject(
-                        $db->select(array('COUNT(cid)' => 'num'))
-                            ->from('table.contents')
-                            ->where('slug = ?', $resultSlug)
-                    );
+                    $query->where('cid <> ?', $cid);
                 }
+                $exists = $db->fetchObject($query);
 
                 if (!isset($exists->num) || intval($exists->num) <= 0) {
                     break;

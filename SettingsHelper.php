@@ -5,35 +5,19 @@ class Enhancement_SettingsHelper
     /** Request-local values; long-running workers must reload after reading new settings. */
     private static $runtimeSettingsCache = null;
 
-    private static function settingsBackupNamePrefix()
+    const BACKUP_NAME_PREFIX = 'enh:bak:';
+    const LEGACY_BACKUP_NAME_PREFIX = 'plugin:Enhancement:backup:';
+
+    public static function settingsBackupNamePrefixes()
     {
-        return 'enh:bak:';
+        return array(self::BACKUP_NAME_PREFIX, self::LEGACY_BACKUP_NAME_PREFIX);
     }
 
-    private static function legacySettingsBackupNamePrefix()
+    public static function extractSettingsBackupTimestamp($name)
     {
-        return 'plugin:Enhancement:backup:';
-    }
-
-    private static function settingsBackupNamePrefixes()
-    {
-        return array(
-            self::settingsBackupNamePrefix(),
-            self::legacySettingsBackupNamePrefix()
-        );
-    }
-
-    private static function extractSettingsBackupTimestamp($name)
-    {
-        $name = trim((string)$name);
-        if (preg_match('/^enh:bak:(\d{14})-[A-Za-z0-9]+$/', $name, $matches)) {
-            return $matches[1];
-        }
-        if (preg_match('/^plugin:Enhancement:backup:(\d{14})-[A-Za-z0-9]+$/', $name, $matches)) {
-            return $matches[1];
-        }
-
-        return '';
+        return preg_match('/^(?:enh:bak:|plugin:Enhancement:backup:)(\d{14})-[A-Za-z0-9]+$/', trim((string)$name), $matches)
+            ? $matches[1]
+            : '';
     }
 
     public static function listSettingsBackups($limit = 5)
@@ -64,17 +48,13 @@ class Enhancement_SettingsHelper
             }
 
             usort($rows, array(__CLASS__, 'compareSettingsBackupRows'));
-            if (count($rows) > $limit) {
-                $rows = array_slice($rows, 0, $limit);
-            }
-
-            return is_array($rows) ? $rows : array();
+            return array_slice($rows, 0, $limit);
         } catch (Exception $e) {
             return array();
         }
     }
 
-    private static function compareSettingsBackupRows($left, $right)
+    public static function compareSettingsBackupRows($left, $right)
     {
         $leftName = isset($left['name']) ? (string)$left['name'] : '';
         $rightName = isset($right['name']) ? (string)$right['name'] : '';
@@ -203,23 +183,9 @@ class Enhancement_SettingsHelper
                     ->where('name = ?', $optionName)
             );
 
-            if (!is_array($rows) || empty($rows)) {
-                if ($ensureGlobalRow) {
-                    $db->query(
-                        $db->insert('table.options')->rows(array(
-                            'name' => $optionName,
-                            'user' => 0,
-                            'value' => $globalValue
-                        ))
-                    );
-                }
-
-                return $globalValue;
-            }
-
             $hasGlobalRow = false;
 
-            foreach ($rows as $row) {
+            foreach (is_array($rows) ? $rows : array() as $row) {
                 $userId = isset($row['user']) ? intval($row['user']) : 0;
                 $currentValue = isset($row['value']) ? (string)$row['value'] : '';
                 $normalizedValue = self::normalizePluginConfigValue($currentValue);

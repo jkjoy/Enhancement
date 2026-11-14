@@ -36,11 +36,9 @@ class Enhancement_S3Helper
 
             $factory = Typecho_Plugin::factory($target);
             self::removeRuntimeCallbacks($factory);
-            $factory->uploadHandle = array(__CLASS__, 'uploadHandle');
-            $factory->modifyHandle = array(__CLASS__, 'modifyHandle');
-            $factory->deleteHandle = array(__CLASS__, 'deleteHandle');
-            $factory->attachmentHandle = array(__CLASS__, 'attachmentHandle');
-            $factory->attachmentDataHandle = array(__CLASS__, 'attachmentDataHandle');
+            foreach (self::componentCallbacks() as $component => $callback) {
+                $factory->{$component} = $callback;
+            }
         }
 
         self::persistRegisteredHooks();
@@ -48,22 +46,12 @@ class Enhancement_S3Helper
 
     public static function unregisterHooks()
     {
-        if (!class_exists('Typecho_Plugin') || !method_exists('Typecho_Plugin', 'export')) {
-            return;
-        }
-
         $plugins = self::exportPluginHandles();
         if (!is_array($plugins)) {
             return;
         }
 
-        $callbacks = array(
-            array(__CLASS__, 'uploadHandle'),
-            array(__CLASS__, 'modifyHandle'),
-            array(__CLASS__, 'deleteHandle'),
-            array(__CLASS__, 'attachmentHandle'),
-            array(__CLASS__, 'attachmentDataHandle')
-        );
+        $callbacks = array_values(self::componentCallbacks());
 
         foreach (self::$hookTargets as $target) {
             $nativeTarget = self::nativeClassName($target);
@@ -152,13 +140,7 @@ class Enhancement_S3Helper
                 return;
             }
 
-            $callbacks = array(
-                array(__CLASS__, 'uploadHandle'),
-                array(__CLASS__, 'modifyHandle'),
-                array(__CLASS__, 'deleteHandle'),
-                array(__CLASS__, 'attachmentHandle'),
-                array(__CLASS__, 'attachmentDataHandle')
-            );
+            $callbacks = array_values(self::componentCallbacks());
 
             foreach (self::$hookComponents as $component) {
                 $componentHandle = $handle . ':' . $component;
@@ -237,10 +219,6 @@ class Enhancement_S3Helper
 
     private static function persistRegisteredHooks()
     {
-        if (!class_exists('Typecho_Plugin') || !method_exists('Typecho_Plugin', 'export')) {
-            return;
-        }
-
         $plugins = self::exportPluginHandles();
         if (!is_array($plugins)) {
             return;
@@ -424,39 +402,9 @@ class Enhancement_S3Helper
             return Enhancement_S3Upload_FileHandler::attachmentHandle($content);
         }
 
-        $path = '';
-        if (is_array($content)) {
-            if (isset($content['attachment'])) {
-                if (is_object($content['attachment']) && isset($content['attachment']->path)) {
-                    $path = (string)$content['attachment']->path;
-                } elseif (is_array($content['attachment']) && isset($content['attachment']['path'])) {
-                    $path = (string)$content['attachment']['path'];
-                }
-            }
-
-            if ($path === '' && isset($content['path'])) {
-                $path = (string)$content['path'];
-            }
-        } elseif (is_object($content)) {
-            if (isset($content->attachment)) {
-                if (is_object($content->attachment) && isset($content->attachment->path)) {
-                    $path = (string)$content->attachment->path;
-                } elseif (is_array($content->attachment) && isset($content->attachment['path'])) {
-                    $path = (string)$content->attachment['path'];
-                }
-            }
-
-            if ($path === '' && isset($content->path)) {
-                $path = (string)$content->path;
-            }
-        }
-
-        $path = ltrim(trim($path), '/');
-        if ($path === '') {
-            return '';
-        }
-
-        return Enhancement_AttachmentResolverHelper::buildLocalAttachmentUrlByPath($path);
+        return Enhancement_AttachmentResolverHelper::buildLocalAttachmentUrlByPath(
+            Enhancement_AttachmentResolverHelper::extractPathFromContent($content)
+        );
     }
 
     private static function uploadCacheKey($file)

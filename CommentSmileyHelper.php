@@ -50,54 +50,38 @@ class Enhancement_CommentSmileyHelper
         return $pluginUrl . '/Enhancement/smiley';
     }
 
+    public static function items(): array
+    {
+        $items = array();
+        $baseUrl = self::baseUrl();
+        if ($baseUrl !== '') {
+            foreach (self::definitions() as $item) {
+                $items[] = array(
+                    'code' => $item[0],
+                    'title' => $item[3],
+                    'image' => Enhancement_Plugin::appendVersionToAssetUrl($baseUrl . '/' . $item[1]),
+                );
+            }
+        }
+
+        return $items;
+    }
+
     public static function parseShortcodes(string $text): string
     {
         if ($text === '') {
             return $text;
         }
 
-        $baseUrl = self::baseUrl();
-        if ($baseUrl === '') {
-            return $text;
-        }
-
         $replaceMap = array();
-        foreach (self::definitions() as $item) {
-            $code = isset($item[0]) ? trim((string)$item[0]) : '';
-            $image = isset($item[1]) ? trim((string)$item[1]) : '';
-            $title = isset($item[3]) ? trim((string)$item[3]) : '';
-            if ($title === '' && isset($item[2])) {
-                $title = trim((string)$item[2]);
-            }
-
-            if ($code === '' || $image === '') {
-                continue;
-            }
-
-            $imageUrl = htmlspecialchars(
-                Enhancement_Plugin::appendVersionToAssetUrl($baseUrl . '/' . ltrim($image, '/')),
-                ENT_QUOTES,
-                'UTF-8'
-            );
-            $safeCode = htmlspecialchars($code, ENT_QUOTES, 'UTF-8');
-            $safeTitle = htmlspecialchars($title !== '' ? $title : $code, ENT_QUOTES, 'UTF-8');
-
-            $replaceMap[$code] = '<img class="biaoqing enhancement-smiley" width="20" height="20" src="' . $imageUrl . '" alt="' . $safeCode . '" title="' . $safeTitle . '" />';
+        foreach (self::items() as $item) {
+            $replaceMap[$item['code']] = '<img class="biaoqing enhancement-smiley" width="20" height="20" src="'
+                . htmlspecialchars($item['image'], ENT_QUOTES, 'UTF-8') . '" alt="'
+                . htmlspecialchars($item['code'], ENT_QUOTES, 'UTF-8') . '" title="'
+                . htmlspecialchars($item['title'], ENT_QUOTES, 'UTF-8') . '" />';
         }
 
-        if (empty($replaceMap)) {
-            return $text;
-        }
-
-        uksort($replaceMap, function ($a, $b) {
-            $lenA = Typecho_Common::strLen((string)$a);
-            $lenB = Typecho_Common::strLen((string)$b);
-            if ($lenA === $lenB) {
-                return strcmp((string)$b, (string)$a);
-            }
-            return $lenB - $lenA;
-        });
-
-        return strtr($text, $replaceMap);
+        // strtr() always prefers the longest matching code, e.g. :loveyou: over :love:.
+        return empty($replaceMap) ? $text : strtr($text, $replaceMap);
     }
 }

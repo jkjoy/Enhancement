@@ -18,20 +18,12 @@ $request = $options->request;
 $response = $options->response;
 $current = $request->get('act', 'index');
 $theme = $request->get('file', 'owner.html');
-if (class_exists('Enhancement_Plugin') && method_exists('Enhancement_Plugin', 'runtimeSettings')) {
-    $plugin = Enhancement_Plugin::runtimeSettings();
-} else {
-    $plugin = (object) array();
-}
-
-$name = '当前';
 $othertheme = $request->get('theme', Enhancement_Plugin::commentNotifierConfigStr('template', 'default'));
 try {
     Enhancement_CommentNotifier_TemplateHelper::resolve($othertheme, $theme, true);
 } catch (RuntimeException $error) {
     throw new Typecho_Widget_Exception(_t('模板文件不存在'), 404);
 }
-$plugin->template = $othertheme;
 $name = $othertheme;
 
 $title = '编辑邮件模板 ' . $theme;
@@ -75,8 +67,6 @@ include 'menu.php';
 
 class Enhancement_CommentNotifier_Console extends Typecho_Widget
 {
-    /** @var  模板文件目录 */
-    private $_dir;
     /**
      * 当前文件
      *
@@ -94,39 +84,22 @@ class Enhancement_CommentNotifier_Console extends Typecho_Widget
      */
     public function execute()
     {
-        $this->_dir = dirname(__FILE__);
         $template = $this->request->get('theme', Enhancement_Plugin::commentNotifierConfigStr('template', 'default'));
         $directory = Enhancement_CommentNotifier_TemplateHelper::directory($template);
         $files = glob($directory . '/*.{html,HTML}', GLOB_BRACE);
 
         $this->_currentFile = $this->request->get('file', 'owner.html');
 
-        if (Enhancement_CommentNotifier_TemplateHelper::resolve($template, $this->_currentFile)) {
-            foreach ($files as $file) {
-                if (is_file($file) && !is_link($file)) {
-                    $file = basename($file);
-                    $this->push(array(
-                        'file' => $file,
-                        'current' => ($file == $this->_currentFile)
-                    ));
-                }
+        Enhancement_CommentNotifier_TemplateHelper::resolve($template, $this->_currentFile);
+        foreach ($files as $file) {
+            if (is_file($file) && !is_link($file)) {
+                $file = basename($file);
+                $this->push(array(
+                    'file' => $file,
+                    'current' => ($file == $this->_currentFile)
+                ));
             }
-
-            return;
         }
-
-        throw new Typecho_Widget_Exception('模板文件不存在', 404);
-    }
-
-    /**
-     * 获取菜单标题
-     *
-     * @access public
-     * @return string
-     */
-    public function getMenuTitle(): string
-    {
-        return _t('编辑文件 %s', $this->_currentFile);
     }
 
     /**

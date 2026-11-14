@@ -5,7 +5,6 @@ if (PHP_SAPI !== 'cli') {
     exit;
 }
 
-$workerLoop = false;
 $workerMode = null;
 $workerInterval = 3;
 $workerHelp = false;
@@ -18,7 +17,6 @@ foreach (array_slice($argv, 1) as $workerArgument) {
             exit(2);
         }
         $workerMode = $workerArgument;
-        $workerLoop = $workerArgument === '--loop';
     } elseif (preg_match('/\A--interval=([1-9][0-9]{0,2})\z/D', $workerArgument, $workerMatches)
         && (int)$workerMatches[1] <= 300) {
         $workerInterval = (int)$workerMatches[1];
@@ -56,11 +54,14 @@ try {
     require_once $workerSiteRoot . '/config.inc.php';
     set_error_handler($workerErrorHandler);
     $workerDb = Typecho_Db::get();
+    $workerReadOption = static function (string $name) use ($workerDb): string {
+        $row = $workerDb->fetchRow($workerDb->select('value')->from('table.options')
+            ->where('name = ?', $name)->where('user = ?', 0)->limit(1));
+        return is_array($row) && isset($row['value']) ? (string)$row['value'] : '';
+    };
     // Typecho omits the request URL prefix in CLI; its cookie initialization still needs an absolute root URL.
     if (!defined('__TYPECHO_ROOT_URL__')) {
-        $workerSiteOption = $workerDb->fetchRow($workerDb->select('value')->from('table.options')
-            ->where('name = ?', 'siteUrl')->where('user = ?', 0)->limit(1));
-        $workerSiteUrl = is_array($workerSiteOption) ? (string)($workerSiteOption['value'] ?? '') : '';
+        $workerSiteUrl = $workerReadOption('siteUrl');
         if (!preg_match('~\Ahttps?://~i', $workerSiteUrl) || !parse_url($workerSiteUrl, PHP_URL_HOST)) {
             throw new RuntimeException('worker_site_url_unavailable');
         }
@@ -74,27 +75,15 @@ try {
     ini_set('display_errors', '0');
     @set_time_limit(0);
 
-    $workerReadOption = static function (string $name) use ($workerDb): string {
-        $row = $workerDb->fetchRow($workerDb->select('value')->from('table.options')
-            ->where('name = ?', $name)->where('user = ?', 0)->limit(1));
-        return is_array($row) && isset($row['value']) ? (string)$row['value'] : '';
-    };
-    $workerDecodeOption = static function (string $value): array {
-        $decoded = json_decode($value, true);
-        if (!is_array($decoded)) {
-            $decoded = @unserialize($value, array('allowed_classes' => false));
-        }
-        return is_array($decoded) ? $decoded : array();
-    };
     do {
         // Read both options anew: a running receiver must respect backend changes.
-        $workerPlugins = $workerDecodeOption($workerReadOption('plugins'));
+        $workerPlugins = Enhancement_SettingsHelper::decodePluginConfigValue($workerReadOption('plugins'));
         if (!is_array($workerPlugins['activated'] ?? null) || !array_key_exists('Enhancement', $workerPlugins['activated'])) {
             fwrite(STDERR, "Enhancement 插件已停用，微信接收器已停止。\n");
             exit(1);
         }
         $workerConfigValue = $workerReadOption('plugin:Enhancement');
-        $workerSettings = $workerDecodeOption($workerConfigValue);
+        $workerSettings = Enhancement_SettingsHelper::decodePluginConfigValue($workerConfigValue);
         Enhancement_SettingsHelper::syncOptionCache('plugin:Enhancement', $workerConfigValue, 'Enhancement');
         if (($workerSettings['weixin_moments_enabled'] ?? '0') !== '1') {
             fwrite(STDERR, "微信发布瞬间已关闭，接收器已停止。\n");
@@ -114,10 +103,10 @@ try {
             ? $workerResult['status'] : 'synced';
         fwrite(STDOUT, sprintf("status=%s published=%d failed=%d\n", $workerStatus,
             max(0, (int)($workerResult['moments_published'] ?? 0)), max(0, (int)($workerResult['moments_failed'] ?? 0))));
-        if ($workerLoop) {
+        if ($workerMode === '--loop') {
             sleep($workerInterval);
         }
-    } while ($workerLoop);
+    } while ($workerMode === '--loop');
 } catch (Throwable $workerException) {
     while (ob_get_level() > $workerBufferLevel) {
         ob_end_clean();

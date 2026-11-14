@@ -28,11 +28,7 @@ class Enhancement_TurnstileHelper
     public static function commentGuestOnly(): bool
     {
         $settings = Enhancement_Plugin::runtimeSettings();
-        if (!isset($settings->turnstile_comment_guest_only)) {
-            return true;
-        }
-
-        return $settings->turnstile_comment_guest_only == '1';
+        return !isset($settings->turnstile_comment_guest_only) || $settings->turnstile_comment_guest_only == '1';
     }
 
     public static function verify($token, $remoteIp = ''): array
@@ -78,14 +74,12 @@ class Enhancement_TurnstileHelper
         ));
 
         $response = curl_exec($ch);
-        if (curl_errno($ch)) {
-            $error = curl_error($ch);
-            if (PHP_VERSION_ID < 80000) { curl_close($ch); }
-            unset($ch);
-            return array('success' => false, 'message' => _t('人机验证请求失败：%s', $error));
-        }
+        $error = curl_errno($ch) ? curl_error($ch) : null;
         if (PHP_VERSION_ID < 80000) { curl_close($ch); }
         unset($ch);
+        if ($error !== null) {
+            return array('success' => false, 'message' => _t('人机验证请求失败：%s', $error));
+        }
 
         $decoded = json_decode((string)$response, true);
         if (!is_array($decoded)) {
@@ -96,11 +90,7 @@ class Enhancement_TurnstileHelper
             return array('success' => true, 'message' => 'ok');
         }
 
-        $codes = array();
-        if (isset($decoded['error-codes']) && is_array($decoded['error-codes'])) {
-            $codes = $decoded['error-codes'];
-        }
-
+        $codes = isset($decoded['error-codes']) && is_array($decoded['error-codes']) ? $decoded['error-codes'] : array();
         $codeText = !empty($codes) ? implode(', ', $codes) : 'unknown_error';
         return array('success' => false, 'message' => _t('人机验证失败：%s', $codeText));
     }

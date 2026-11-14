@@ -80,10 +80,6 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             }
         }
 
-        if (!is_array($settings)) {
-            $settings = array();
-        }
-
         return $this->normalizePluginSettings($settings);
     }
 
@@ -138,62 +134,12 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         Enhancement_ConfigStorageHelper::replaceSettings($settings);
     }
 
-    private function settingsBackupNamePrefix()
-    {
-        return 'enh:bak:';
-    }
-
-    private function legacySettingsBackupNamePrefix()
-    {
-        return 'plugin:Enhancement:backup:';
-    }
-
-    private function settingsBackupNamePrefixes()
-    {
-        return array(
-            $this->settingsBackupNamePrefix(),
-            $this->legacySettingsBackupNamePrefix()
-        );
-    }
-
-    private function settingsBackupKeepCount()
-    {
-        return 20;
-    }
-
-    private function getSettingsBackupTimestamp($name)
-    {
-        $name = trim((string)$name);
-        if (preg_match('/^enh:bak:(\d{14})-[A-Za-z0-9]+$/', $name, $matches)) {
-            return $matches[1];
-        }
-        if (preg_match('/^plugin:Enhancement:backup:(\d{14})-[A-Za-z0-9]+$/', $name, $matches)) {
-            return $matches[1];
-        }
-
-        return '';
-    }
-
-    private function compareSettingsBackupRows($left, $right)
-    {
-        $leftName = isset($left['name']) ? (string)$left['name'] : '';
-        $rightName = isset($right['name']) ? (string)$right['name'] : '';
-        $leftTime = $this->getSettingsBackupTimestamp($leftName);
-        $rightTime = $this->getSettingsBackupTimestamp($rightName);
-
-        if ($leftTime === $rightTime) {
-            return strcmp($rightName, $leftName);
-        }
-
-        return strcmp($rightTime, $leftTime);
-    }
-
     private function getSettingsBackupSnapshotRows($withValue = false)
     {
         $rows = array();
         $fields = $withValue ? array('name', 'value') : array('name');
 
-        foreach ($this->settingsBackupNamePrefixes() as $prefix) {
+        foreach (Enhancement_SettingsHelper::settingsBackupNamePrefixes() as $prefix) {
             $currentRows = $this->db->fetchAll(
                 $this->db->select(...$fields)
                     ->from('table.options')
@@ -207,7 +153,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             }
         }
 
-        usort($rows, array($this, 'compareSettingsBackupRows'));
+        usort($rows, array('Enhancement_SettingsHelper', 'compareSettingsBackupRows'));
         return $rows;
     }
 
@@ -229,7 +175,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             throw new Typecho_Widget_Exception(_t('插件设置备份失败：JSON 编码异常'));
         }
 
-        $snapshotName = $this->settingsBackupNamePrefix() . date('YmdHis') . '-' . Typecho_Common::randString(6);
+        $snapshotName = Enhancement_SettingsHelper::BACKUP_NAME_PREFIX . date('YmdHis') . '-' . Typecho_Common::randString(6);
         $this->db->query(
             $this->db->insert('table.options')->rows(array(
                 'name' => $snapshotName,
@@ -244,22 +190,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 
     private function pruneSettingsBackupSnapshots()
     {
-        $keepCount = intval($this->settingsBackupKeepCount());
-        if ($keepCount < 1) {
-            $keepCount = 1;
-        }
-
-        $rows = $this->getSettingsBackupSnapshotRows(false);
-
-        if (!is_array($rows) || count($rows) <= $keepCount) {
-            return;
-        }
-
-        foreach ($rows as $index => $row) {
-            if ($index < $keepCount) {
-                continue;
-            }
-
+        foreach (array_slice($this->getSettingsBackupSnapshotRows(false), 20) as $row) {
             $name = isset($row['name']) ? trim((string)$row['name']) : '';
             if ($name === '') {
                 continue;
@@ -286,13 +217,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 
     private function isValidSettingsBackupName($name)
     {
-        $name = trim((string)$name);
-        if ($name === '') {
-            return false;
-        }
-
-        return preg_match('/^enh:bak:\d{14}-[A-Za-z0-9]+$/', $name) === 1
-            || preg_match('/^plugin:Enhancement:backup:\d{14}-[A-Za-z0-9]+$/', $name) === 1;
+        return Enhancement_SettingsHelper::extractSettingsBackupTimestamp($name) !== '';
     }
 
     private function getSettingsBackupSnapshotByName($name)
@@ -311,18 +236,18 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         );
     }
 
-    private function actionResponse($success, $message, $statusCode = 200)
+    private function actionResponse($success, $message, $statusCode = 200, array $extra = array(), $json = null)
     {
         $statusCode = intval($statusCode);
         if ($statusCode > 0) {
             $this->response->setStatus($statusCode);
         }
 
-        if ($this->request->isAjax()) {
-            $this->response->throwJson(array(
+        if ($json === null ? $this->request->isAjax() : $json) {
+            $this->response->throwJson(array_merge(array(
                 'success' => (bool)$success,
                 'message' => (string)$message
-            ));
+            ), $extra));
             return;
         }
 
@@ -332,21 +257,6 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             $success ? 'success' : 'error'
         );
         $this->response->goBack();
-    }
-
-    private function backupResponse($success, $message, $statusCode = 200)
-    {
-        return $this->actionResponse($success, $message, $statusCode);
-    }
-
-    private function testActionResponse($success, $message, $statusCode = 200)
-    {
-        return $this->actionResponse($success, $message, $statusCode);
-    }
-
-    private function qqQueueResponse($success, $message, $statusCode = 200)
-    {
-        return $this->actionResponse($success, $message, $statusCode);
     }
 
     private function shouldUseJsonUploadResponse()
@@ -370,25 +280,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 
     private function uploadResponse($success, $message, $statusCode = 200)
     {
-        $statusCode = intval($statusCode);
-        if ($statusCode > 0) {
-            $this->response->setStatus($statusCode);
-        }
-
-        if ($this->shouldUseJsonUploadResponse()) {
-            $this->response->throwJson(array(
-                'success' => (bool)$success,
-                'message' => (string)$message
-            ));
-            return;
-        }
-
-        $this->widget('Widget_Notice')->set(
-            (string)$message,
-            null,
-            $success ? 'success' : 'error'
-        );
-        $this->response->goBack();
+        $this->actionResponse($success, $message, $statusCode, array(), $this->shouldUseJsonUploadResponse());
     }
 
     private function removeDirectoryRecursively($path)
@@ -579,12 +471,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $pluginRoot = rtrim($rootDir . $pluginDir, '/\\');
         $themeRoot = rtrim($rootDir . $themeDir, '/\\');
 
-        $targetBase = '';
-        $targetPackageDir = '';
-        $mainFileInZip = '';
         $isThemePackage = false;
-        $typeLabel = '';
-
         $pathError = '';
         if (!$this->validateZipArchivePaths($zip, $pathError)) {
             $zip->close();
@@ -679,12 +566,6 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             }
         }
 
-        if ($targetBase === '' || $targetPackageDir === '' || $mainFileInZip === '') {
-            $zip->close();
-            $this->uploadResponse(false, _t('未找到可安装目标目录'), 400);
-            return;
-        }
-
         $packageDirExisted = is_dir($targetPackageDir);
 
         // Extracting into existing links can overwrite files outside the package.
@@ -765,43 +646,6 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $this->widget('Widget_User')->pass('administrator');
         $themeDir = defined('__TYPECHO_THEME_DIR__') ? __TYPECHO_THEME_DIR__ : '/usr/themes';
         $this->deleteInstalledPackage($this->request->get('name'), _t('主题'), $themeDir, false);
-    }
-
-    private function pluginUpdateResponse($success, $message, $statusCode = 200, array $extra = array())
-    {
-        $statusCode = intval($statusCode);
-        if ($statusCode > 0) {
-            $this->response->setStatus($statusCode);
-        }
-
-        if ($this->request->isAjax()) {
-            $payload = array(
-                'success' => (bool)$success,
-                'message' => (string)$message
-            );
-            if (!empty($extra)) {
-                $payload = array_merge($payload, $extra);
-            }
-            $this->response->throwJson($payload);
-            return;
-        }
-
-        $this->widget('Widget_Notice')->set(
-            (string)$message,
-            null,
-            $success ? 'success' : 'error'
-        );
-        $this->response->goBack();
-    }
-
-    private function remoteEnhancementPluginInfoUrl()
-    {
-        return 'https://raw.githubusercontent.com/jkjoy/Enhancement/main/Plugin.php';
-    }
-
-    private function remoteEnhancementZipUrl()
-    {
-        return 'https://github.com/jkjoy/Enhancement/archive/refs/heads/main.zip';
     }
 
     private function resolveCurlCaInfoPath()
@@ -978,7 +822,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 
     private function fetchRemoteEnhancementInfo(&$errorMessage)
     {
-        $raw = $this->httpGetText($this->remoteEnhancementPluginInfoUrl(), $errorMessage, 20);
+        $raw = $this->httpGetText('https://raw.githubusercontent.com/jkjoy/Enhancement/main/Plugin.php', $errorMessage, 20);
         if ($raw === false) {
             return false;
         }
@@ -994,7 +838,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 
         return array(
             'version' => $version,
-            'zip_url' => $this->remoteEnhancementZipUrl(),
+            'zip_url' => 'https://github.com/jkjoy/Enhancement/archive/refs/heads/main.zip',
             'source_url' => 'https://github.com/jkjoy/Enhancement'
         );
     }
@@ -1187,39 +1031,26 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
                 'checked_at' => time()
             );
             Enhancement_SettingsHelper::savePluginUpdateState($state);
-            $this->pluginUpdateResponse(false, _t('检查更新失败：%s', $errorMessage), 500, array('update_state' => $state));
+            $this->actionResponse(false, _t('检查更新失败：%s', $errorMessage), 500, array('update_state' => $state));
             return;
         }
 
         $currentVersion = Enhancement_Plugin::getPluginVersion();
-        $remoteVersion = isset($remoteInfo['version']) ? (string)$remoteInfo['version'] : '';
-        $compare = version_compare($this->normalizeUpdateVersion($remoteVersion), $this->normalizeUpdateVersion($currentVersion));
-        if ($compare > 0) {
-            $state = array(
-                'current_version' => (string)$currentVersion,
-                'remote_version' => (string)$remoteVersion,
-                'has_update' => true,
-                'error' => '',
-                'zip_url' => isset($remoteInfo['zip_url']) ? (string)$remoteInfo['zip_url'] : $this->remoteEnhancementZipUrl(),
-                'source_url' => isset($remoteInfo['source_url']) ? (string)$remoteInfo['source_url'] : 'https://github.com/jkjoy/Enhancement',
-                'checked_at' => time()
-            );
-            Enhancement_SettingsHelper::savePluginUpdateState($state);
-            $this->pluginUpdateResponse(true, _t('发现新版本：当前 %s，远程 %s。已显示“在线升级”按钮。', $currentVersion, $remoteVersion), 200, array('update_state' => $state));
-            return;
-        }
-
+        $remoteVersion = $remoteInfo['version'];
+        $hasUpdate = version_compare($this->normalizeUpdateVersion($remoteVersion), $this->normalizeUpdateVersion($currentVersion)) > 0;
         $state = array(
             'current_version' => (string)$currentVersion,
-            'remote_version' => (string)$remoteVersion,
-            'has_update' => false,
+            'remote_version' => $remoteVersion,
+            'has_update' => $hasUpdate,
             'error' => '',
-            'zip_url' => isset($remoteInfo['zip_url']) ? (string)$remoteInfo['zip_url'] : $this->remoteEnhancementZipUrl(),
-            'source_url' => isset($remoteInfo['source_url']) ? (string)$remoteInfo['source_url'] : 'https://github.com/jkjoy/Enhancement',
+            'zip_url' => $remoteInfo['zip_url'],
+            'source_url' => $remoteInfo['source_url'],
             'checked_at' => time()
         );
         Enhancement_SettingsHelper::savePluginUpdateState($state);
-        $this->pluginUpdateResponse(true, _t('当前已是最新版本：%s（远程仓库版本：%s）', $currentVersion, $remoteVersion), 200, array('update_state' => $state));
+        $this->actionResponse(true, $hasUpdate
+            ? _t('发现新版本：当前 %s，远程 %s。已显示“在线升级”按钮。', $currentVersion, $remoteVersion)
+            : _t('当前已是最新版本：%s（远程仓库版本：%s）', $currentVersion, $remoteVersion), 200, array('update_state' => $state));
     }
 
     public function upgradePlugin()
@@ -1229,34 +1060,33 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $stateHasUpdate = !empty($updateState['has_update']);
         $currentVersion = Enhancement_Plugin::getPluginVersion();
         if (!$stateHasUpdate || $stateVersion === '' || version_compare($this->normalizeUpdateVersion($stateVersion), $this->normalizeUpdateVersion($currentVersion)) <= 0) {
-            $this->pluginUpdateResponse(false, _t('请先检查更新，检测到新版本后才可以在线升级。'), 400);
+            $this->actionResponse(false, _t('请先检查更新，检测到新版本后才可以在线升级。'), 400);
             return;
         }
 
         $errorMessage = '';
         $remoteInfo = $this->fetchRemoteEnhancementInfo($errorMessage);
         if ($remoteInfo === false) {
-            $this->pluginUpdateResponse(false, _t('获取远程版本失败：%s', $errorMessage), 500);
+            $this->actionResponse(false, _t('获取远程版本失败：%s', $errorMessage), 500);
             return;
         }
 
-        $remoteVersion = isset($remoteInfo['version']) ? (string)$remoteInfo['version'] : '';
+        $remoteVersion = $remoteInfo['version'];
         if (version_compare($this->normalizeUpdateVersion($remoteVersion), $this->normalizeUpdateVersion($currentVersion)) <= 0) {
             Enhancement_SettingsHelper::clearPluginUpdateState();
-            $this->pluginUpdateResponse(true, _t('当前已是最新版本：%s，无需升级。', $currentVersion), 200);
+            $this->actionResponse(true, _t('当前已是最新版本：%s，无需升级。', $currentVersion), 200);
             return;
         }
 
         $tmpFile = tempnam(sys_get_temp_dir(), 'enhancement-update-');
         if ($tmpFile === false || $tmpFile === '') {
-            $this->pluginUpdateResponse(false, _t('无法创建更新临时文件'), 500);
+            $this->actionResponse(false, _t('无法创建更新临时文件'), 500);
             return;
         }
 
-        $zipUrl = isset($remoteInfo['zip_url']) ? (string)$remoteInfo['zip_url'] : $this->remoteEnhancementZipUrl();
-        if (!$this->downloadRemoteFile($zipUrl, $tmpFile, $errorMessage)) {
+        if (!$this->downloadRemoteFile($remoteInfo['zip_url'], $tmpFile, $errorMessage)) {
             @unlink($tmpFile);
-            $this->pluginUpdateResponse(false, _t('下载更新包失败：%s', $errorMessage), 500);
+            $this->actionResponse(false, _t('下载更新包失败：%s', $errorMessage), 500);
             return;
         }
 
@@ -1266,7 +1096,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         if ($ok) {
             Enhancement_SettingsHelper::clearPluginUpdateState();
         }
-        $this->pluginUpdateResponse($ok, $ok ? $installMessage : _t('在线升级失败：%s', $installMessage), $ok ? 200 : 500);
+        $this->actionResponse($ok, $ok ? $installMessage : _t('在线升级失败：%s', $installMessage), $ok ? 200 : 500);
     }
 
     public function retryQqNotifyQueue()
@@ -1285,9 +1115,9 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
                     ->where('qid = ?', $row['qid'])->where('status = ?', 2));
             }
 
-            $this->qqQueueResponse(true, _t('已将 %d 条失败记录标记为待重试', intval($affected)), 200);
+            $this->actionResponse(true, _t('已将 %d 条失败记录标记为待重试', intval($affected)), 200);
         } catch (Exception $e) {
-            $this->qqQueueResponse(false, _t('重试失败：%s', $e->getMessage()), 500);
+            $this->actionResponse(false, _t('重试失败：%s', $e->getMessage()), 500);
         }
     }
 
@@ -1296,9 +1126,9 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         try {
             $table = $this->prefix . 'qq_notify_queue';
             $this->db->query($this->db->delete($table));
-            $this->qqQueueResponse(true, _t('QQ通知队列已清空'), 200);
+            $this->actionResponse(true, _t('QQ通知队列已清空'), 200);
         } catch (Exception $e) {
-            $this->qqQueueResponse(false, _t('清空失败：%s', $e->getMessage()), 500);
+            $this->actionResponse(false, _t('清空失败：%s', $e->getMessage()), 500);
         }
     }
 
@@ -1317,11 +1147,11 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $result = Enhancement_QqNotifyHelper::sendTestMessage($message, $settings);
         if (!empty($result['success'])) {
             $message = _t('QQ 官方接口已接受测试通知，消息 ID：%s，请检查 QQ 是否收到。', $result['id']);
-            $this->testActionResponse(true, $message, 200);
+            $this->actionResponse(true, $message, 200);
             return;
         }
         $error = isset($result['error']) && $result['error'] !== '' ? $result['error'] : _t('发送失败');
-        $this->testActionResponse(false, _t('QQ通知测试失败：%s', $error), 500);
+        $this->actionResponse(false, _t('QQ通知测试失败：%s', $error), 500);
     }
 
     public function notificationChannelAction()
@@ -1464,17 +1294,17 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $portValue = trim((string)$this->request->get('SMTPPort'));
 
         if ($host === '' || $username === '' || $password === '' || $from === '' || $portValue === '') {
-            $this->testActionResponse(false, _t('SMTP 测试失败：请完整填写服务器地址、登录用户、登录密码、SMTP 邮箱地址和端口'), 400);
+            $this->actionResponse(false, _t('SMTP 测试失败：请完整填写服务器地址、登录用户、登录密码、SMTP 邮箱地址和端口'), 400);
             return;
         }
 
         if (!filter_var($from, FILTER_VALIDATE_EMAIL)) {
-            $this->testActionResponse(false, _t('SMTP 测试失败：SMTP 邮箱地址格式不正确'), 400);
+            $this->actionResponse(false, _t('SMTP 测试失败：SMTP 邮箱地址格式不正确'), 400);
             return;
         }
 
         if ($adminFrom !== '' && !filter_var($adminFrom, FILTER_VALIDATE_EMAIL)) {
-            $this->testActionResponse(false, _t('SMTP 测试失败：站长收件邮箱格式不正确'), 400);
+            $this->actionResponse(false, _t('SMTP 测试失败：站长收件邮箱格式不正确'), 400);
             return;
         }
 
@@ -1482,12 +1312,12 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
             'options' => array('min_range' => 1, 'max_range' => 65535)
         ));
         if ($port === false) {
-            $this->testActionResponse(false, _t('SMTP 测试失败：端口必须是 1 到 65535 之间的整数'), 400);
+            $this->actionResponse(false, _t('SMTP 测试失败：端口必须是 1 到 65535 之间的整数'), 400);
             return;
         }
 
         if (!in_array($secure, array('', 'ssl', 'tls'), true)) {
-            $this->testActionResponse(false, _t('SMTP 测试失败：不支持所选加密模式'), 400);
+            $this->actionResponse(false, _t('SMTP 测试失败：不支持所选加密模式'), 400);
             return;
         }
 
@@ -1526,13 +1356,13 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
                 if ($error === '') {
                     $error = _t('SMTP 服务器未返回具体错误');
                 }
-                $this->testActionResponse(false, _t('SMTP 测试失败：%s', $error), 500);
+                $this->actionResponse(false, _t('SMTP 测试失败：%s', $error), 500);
                 return;
             }
 
-            $this->testActionResponse(true, _t('测试邮件发送成功，已发送到 %s，请检查收件箱。', $recipient), 200);
+            $this->actionResponse(true, _t('测试邮件发送成功，已发送到 %s，请检查收件箱。', $recipient), 200);
         } catch (Throwable $e) {
-            $this->testActionResponse(false, _t('SMTP 测试失败：%s', $e->getMessage()), 500);
+            $this->actionResponse(false, _t('SMTP 测试失败：%s', $e->getMessage()), 500);
         }
     }
 
@@ -1542,9 +1372,9 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         try {
             $snapshotName = $this->createSettingsBackupSnapshot($settings);
             $total = $this->countSettingsBackupSnapshots();
-            $this->backupResponse(true, _t('插件设置已备份到数据库（%s），当前共有 %d 份备份', $snapshotName, $total), 200);
+            $this->actionResponse(true, _t('插件设置已备份到数据库（%s），当前共有 %d 份备份', $snapshotName, $total), 200);
         } catch (Exception $e) {
-            $this->backupResponse(false, _t('插件设置备份失败：%s', $e->getMessage()), 500);
+            $this->actionResponse(false, _t('插件设置备份失败：%s', $e->getMessage()), 500);
         }
     }
 
@@ -1552,39 +1382,17 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
     {
         $backupName = trim((string)$this->request->get('backup_name'));
         if ($backupName !== '' && !$this->isValidSettingsBackupName($backupName)) {
-            $this->backupResponse(false, _t('备份标识格式不正确'), 400);
+            $this->actionResponse(false, _t('备份标识格式不正确'), 400);
             return;
         }
 
-        if ($backupName !== '') {
-            $backupRow = $this->getSettingsBackupSnapshotByName($backupName);
-            if (!is_array($backupRow) || empty($backupRow)) {
-                $this->backupResponse(false, _t('数据库中没有找到指定备份，请先执行一次备份'), 400);
-                return;
-            }
-
-            $rawPayload = isset($backupRow['value']) ? (string)$backupRow['value'] : '';
-            $errorMessage = '';
-            $settings = $this->parseBackupSettingsPayload($rawPayload, $errorMessage);
-            if (!is_array($settings)) {
-                $this->backupResponse(false, $errorMessage !== '' ? $errorMessage : _t('数据库备份内容解析失败'), 400);
-                return;
-            }
-
-            try {
-                $this->savePluginSettings($settings);
-            } catch (Exception $e) {
-                $this->backupResponse(false, _t('恢复失败：%s', $e->getMessage()), 500);
-                return;
-            }
-
-            $this->backupResponse(true, _t('已从数据库备份恢复成功（%s），共恢复 %d 项配置', $backupName, count($settings)), 200);
-            return;
-        }
-
-        $backupRow = $this->getLatestSettingsBackupSnapshot();
+        $backupRow = $backupName !== ''
+            ? $this->getSettingsBackupSnapshotByName($backupName)
+            : $this->getLatestSettingsBackupSnapshot();
         if (!is_array($backupRow) || empty($backupRow)) {
-            $this->backupResponse(false, _t('数据库中暂无可恢复的设置备份，请先执行一次备份'), 400);
+            $this->actionResponse(false, $backupName !== ''
+                ? _t('数据库中没有找到指定备份，请先执行一次备份')
+                : _t('数据库中暂无可恢复的设置备份，请先执行一次备份'), 400);
             return;
         }
 
@@ -1592,32 +1400,34 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $errorMessage = '';
         $settings = $this->parseBackupSettingsPayload($rawPayload, $errorMessage);
         if (!is_array($settings)) {
-            $this->backupResponse(false, $errorMessage !== '' ? $errorMessage : _t('数据库备份内容解析失败'), 400);
+            $this->actionResponse(false, $errorMessage !== '' ? $errorMessage : _t('数据库备份内容解析失败'), 400);
             return;
         }
 
         try {
             $this->savePluginSettings($settings);
         } catch (Exception $e) {
-            $this->backupResponse(false, _t('恢复失败：%s', $e->getMessage()), 500);
+            $this->actionResponse(false, _t('恢复失败：%s', $e->getMessage()), 500);
             return;
         }
 
-        $backupName = isset($backupRow['name']) ? (string)$backupRow['name'] : '';
-        $this->backupResponse(true, _t('已从数据库备份恢复成功（%s），共恢复 %d 项配置', $backupName, count($settings)), 200);
+        if ($backupName === '') {
+            $backupName = isset($backupRow['name']) ? (string)$backupRow['name'] : '';
+        }
+        $this->actionResponse(true, _t('已从数据库备份恢复成功（%s），共恢复 %d 项配置', $backupName, count($settings)), 200);
     }
 
     public function deletePluginSettingsBackup()
     {
         $backupName = trim((string)$this->request->get('backup_name'));
         if (!$this->isValidSettingsBackupName($backupName)) {
-            $this->backupResponse(false, _t('备份标识格式不正确'), 400);
+            $this->actionResponse(false, _t('备份标识格式不正确'), 400);
             return;
         }
 
         $backupRow = $this->getSettingsBackupSnapshotByName($backupName);
         if (!is_array($backupRow) || empty($backupRow)) {
-            $this->backupResponse(false, _t('未找到要删除的备份记录'), 404);
+            $this->actionResponse(false, _t('未找到要删除的备份记录'), 404);
             return;
         }
 
@@ -1628,9 +1438,9 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
                     ->where('user = ?', 0)
             );
             $total = $this->countSettingsBackupSnapshots();
-            $this->backupResponse(true, _t('备份已删除（%s），当前剩余 %d 份', $backupName, $total), 200);
+            $this->actionResponse(true, _t('备份已删除（%s），当前剩余 %d 份', $backupName, $total), 200);
         } catch (Exception $e) {
-            $this->backupResponse(false, _t('删除备份失败：%s', $e->getMessage()), 500);
+            $this->actionResponse(false, _t('删除备份失败：%s', $e->getMessage()), 500);
         }
     }
 
@@ -1683,16 +1493,6 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         return filter_var($ip, FILTER_VALIDATE_IP) ? $ip : '0.0.0.0';
     }
 
-    private function getRateLimitWindowSeconds()
-    {
-        return 300;
-    }
-
-    private function getRateLimitMaxAttempts()
-    {
-        return 5;
-    }
-
     private function getRateLimitStorePath()
     {
         return $this->publicStorageDirectory() . '/rate-limit-links.json';
@@ -1702,8 +1502,8 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
     {
         return $this->consumePublicRateLimit(
             $this->getRateLimitStorePath(),
-            array($this->getClientIpAddress() => $this->getRateLimitMaxAttempts()),
-            $this->getRateLimitWindowSeconds(),
+            array($this->getClientIpAddress() => 5),
+            300,
             $retryAfter,
             __DIR__ . '/runtime/rate-limit-links.json'
         );
@@ -1711,25 +1511,10 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 
     private function denySubmission($message, $statusCode = 400, $retryAfter = 0)
     {
-        $message = (string)$message;
-        $statusCode = (int)$statusCode;
-        if ($statusCode > 0) {
-            $this->response->setStatus($statusCode);
-        }
         if ($retryAfter > 0) {
             $this->response->setHeader('Retry-After', (string)(int)$retryAfter);
         }
-
-        if ($this->request->isAjax()) {
-            $this->response->throwJson(array(
-                'success' => false,
-                'message' => $message
-            ));
-            return;
-        }
-
-        $this->widget('Widget_Notice')->set($message, null, 'error');
-        $this->response->goBack();
+        $this->actionResponse(false, $message, $statusCode);
     }
 
     private function sanitizePublicLinkItem(array $item)
@@ -1777,16 +1562,8 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         return is_array($row) ? $row : null;
     }
 
-    private function canUseLinkNotificationMail(?array $settings = null): bool
+    private function canUseLinkNotificationMail(array $settings): bool
     {
-        if ($settings === null) {
-            $settings = $this->collectPluginSettings();
-        }
-
-        if (!is_array($settings)) {
-            return false;
-        }
-
         $settings = Enhancement_SettingsHelper::normalizeSmtpAlias($settings);
         $required = array('SMTPHost', 'SMTPUserName', 'SMTPPassword', 'SMTPPort', 'from');
         foreach ($required as $key) {
@@ -1799,16 +1576,8 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         return true;
     }
 
-    private function getLinkAdminMailRecipient(?array $settings = null)
+    private function getLinkAdminMailRecipient(array $settings)
     {
-        if ($settings === null) {
-            $settings = $this->collectPluginSettings();
-        }
-
-        if (!is_array($settings)) {
-            return null;
-        }
-
         $email = isset($settings['adminfrom']) ? trim((string)$settings['adminfrom']) : '';
         if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $email = isset($settings['from']) ? trim((string)$settings['from']) : '';
@@ -1832,16 +1601,8 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         );
     }
 
-    private function canSendLinkSubmitAdminMail(?array $settings = null): bool
+    private function canSendLinkSubmitAdminMail(array $settings): bool
     {
-        if ($settings === null) {
-            $settings = $this->collectPluginSettings();
-        }
-
-        if (!is_array($settings)) {
-            return false;
-        }
-
         $enabled = isset($settings['enable_link_submit_admin_mail_notifier'])
             ? trim((string)$settings['enable_link_submit_admin_mail_notifier'])
             : '0';
@@ -1856,15 +1617,11 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         return is_array($this->getLinkAdminMailRecipient($settings));
     }
 
-    private function sendLinkNotificationMail($email, $toName, $subject, $html, ?array $settings = null): bool
+    private function sendLinkNotificationMail($email, $toName, $subject, $html, array $settings): bool
     {
         $email = trim((string)$email);
         if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             return false;
-        }
-
-        if ($settings === null) {
-            $settings = $this->collectPluginSettings();
         }
 
         if (!$this->canUseLinkNotificationMail($settings)) {
@@ -1874,11 +1631,6 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $siteTitle = trim((string)$this->options->title);
         if ($siteTitle === '') {
             $siteTitle = '网站';
-        }
-
-        $from = isset($settings['from']) ? trim((string)$settings['from']) : '';
-        if ($from === '') {
-            return false;
         }
 
         $fromName = isset($settings['fromName']) ? trim((string)$settings['fromName']) : '';
@@ -1899,20 +1651,13 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         }
     }
 
-    private function sendLinkSubmissionAdminMail(array $link, ?array $settings = null): bool
+    private function sendLinkSubmissionAdminMail(array $link, array $settings): bool
     {
-        if ($settings === null) {
-            $settings = $this->collectPluginSettings();
-        }
-
         if (!$this->canSendLinkSubmitAdminMail($settings)) {
             return false;
         }
 
         $recipient = $this->getLinkAdminMailRecipient($settings);
-        if (!is_array($recipient)) {
-            return false;
-        }
 
         $siteTitle = trim((string)$this->options->title);
         if ($siteTitle === '') {
@@ -1959,16 +1704,8 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         );
     }
 
-    private function canSendLinkApprovalMail(?array $settings = null): bool
+    private function canSendLinkApprovalMail(array $settings): bool
     {
-        if ($settings === null) {
-            $settings = $this->collectPluginSettings();
-        }
-
-        if (!is_array($settings)) {
-            return false;
-        }
-
         $enableLinkApprovalMail = isset($settings['enable_link_approval_mail_notifier'])
             ? trim((string)$settings['enable_link_approval_mail_notifier'])
             : '1';
@@ -2134,10 +1871,7 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         /** 插入数据 */
         $item_lid = $this->db->query($this->db->insert($this->prefix . 'links')->rows($item));
 
-        $pluginSettings = $this->collectPluginSettings();
-        if ($this->canSendLinkSubmitAdminMail($pluginSettings)) {
-            $this->sendLinkSubmissionAdminMail($item, $pluginSettings);
-        }
+        $this->sendLinkSubmissionAdminMail($item, $this->collectPluginSettings());
         Enhancement_Plugin::notifyLinkSubmissionByQQ(array_merge($item, array('lid' => (int)$item_lid)));
 
         if ($this->request->isAjax()) {
@@ -2216,26 +1950,6 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
 
         /** 转向原页 */
         $this->response->redirect(Typecho_Common::url('extending.php?panel=Enhancement%2Fmanage-enhancement.php', $this->options->adminUrl));
-    }
-
-    public function reviewAgentLink(int $lid, string $state): array
-    {
-        if (!in_array($state, array('0', '1'), true)) {
-            throw new Typecho_Widget_Exception('invalid_state', 400);
-        }
-        $link = $this->getLinkByLid($lid);
-        if (!$link) {
-            throw new Typecho_Widget_Exception('link_not_found', 404);
-        }
-        $changed = (string)$link['state'] !== $state;
-        if ($changed) {
-            $this->db->query($this->db->update($this->prefix . 'links')->rows(array('state' => $state))->where('lid = ?', $lid));
-            $settings = $this->collectPluginSettings();
-            if ($state === '1' && $this->canSendLinkApprovalMail($settings)) {
-                $this->sendLinkApprovalMail($link, $settings);
-            }
-        }
-        return array('id' => $lid, 'state' => $state, 'changed' => $changed);
     }
 
     public function approveEnhancement()
@@ -2564,13 +2278,6 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         }
 
         $result = Enhancement_Plugin::previewAiSlug($title, $cid);
-        if (!is_array($result)) {
-            $result = array(
-                'success' => false,
-                'slug' => '',
-                'message' => _t('Slug 生成失败')
-            );
-        }
 
         $this->response->throwJson(array(
             'success' => !empty($result['success']),
@@ -2776,5 +2483,3 @@ class Enhancement_Action extends Typecho_Widget implements Widget_Interface_Do
         $this->response->redirect($this->options->adminUrl);
     }
 }
-
-/** Enhancement */

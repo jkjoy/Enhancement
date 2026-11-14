@@ -45,17 +45,6 @@ class Enhancement_ConfigUiHelper
         font-size:1em;
         color: #c82609;
     }
-    .enhancement-subtitle{
-        margin:20px 0 8px;
-        font-size: 1.05em;
-        font-weight: bold;
-        color: #334155;
-    }
-    .enhancement-subtitle::before {
-        content: "## ";
-        font-size:1em;
-        color: #64748b;
-    }
     .enhancement-backup-box{
         margin-top: 12px;
         padding: 12px;
@@ -232,8 +221,6 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select:focus{
 .enhancement-settings-app code{white-space:normal;}
 .enhancement-settings-app .enhancement-title{margin:0 0 12px;font-size:16px;line-height:1.4;font-weight:700;color:var(--enh-text);}
 .enhancement-settings-app .enhancement-title::before{content:none !important;display:none !important;}
-.enhancement-settings-app .enhancement-subtitle{margin:8px 0 10px;font-size:15px;line-height:1.35;font-weight:700;color:#1e293b;}
-.enhancement-settings-app .enhancement-subtitle::before{content:none !important;display:none !important;}
 .enhancement-settings-app .enhancement-backup-box,.enhancement-settings-app .enhancement-update-box{margin-top:0;padding:0;border:0;border-radius:0;background:transparent;}
 .enhancement-settings-app .enhancement-action-note{color:var(--enh-muted);}
 .enhancement-settings-app .enhancement-smtp-test-status.is-success{color:#15803d;}
@@ -360,53 +347,18 @@ form.enhancement-settings-form.enhancement-settings-form--enhanced select:focus{
             if (!value) {
                 return '其他';
             }
-            if (value.indexOf('备份') >= 0) {
-                return '备份';
-            }
-            if (value.indexOf('概览') >= 0 || value.indexOf('帮助') >= 0) {
-                return '帮助';
-            }
-            if (value.indexOf('更新') >= 0 || value.indexOf('升级') >= 0) {
-                return '更新';
-            }
-            if (value.indexOf('友链') >= 0) {
-                return '友链';
-            }
-            if (value.indexOf('朋友文章') >= 0) {
-                return '朋友文章';
-            }
-            if (value.indexOf('瞬间') >= 0) {
-                return '瞬间';
-            }
-            if (value.indexOf('REST') >= 0) {
-                return 'API';
-            }
-            if (value.indexOf('评论防御') >= 0) {
-                return '防御';
-            }
-            if (value.indexOf('功能') >= 0 || value.indexOf('开关') >= 0) {
-                return '开关';
-            }
-            if (value.indexOf('安全') >= 0 || value.indexOf('Turnstile') >= 0) {
-                return '安全';
-            }
-            if (value.indexOf('AI') >= 0 || value.indexOf('摘要') >= 0) {
-                return 'AI';
-            }
-            if (value.indexOf('QQ') >= 0) {
-                return 'QQ';
-            }
-            if (value.indexOf('邮件') >= 0 || value.indexOf('SMTP') >= 0) {
-                return '邮件';
-            }
-            if (value.indexOf('附件') >= 0 || value.indexOf('上传') >= 0 || value.indexOf('S3') >= 0) {
-                return '上传';
-            }
-            if (value.indexOf('维护') >= 0) {
-                return '维护';
-            }
-            if (value.length <= 2) {
-                return value;
+            var rules = [
+                ['备份', ['备份']], ['帮助', ['概览', '帮助']], ['更新', ['更新', '升级']], ['友链', ['友链']],
+                ['朋友文章', ['朋友文章']], ['瞬间', ['瞬间']], ['API', ['REST']], ['防御', ['评论防御']],
+                ['开关', ['功能', '开关']], ['安全', ['安全', 'Turnstile']], ['AI', ['AI', '摘要']], ['QQ', ['QQ']],
+                ['邮件', ['邮件', 'SMTP']], ['上传', ['附件', '上传', 'S3']], ['维护', ['维护']]
+            ];
+            for (var i = 0; i < rules.length; i++) {
+                for (var j = 0; j < rules[i][1].length; j++) {
+                    if (value.indexOf(rules[i][1][j]) >= 0) {
+                        return rules[i][0];
+                    }
+                }
             }
             return value.slice(0, 2);
         }
@@ -798,16 +750,6 @@ HTML
             btn.addEventListener("click", function () {
                 panel.style.display = panel.style.display === "none" ? "block" : "none";
             });
-
-            var inlineBtn = document.getElementById("enhancement-links-help-trigger-inline");
-            if (inlineBtn) {
-                inlineBtn.addEventListener("click", function () {
-                    btn.click();
-                    if (btn.scrollIntoView) {
-                        btn.scrollIntoView({behavior: "smooth", block: "center"});
-                    }
-                });
-            }
         })();
         </script>';
     }
@@ -890,9 +832,7 @@ HTML
         } else {
             $updateHint = '<p class="enhancement-action-note" style="margin:8px 0 0;">' . _t('点击“检查更新”后，会在这里显示远程版本和检测结果。') . '</p>';
         }
-        $upgradeButton = $hasUpdate
-            ? '<a class="btn enhancement-action-btn primary enhancement-update-upgrade" href="' . htmlspecialchars($upgradeUrl, ENT_QUOTES, 'UTF-8') . '" onclick="return window.confirm(\'确定要从远程仓库下载并覆盖当前 Enhancement 插件目录吗？建议先备份插件文件。\');">' . _t('在线升级') . '</a>'
-            : '<a class="btn enhancement-action-btn primary enhancement-update-upgrade is-hidden" href="' . htmlspecialchars($upgradeUrl, ENT_QUOTES, 'UTF-8') . '" onclick="return window.confirm(\'确定要从远程仓库下载并覆盖当前 Enhancement 插件目录吗？建议先备份插件文件。\');">' . _t('在线升级') . '</a>';
+        $upgradeButton = '<a class="btn enhancement-action-btn primary enhancement-update-upgrade' . ($hasUpdate ? '' : ' is-hidden') . '" href="' . htmlspecialchars($upgradeUrl, ENT_QUOTES, 'UTF-8') . '" onclick="return window.confirm(\'确定要从远程仓库下载并覆盖当前 Enhancement 插件目录吗？建议先备份插件文件。\');">' . _t('在线升级') . '</a>';
 
         echo '<div class="typecho-option">'
             . '<h3 class="enhancement-title">版本更新</h3>'

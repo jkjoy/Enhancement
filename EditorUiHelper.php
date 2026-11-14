@@ -326,24 +326,10 @@ class Enhancement_EditorUiHelper
                 defaultText: 'demo.zip\n1024kb\nhttps://file.imsun.org/demo.zip',
                 useSelection: false,
                 build: function (value) {
-                    var raw = String(value || '').replace(/\r/g, '');
-                    var file = '';
-                    var size = '';
-                    var url = '';
-
-                    if (raw.indexOf('\n') >= 0) {
-                        var lines = raw.split('\n');
-                        file = $.trim(lines[0] || '');
-                        size = $.trim(lines[1] || '');
-                        url = $.trim(lines.slice(2).join('\n') || '');
-                    } else if (raw.indexOf('|') >= 0) {
-                        var parts = raw.split('|');
-                        file = $.trim(parts[0] || '');
-                        size = $.trim(parts[1] || '');
-                        url = $.trim(parts.slice(2).join('|') || '');
-                    } else {
-                        url = $.trim(raw);
-                    }
+                    var data = parseDownloadModalText(value);
+                    var file = data.file;
+                    var size = data.size;
+                    var url = data.url;
 
                     if (!url) {
                         url = 'https://file.imsun.org/demo.zip';
@@ -446,16 +432,6 @@ class Enhancement_EditorUiHelper
             };
         }
 
-        function readDownloadModalValue() {
-            var file = $.trim($('#enh-shortcode-download-file').val() || '');
-            var size = $.trim($('#enh-shortcode-download-size').val() || '');
-            var url = $.trim($('#enh-shortcode-download-url').val() || '');
-            if (!file && !size && !url) {
-                return '';
-            }
-            return [file, size, url].join('\n');
-        }
-
         function readDownloadModalData() {
             return {
                 file: $.trim($('#enh-shortcode-download-file').val() || ''),
@@ -518,11 +494,7 @@ class Enhancement_EditorUiHelper
                 $('#enh-shortcode-modal-mask').hide();
             };
 
-            $('#enh-shortcode-modal-cancel').on('click', function () {
-                closeModal();
-            });
-
-            $('#enh-shortcode-modal-close').on('click', function () {
+            $('#enh-shortcode-modal-cancel,#enh-shortcode-modal-close').on('click', function () {
                 closeModal();
             });
 

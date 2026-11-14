@@ -2,12 +2,7 @@
 
 include 'manage-init.php';
 
-$settings = null;
-if (class_exists('Enhancement_Plugin') && method_exists('Enhancement_Plugin', 'runtimeSettings')) {
-    $settings = Enhancement_Plugin::runtimeSettings();
-} else {
-    $settings = (object) array();
-}
+$settings = Enhancement_Plugin::runtimeSettings();
 
 $summaryField = isset($settings->ai_summary_field) ? trim((string)$settings->ai_summary_field) : 'summary';
 if ($summaryField === '' || !preg_match('/^[_a-z][_a-z0-9]*$/i', $summaryField)) {
@@ -31,10 +26,7 @@ if (!array_key_exists($statusFilter, $statusOptions)) {
 }
 
 $pageSize = 30;
-$page = intval($request->get('page'));
-if ($page <= 0) {
-    $page = 1;
-}
+$page = max(1, intval($request->get('page')));
 
 $countSql = $db->select(array('COUNT(cid)' => 'num'))
     ->from('table.contents')
@@ -92,16 +84,10 @@ if (is_array($posts) && !empty($posts)) {
     }
 }
 
-$buildPanelUrl = function ($targetPage = null, $targetStatus = null) use ($options, $statusFilter, $statusOptions) {
+$buildPanelUrl = function ($targetPage = null) use ($options, $statusFilter) {
     $query = array('panel' => 'Enhancement/manage-ai-summary.php');
-
-    $status = $targetStatus;
-    if ($status === null) {
-        $status = $statusFilter;
-    }
-    $status = trim((string)$status);
-    if ($status !== '' && isset($statusOptions[$status])) {
-        $query['status'] = $status;
+    if ($statusFilter !== '') {
+        $query['status'] = $statusFilter;
     }
 
     if ($targetPage !== null) {
@@ -209,16 +195,7 @@ include 'manage-page-start.php';
                                         $cid = intval($post['cid']);
                                         $title = isset($post['title']) && trim((string)$post['title']) !== '' ? (string)$post['title'] : _t('（无标题）');
                                         $status = isset($post['status']) ? (string)$post['status'] : '';
-                                        $statusText = _t('未知');
-                                        if ($status === 'publish') {
-                                            $statusText = _t('公开');
-                                        } elseif ($status === 'private') {
-                                            $statusText = _t('私密');
-                                        } elseif ($status === 'waiting') {
-                                            $statusText = _t('待审核');
-                                        } elseif ($status === 'hidden') {
-                                            $statusText = _t('隐藏');
-                                        }
+                                        $statusText = $status !== '' && isset($statusOptions[$status]) ? $statusOptions[$status] : _t('未知');
                                         $summaryText = isset($summaryMap[$cid]) ? trim((string)$summaryMap[$cid]) : '';
                                         $summaryPreview = $summaryText === '' ? _t('未生成') : Typecho_Common::subStr($summaryText, 0, 90, '...');
                                         $summaryColor = $summaryText === '' ? '#999' : '#333';

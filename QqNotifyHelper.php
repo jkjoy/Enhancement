@@ -25,10 +25,8 @@ class Enhancement_QqNotifyHelper
             unset($settings['qq_moments_enabled']);
             if (isset($settings['qq_direct_include_links'])) { $settings['qq_official_include_links'] = $settings['qq_direct_include_links']; }
         } elseif (($provider === 'official' && $hasService && !$hasCredentials)
-            || in_array($provider, array('legacy', 'openclaw', 'hermes', 'standalone'), true)) {
-            $settings['qq_notify_provider'] = 'none';
-            unset($settings['qq_moments_enabled']);
-        } elseif (!isset($settings['qq_notify_provider'])) {
+            || in_array($provider, array('legacy', 'openclaw', 'hermes', 'standalone'), true)
+            || !isset($settings['qq_notify_provider'])) {
             $settings['qq_notify_provider'] = 'none';
             unset($settings['qq_moments_enabled']);
         }
@@ -101,11 +99,6 @@ class Enhancement_QqNotifyHelper
             return;
         }
 
-        $settings = self::runtimeSettings();
-        if (!isset($settings->enable_comment_by_qq) || $settings->enable_comment_by_qq != '1') {
-            return;
-        }
-
         self::comment($edit, 'approved');
     }
 
@@ -114,9 +107,6 @@ class Enhancement_QqNotifyHelper
         $options = Typecho_Widget::widget('Widget_Options');
         $settings = self::runtimeSettings();
         if (!isset($settings->enable_link_submit_by_qq) || $settings->enable_link_submit_by_qq != '1') {
-            return;
-        }
-        if (!self::configured($settings)) {
             return;
         }
 
@@ -338,26 +328,15 @@ class Enhancement_QqNotifyHelper
         return $stats;
     }
 
-    private static function featureEnabled($settings = null): bool
+    private static function featureEnabled($settings): bool
     {
-        if ($settings === null) {
-            $settings = self::runtimeSettings();
-        }
-
         return (isset($settings->enable_comment_by_qq) && $settings->enable_comment_by_qq == '1')
             || (isset($settings->enable_link_submit_by_qq) && $settings->enable_link_submit_by_qq == '1');
     }
 
-    private static function configured($settings = null): bool
+    private static function configured($settings): bool
     {
-        if ($settings === null) {
-            $settings = self::runtimeSettings();
-        }
-
-        if (self::provider($settings) === 'official') {
-            return self::officialConfigurationError($settings) === '';
-        }
-        return false;
+        return self::provider($settings) === 'official' && self::officialConfigurationError($settings) === '';
     }
 
     private static function dispatchMessage(string $message, $settings = null)
@@ -375,21 +354,18 @@ class Enhancement_QqNotifyHelper
             return;
         }
 
-        if (self::provider($settings) === 'official') {
-            $envelope = self::officialEnvelope($message, $settings);
-            $encoded = json_encode($envelope, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-            if ($encoded === false) {
-                return;
-            }
-            // Persist the recipient and credential identity before calling the official API.
-            $qid = self::enqueue(self::OFFICIAL_QUEUE_PREFIX . $encoded);
-            $result = self::sendOfficial($envelope, $settings);
-            if ($qid > 0) {
-                self::recordOfficialResult($qid, $result);
-            } elseif (empty($result['success'])) {
-                error_log('[Enhancement][QQBot] 官方接口发送和本地重试队列均失败，请检查数据库及 QQ 配置。');
-            }
+        $envelope = self::officialEnvelope($message, $settings);
+        $encoded = json_encode($envelope, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($encoded === false) {
             return;
+        }
+        // Persist the recipient and credential identity before calling the official API.
+        $qid = self::enqueue(self::OFFICIAL_QUEUE_PREFIX . $encoded);
+        $result = self::sendOfficial($envelope, $settings);
+        if ($qid > 0) {
+            self::recordOfficialResult($qid, $result);
+        } elseif (empty($result['success'])) {
+            error_log('[Enhancement][QQBot] 官方接口发送和本地重试队列均失败，请检查数据库及 QQ 配置。');
         }
     }
 
@@ -534,14 +510,13 @@ class Enhancement_QqNotifyHelper
 
     private static function sendOfficial($envelope, $settings): array
     {
-        $failure = array('success' => false, 'error' => _t('QQ 凭证或接收人绑定已变化，旧通知停止投递'));
         if (self::provider($settings) !== 'official' || !is_array($envelope)
             || ($envelope['provider'] ?? '') !== 'official' || !is_string($envelope['message'] ?? null)
             || !is_array($envelope['binding'] ?? null) || empty($envelope['binding'])
             || !is_string($envelope['identity'] ?? null)
             || !hash_equals(Enhancement_QqOfficialHelper::credentialsIdentity($settings), $envelope['identity'])
             || Enhancement_QqOfficialHelper::binding($settings) !== $envelope['binding']) {
-            return $failure;
+            return array('success' => false, 'error' => _t('QQ 凭证或接收人绑定已变化，旧通知停止投递'));
         }
         return Enhancement_QqOfficialHelper::send($envelope['message'], $settings);
     }

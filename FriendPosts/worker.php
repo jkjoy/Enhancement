@@ -41,11 +41,14 @@ try {
     require_once $friendWorkerSiteRoot . '/config.inc.php';
     set_error_handler($friendWorkerErrorHandler);
     $friendWorkerDb = Typecho_Db::get();
+    $friendWorkerReadOption = static function (string $name) use ($friendWorkerDb): string {
+        $row = $friendWorkerDb->fetchRow($friendWorkerDb->select('value')->from('table.options')
+            ->where('name = ?', $name)->where('user = ?', 0)->limit(1));
+        return is_array($row) && isset($row['value']) ? (string)$row['value'] : '';
+    };
     // Typecho's cookie initialization needs an absolute site URL in CLI as well.
     if (!defined('__TYPECHO_ROOT_URL__')) {
-        $friendWorkerSiteOption = $friendWorkerDb->fetchRow($friendWorkerDb->select('value')->from('table.options')
-            ->where('name = ?', 'siteUrl')->where('user = ?', 0)->limit(1));
-        $friendWorkerSiteUrl = is_array($friendWorkerSiteOption) ? (string)($friendWorkerSiteOption['value'] ?? '') : '';
+        $friendWorkerSiteUrl = $friendWorkerReadOption('siteUrl');
         if (!preg_match('~\Ahttps?://~i', $friendWorkerSiteUrl) || !parse_url($friendWorkerSiteUrl, PHP_URL_HOST)) {
             throw new RuntimeException('friend_worker_site_url_unavailable');
         }
@@ -57,23 +60,13 @@ try {
     ini_set('display_errors', '0');
     @set_time_limit(0);
 
-    $friendWorkerReadOption = static function (string $name) use ($friendWorkerDb): string {
-        $row = $friendWorkerDb->fetchRow($friendWorkerDb->select('value')->from('table.options')
-            ->where('name = ?', $name)->where('user = ?', 0)->limit(1));
-        return is_array($row) && isset($row['value']) ? (string)$row['value'] : '';
-    };
-    $friendWorkerDecodeOption = static function (string $value): array {
-        $decoded = json_decode($value, true);
-        if (!is_array($decoded)) { $decoded = @unserialize($value, array('allowed_classes' => false)); }
-        return is_array($decoded) ? $decoded : array();
-    };
-    $friendWorkerPlugins = $friendWorkerDecodeOption($friendWorkerReadOption('plugins'));
+    $friendWorkerPlugins = Enhancement_SettingsHelper::decodePluginConfigValue($friendWorkerReadOption('plugins'));
     if (!is_array($friendWorkerPlugins['activated'] ?? null) || !array_key_exists('Enhancement', $friendWorkerPlugins['activated'])) {
         fwrite(STDERR, "Enhancement 插件已停用，朋友文章检查已停止。\n");
         exit(1);
     }
     $friendWorkerConfigValue = $friendWorkerReadOption('plugin:Enhancement');
-    $friendWorkerSettings = $friendWorkerDecodeOption($friendWorkerConfigValue);
+    $friendWorkerSettings = Enhancement_SettingsHelper::decodePluginConfigValue($friendWorkerConfigValue);
     Enhancement_SettingsHelper::syncOptionCache('plugin:Enhancement', $friendWorkerConfigValue, 'Enhancement');
     if (($friendWorkerSettings['enable_friend_posts'] ?? '1') !== '1') {
         fwrite(STDERR, "朋友文章功能已关闭，检查任务已停止。\n");

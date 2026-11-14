@@ -18,16 +18,7 @@ class Enhancement_S3Upload_S3Client
 
     private function __construct()
     {
-        $this->settings = null;
-
-        if (class_exists('Enhancement_Plugin') && method_exists('Enhancement_Plugin', 'runtimeSettings')) {
-            $this->settings = Enhancement_Plugin::runtimeSettings();
-        }
-
-        if (!is_object($this->settings)) {
-            $this->settings = (object) array();
-        }
-
+        $this->settings = Enhancement_Plugin::runtimeSettings();
         $this->endpoint = $this->normalizeHost(isset($this->settings->s3_endpoint) ? (string)$this->settings->s3_endpoint : '');
         $this->bucket = trim((string)(isset($this->settings->s3_bucket) ? $this->settings->s3_bucket : ''));
         $this->region = trim((string)(isset($this->settings->s3_region) ? $this->settings->s3_region : 'us-east-1'));
@@ -288,32 +279,8 @@ class Enhancement_S3Upload_S3Client
             }
         }
 
-        $responseHeaders = '';
-        $responseBody = '';
-        if (is_string($response) && $headerSize > 0) {
-            $responseHeaders = substr($response, 0, $headerSize);
-            $responseBody = substr($response, $headerSize);
-        } elseif (is_string($response)) {
-            $responseBody = $response;
-        }
-
         if ($response === false || $httpCode < 200 || $httpCode >= 300) {
-            $errorMessage = '上传失败，HTTP状态码：' . $httpCode;
-            if ($curlError !== '') {
-                $errorMessage .= '，cURL错误：' . $curlError;
-            }
-
-            $regionHint = $this->getResponseHeaderValue($responseHeaders, 'x-amz-bucket-region');
-            if ($regionHint !== '' && strcasecmp($regionHint, $this->region) !== 0) {
-                $errorMessage .= '，建议 Region：' . $regionHint;
-            }
-
-            $bodyHint = $this->compactResponseBody($responseBody);
-            if ($bodyHint !== '') {
-                $errorMessage .= '，响应：' . $bodyHint;
-            }
-
-            throw new Exception($errorMessage);
+            throw new Exception($this->failureMessage('上传失败', $httpCode, $curlError, $response, $headerSize));
         }
 
         return array(
@@ -377,35 +344,36 @@ class Enhancement_S3Upload_S3Client
         }
 
         if ($response === false || !in_array($httpCode, array(200, 204, 404), true)) {
-            $responseHeaders = '';
-            $responseBody = '';
-            if (is_string($response) && $headerSize > 0) {
-                $responseHeaders = substr($response, 0, $headerSize);
-                $responseBody = substr($response, $headerSize);
-            } elseif (is_string($response)) {
-                $responseBody = $response;
-            }
-
-            $message = '删除失败，HTTP状态码：' . $httpCode;
-            if ($curlError !== '') {
-                $message .= '，cURL错误：' . $curlError;
-            }
-
-            $regionHint = $this->getResponseHeaderValue($responseHeaders, 'x-amz-bucket-region');
-            if ($regionHint !== '' && strcasecmp($regionHint, $this->region) !== 0) {
-                $message .= '，建议 Region：' . $regionHint;
-            }
-
-            $bodyHint = $this->compactResponseBody($responseBody);
-            if ($bodyHint !== '') {
-                $message .= '，响应：' . $bodyHint;
-            }
-
-            Enhancement_S3Upload_Utils::log($message, 'error');
+            Enhancement_S3Upload_Utils::log($this->failureMessage('删除失败', $httpCode, $curlError, $response, $headerSize), 'error');
             return false;
         }
 
-        return $response !== false && ($httpCode === 200 || $httpCode === 204 || $httpCode === 404);
+        return true;
+    }
+
+    private function failureMessage($prefix, $httpCode, $curlError, $response, $headerSize)
+    {
+        $responseHeaders = '';
+        $responseBody = '';
+        if (is_string($response) && $headerSize > 0) {
+            $responseHeaders = substr($response, 0, $headerSize);
+            $responseBody = substr($response, $headerSize);
+        } elseif (is_string($response)) {
+            $responseBody = $response;
+        }
+
+        $message = $prefix . '，HTTP状态码：' . $httpCode;
+        if ($curlError !== '') {
+            $message .= '，cURL错误：' . $curlError;
+        }
+
+        $regionHint = $this->getResponseHeaderValue($responseHeaders, 'x-amz-bucket-region');
+        if ($regionHint !== '' && strcasecmp($regionHint, $this->region) !== 0) {
+            $message .= '，建议 Region：' . $regionHint;
+        }
+
+        $bodyHint = $this->compactResponseBody($responseBody);
+        return $bodyHint !== '' ? $message . '，响应：' . $bodyHint : $message;
     }
 
     private function getSignature($method, $uri, $querystring, $headers, $payloadHash, $shortDate)

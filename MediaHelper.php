@@ -55,37 +55,24 @@ class Enhancement_MediaHelper
             return $content;
         }
 
+        $replace = function ($matches) {
+            $url = html_entity_decode(isset($matches[1]) ? $matches[1] : $matches[0], ENT_QUOTES, 'UTF-8');
+            $videoInfo = self::extractVideoInfo($url);
+
+            return $videoInfo ? self::generateVideoPlayer($videoInfo) : $matches[0];
+        };
+
         $content = preg_replace_callback(
             '/<a\s+[^>]*href=["\']([^"\']*)["\'][^>]*>.*?<\/a>/is',
-            function ($matches) {
-                $url = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
-                $videoInfo = self::extractVideoInfo($url);
-
-                if ($videoInfo) {
-                    return self::generateVideoPlayer($videoInfo);
-                }
-
-                return $matches[0];
-            },
+            $replace,
             $content
         );
 
-        $content = preg_replace_callback(
+        return preg_replace_callback(
             '/https?:\/\/(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/|bilibili\.com\/video\/|v\.youku\.com\/v_show\/id_)[^\s<]+/i',
-            function ($matches) {
-                $url = html_entity_decode($matches[0], ENT_QUOTES, 'UTF-8');
-                $videoInfo = self::extractVideoInfo($url);
-
-                if ($videoInfo) {
-                    return self::generateVideoPlayer($videoInfo);
-                }
-
-                return $matches[0];
-            },
+            $replace,
             $content
         );
-
-        return $content;
     }
 
     public static function replaceMusicLinks($content)
@@ -94,37 +81,24 @@ class Enhancement_MediaHelper
             return $content;
         }
 
+        $replace = function ($matches) {
+            $url = html_entity_decode(isset($matches[1]) ? $matches[1] : $matches[0], ENT_QUOTES, 'UTF-8');
+            $musicInfo = self::extractMusicInfo($url);
+            if (!$musicInfo) {
+                return $matches[0];
+            }
+
+            $player = self::generateMusicPlayer($musicInfo);
+            return $player !== '' ? $player : $matches[0];
+        };
+
         $content = preg_replace_callback(
             '/<a\s+[^>]*href=["\']([^"\']*)["\'][^>]*>.*?<\/a>/is',
-            function ($matches) {
-                $url = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
-                $musicInfo = self::extractMusicInfo($url);
-                if (!$musicInfo) {
-                    return $matches[0];
-                }
-
-                $player = self::generateMusicPlayer($musicInfo);
-                return $player !== '' ? $player : $matches[0];
-            },
+            $replace,
             $content
         );
 
-        $content = preg_replace_callback(
-            '/https?:\/\/[^\s<]+/i',
-            function ($matches) {
-                $url = html_entity_decode($matches[0], ENT_QUOTES, 'UTF-8');
-                $musicInfo = self::extractMusicInfo($url);
-                if (!$musicInfo) {
-                    return $matches[0];
-                }
-
-                $player = self::generateMusicPlayer($musicInfo);
-                return $player !== '' ? $player : $matches[0];
-            },
-            $content
-        );
-
-        return $content;
+        return preg_replace_callback('/https?:\/\/[^\s<]+/i', $replace, $content);
     }
 
     private static function extractMusicInfo($url)
@@ -145,35 +119,18 @@ class Enhancement_MediaHelper
         }
 
         if (strpos($host, 'music.163.com') !== false || strpos($host, '.163.com') !== false) {
-            if (preg_match('/(?:playlist|toplist)\?id=(\d+)/i', $url, $matches)) {
-                return array('server' => 'netease', 'type' => 'playlist', 'id' => $matches[1]);
-            }
-            if (preg_match('/album\?id=(\d+)/i', $url, $matches)) {
-                return array('server' => 'netease', 'type' => 'album', 'id' => $matches[1]);
-            }
-            if (preg_match('/song\?id=(\d+)/i', $url, $matches)) {
-                return array('server' => 'netease', 'type' => 'song', 'id' => $matches[1]);
-            }
-            if (preg_match('/artist\?id=(\d+)/i', $url, $matches)) {
-                return array('server' => 'netease', 'type' => 'artist', 'id' => $matches[1]);
+            foreach (array('(?:playlist|toplist)' => 'playlist', 'album' => 'album', 'song' => 'song', 'artist' => 'artist') as $pattern => $type) {
+                if (preg_match('/' . $pattern . '\?id=(\d+)/i', $url, $matches)) {
+                    return array('server' => 'netease', 'type' => $type, 'id' => $matches[1]);
+                }
             }
         }
 
         if (strpos($host, 'y.qq.com') !== false || strpos($host, 'qq.com') !== false) {
-            if (preg_match('/playsquare\/([^\.?&#\/]+)/i', $url, $matches)) {
-                return array('server' => 'tencent', 'type' => 'playlist', 'id' => $matches[1]);
-            }
-            if (preg_match('/playlist\/([^\.?&#\/]+)/i', $url, $matches)) {
-                return array('server' => 'tencent', 'type' => 'playlist', 'id' => $matches[1]);
-            }
-            if (preg_match('/album\/([^\.?&#\/]+)/i', $url, $matches)) {
-                return array('server' => 'tencent', 'type' => 'album', 'id' => $matches[1]);
-            }
-            if (preg_match('/song\/([^\.?&#\/]+)/i', $url, $matches)) {
-                return array('server' => 'tencent', 'type' => 'song', 'id' => $matches[1]);
-            }
-            if (preg_match('/singer\/([^\.?&#\/]+)/i', $url, $matches)) {
-                return array('server' => 'tencent', 'type' => 'artist', 'id' => $matches[1]);
+            foreach (array('playsquare' => 'playlist', 'playlist' => 'playlist', 'album' => 'album', 'song' => 'song', 'singer' => 'artist') as $pattern => $type) {
+                if (preg_match('/' . $pattern . '\/([^\.?&#\/]+)/i', $url, $matches)) {
+                    return array('server' => 'tencent', 'type' => $type, 'id' => $matches[1]);
+                }
             }
         }
 

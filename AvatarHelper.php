@@ -7,11 +7,7 @@ class Enhancement_AvatarHelper
     public static function mirrorEnabled(): bool
     {
         $settings = Enhancement_Plugin::runtimeSettings();
-        if (!isset($settings->enable_avatar_mirror)) {
-            return true;
-        }
-
-        return $settings->enable_avatar_mirror == '1';
+        return !isset($settings->enable_avatar_mirror) || $settings->enable_avatar_mirror == '1';
     }
 
     public static function baseUrl(): string
@@ -27,12 +23,7 @@ class Enhancement_AvatarHelper
             $base = $defaultGravatar;
         }
 
-        $base = trim((string)$base);
-        if ($base === '') {
-            $base = $enabled ? $defaultMirror : $defaultGravatar;
-        }
-
-        return self::normalizeBase($base);
+        return self::normalizeBase((string)$base);
     }
 
     public static function applyPrefix($archive = null, $select = null)
@@ -75,11 +66,9 @@ class Enhancement_AvatarHelper
         if ($default !== null && $default !== '') {
             $params['d'] = $default;
         }
-        if (!empty($extra)) {
-            foreach ($extra as $key => $value) {
-                if ($value !== null && $value !== '') {
-                    $params[$key] = $value;
-                }
+        foreach ($extra as $key => $value) {
+            if ($value !== null && $value !== '') {
+                $params[$key] = $value;
             }
         }
 

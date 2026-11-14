@@ -89,34 +89,29 @@ class Enhancement_MomentsHelper
         return isset($settings->tencent_map_key) ? trim((string)$settings->tencent_map_key) : '';
     }
 
-    public static function normalizeLatitude($latitude)
+    private static function normalizeCoordinate($coordinate, $limit)
     {
-        $latitude = trim((string)$latitude);
-        if ($latitude === '' || !is_numeric($latitude)) {
+        $coordinate = trim((string)$coordinate);
+        if ($coordinate === '' || !is_numeric($coordinate)) {
             return null;
         }
 
-        $value = floatval($latitude);
-        if ($value < -90 || $value > 90) {
+        $value = floatval($coordinate);
+        if ($value < -$limit || $value > $limit) {
             return null;
         }
 
         return rtrim(rtrim(sprintf('%.7F', $value), '0'), '.');
     }
 
+    public static function normalizeLatitude($latitude)
+    {
+        return self::normalizeCoordinate($latitude, 90);
+    }
+
     public static function normalizeLongitude($longitude)
     {
-        $longitude = trim((string)$longitude);
-        if ($longitude === '' || !is_numeric($longitude)) {
-            return null;
-        }
-
-        $value = floatval($longitude);
-        if ($value < -180 || $value > 180) {
-            return null;
-        }
-
-        return rtrim(rtrim(sprintf('%.7F', $value), '0'), '.');
+        return self::normalizeCoordinate($longitude, 180);
     }
 
     public static function normalizeLocationAddress($address, $maxLength = 255)
@@ -140,36 +135,29 @@ class Enhancement_MomentsHelper
 
     public static function validateLatitude($latitude)
     {
-        $latitude = trim((string)$latitude);
-        if ($latitude === '') {
-            return true;
-        }
-
-        return self::normalizeLatitude($latitude) !== null;
+        return trim((string)$latitude) === '' || self::normalizeLatitude($latitude) !== null;
     }
 
     public static function validateLongitude($longitude)
     {
-        $longitude = trim((string)$longitude);
-        if ($longitude === '') {
-            return true;
+        return trim((string)$longitude) === '' || self::normalizeLongitude($longitude) !== null;
+    }
+
+    private static function normalizeEnum($value, $default, array $allowed)
+    {
+        foreach (array($value, $default) as $candidate) {
+            $candidate = strtolower(trim((string)$candidate));
+            if (in_array($candidate, $allowed, true)) {
+                return $candidate;
+            }
         }
 
-        return self::normalizeLongitude($longitude) !== null;
+        return $allowed[0];
     }
 
     public static function normalizeStatus($status, $default = 'public')
     {
-        $allowed = array('public', 'private');
-        $status = strtolower(trim((string)$status));
-        if (!in_array($status, $allowed, true)) {
-            $status = strtolower(trim((string)$default));
-            if (!in_array($status, $allowed, true)) {
-                $status = 'public';
-            }
-        }
-
-        return $status;
+        return self::normalizeEnum($status, $default, array('public', 'private'));
     }
 
     public static function validateStatus($status)
@@ -180,16 +168,7 @@ class Enhancement_MomentsHelper
 
     public static function normalizeSource($source, $default = 'web')
     {
-        $allowed = array('web', 'mobile', 'api', 'qq', 'weixin');
-        $source = strtolower(trim((string)$source));
-        if (!in_array($source, $allowed, true)) {
-            $source = strtolower(trim((string)$default));
-            if (!in_array($source, $allowed, true)) {
-                $source = 'web';
-            }
-        }
-
-        return $source;
+        return self::normalizeEnum($source, $default, array('web', 'mobile', 'api', 'qq', 'weixin'));
     }
 
     public static function detectSourceByUserAgent($userAgent = null)
@@ -199,15 +178,7 @@ class Enhancement_MomentsHelper
         }
 
         $userAgent = strtolower(trim((string)$userAgent));
-        if ($userAgent === '') {
-            return 'web';
-        }
-
-        if (preg_match('/mobile|android|iphone|ipad|ipod|windows phone|mobi/i', $userAgent)) {
-            return 'mobile';
-        }
-
-        return 'web';
+        return preg_match('/mobile|android|iphone|ipad|ipod|windows phone|mobi/i', $userAgent) ? 'mobile' : 'web';
     }
 
     public static function ensureSourceColumn()
@@ -289,15 +260,6 @@ class Enhancement_MomentsHelper
         self::ensureLocationColumns();
     }
 
-    private static function migrationContext()
-    {
-        $db = Typecho_Db::get();
-        $type = explode('_', $db->getAdapterName());
-        $type = array_pop($type);
-
-        return array($db, $type, $db->getPrefix() . 'moments');
-    }
-
     private static function columnExists($db, $type, $table, $column, &$sqliteColumns = null)
     {
         if ('Mysql' === $type) {
@@ -338,7 +300,10 @@ class Enhancement_MomentsHelper
 
     private static function ensureColumns(array $definitions)
     {
-        list($db, $type, $table) = self::migrationContext();
+        $db = Typecho_Db::get();
+        $type = explode('_', $db->getAdapterName());
+        $type = array_pop($type);
+        $table = $db->getPrefix() . 'moments';
         $quotedTable = ('Pgsql' === $type) ? '"' . $table . '"' : '`' . $table . '`';
 
         try {

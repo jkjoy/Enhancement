@@ -9,12 +9,7 @@ class Enhancement_Memos_Action extends Typecho_Widget implements Widget_Interfac
 
     private function configuredToken(): string
     {
-        if (class_exists('Enhancement_Plugin') && method_exists('Enhancement_Plugin', 'runtimeSettings')) {
-            $settings = Enhancement_Plugin::runtimeSettings();
-        } else {
-            $settings = (object) array();
-        }
-
+        $settings = Enhancement_Plugin::runtimeSettings();
         return isset($settings->moments_token) ? trim((string)$settings->moments_token) : '';
     }
 
@@ -26,11 +21,25 @@ class Enhancement_Memos_Action extends Typecho_Widget implements Widget_Interfac
             return false;
         }
 
-        if (function_exists('hash_equals')) {
-            return hash_equals($token, $incomingToken);
-        }
+        return hash_equals($token, $incomingToken);
+    }
 
-        return $token === $incomingToken;
+    private function fail($status, $message)
+    {
+        $this->response->setStatus($status)->throwJson(array('success' => false, 'message' => $message));
+    }
+
+    private function encodeList($value)
+    {
+        if (is_array($value)) {
+            return json_encode($value, JSON_UNESCAPED_UNICODE);
+        }
+        $value = $value === null ? '' : trim((string)$value);
+        if ($value === '') {
+            return null;
+        }
+        $decoded = json_decode($value, true);
+        return is_array($decoded) ? json_encode($decoded, JSON_UNESCAPED_UNICODE) : $value;
     }
 
     private function getBearerToken(): ?string
@@ -71,16 +80,8 @@ class Enhancement_Memos_Action extends Typecho_Widget implements Widget_Interfac
         $showAll = $this->validateToken($this->getBearerToken());
 
         $limit = intval($this->request->get('limit', 20));
-        if ($limit <= 0) {
-            $limit = 20;
-        }
-        if ($limit > 100) {
-            $limit = 100;
-        }
-        $page = intval($this->request->get('page', 1));
-        if ($page <= 0) {
-            $page = 1;
-        }
+        $limit = $limit <= 0 ? 20 : min(100, $limit);
+        $page = max(1, intval($this->request->get('page', 1)));
         $offset = ($page - 1) * $limit;
 
         $sql = $this->db->select()->from($this->prefix . 'moments')
@@ -122,20 +123,10 @@ class Enhancement_Memos_Action extends Typecho_Widget implements Widget_Interfac
             $tags = array();
             if ($tagsRaw !== '') {
                 $decodedTags = json_decode($tagsRaw, true);
-                if (is_array($decodedTags)) {
-                    foreach ($decodedTags as $tag) {
-                        $tag = trim((string)$tag);
-                        if ($tag !== '') {
-                            $tags[] = $tag;
-                        }
-                    }
-                } else {
-                    $parts = explode(',', $tagsRaw);
-                    foreach ($parts as $tag) {
-                        $tag = trim($tag);
-                        if ($tag !== '') {
-                            $tags[] = $tag;
-                        }
+                foreach (is_array($decodedTags) ? $decodedTags : explode(',', $tagsRaw) as $tag) {
+                    $tag = trim((string)$tag);
+                    if ($tag !== '') {
+                        $tags[] = $tag;
                     }
                 }
             }
@@ -150,7 +141,6 @@ class Enhancement_Memos_Action extends Typecho_Widget implements Widget_Interfac
             }
 
             $created = isset($row['created']) ? $row['created'] : 0;
-            $timestamp = 0;
             if (is_numeric($created)) {
                 $timestamp = intval($created);
             } else {
@@ -189,42 +179,23 @@ class Enhancement_Memos_Action extends Typecho_Widget implements Widget_Interfac
         $token = $this->configuredToken();
 
         if ($token === '') {
-            $this->response->setStatus(403)->throwJson(array(
-                'success' => false,
-                'message' => _t('未设置 API Token')
-            ));
+            $this->fail(403, _t('未设置 API Token'));
             return;
         }
 
         $incomingToken = $this->getBearerToken();
 
         if (empty($incomingToken)) {
-            $this->response->setStatus(403)->throwJson(array(
-                'success' => false,
-                'message' => _t('缺少 Authorization Token')
-            ));
+            $this->fail(403, _t('缺少 Authorization Token'));
             return;
         }
 
         if (!$this->validateToken($incomingToken)) {
-            $this->response->setStatus(403)->throwJson(array(
-                'success' => false,
-                'message' => _t('Token 无效')
-            ));
+            $this->fail(403, _t('Token 无效'));
             return;
         }
 
         $payload = $this->request->get('@json');
-        $content = '';
-        $tagsValue = null;
-        $mediaValue = null;
-        $createdValue = null;
-        $sourceValue = null;
-        $statusValue = null;
-        $latitudeValue = null;
-        $longitudeValue = null;
-        $locationAddressValue = null;
-
         if (is_array($payload)) {
             $content = $payload['content'] ?? '';
             $tagsValue = $payload['tags'] ?? null;
@@ -249,42 +220,12 @@ class Enhancement_Memos_Action extends Typecho_Widget implements Widget_Interfac
 
         $content = trim((string)$content);
         if ($content === '') {
-            $this->response->setStatus(400)->throwJson(array(
-                'success' => false,
-                'message' => _t('内容不能为空')
-            ));
+            $this->fail(400, _t('内容不能为空'));
             return;
         }
 
-        $tags = null;
-        if (is_array($tagsValue)) {
-            $tags = json_encode($tagsValue, JSON_UNESCAPED_UNICODE);
-        } else if ($tagsValue !== null) {
-            $tags = trim((string)$tagsValue);
-            if ($tags === '') {
-                $tags = null;
-            } else {
-                $decodedTags = json_decode($tags, true);
-                if (is_array($decodedTags)) {
-                    $tags = json_encode($decodedTags, JSON_UNESCAPED_UNICODE);
-                }
-            }
-        }
-
-        $media = null;
-        if (is_array($mediaValue)) {
-            $media = json_encode($mediaValue, JSON_UNESCAPED_UNICODE);
-        } else if ($mediaValue !== null) {
-            $media = trim((string)$mediaValue);
-            if ($media === '') {
-                $media = null;
-            } else {
-                $decodedMedia = json_decode($media, true);
-                if (is_array($decodedMedia)) {
-                    $media = json_encode($decodedMedia, JSON_UNESCAPED_UNICODE);
-                }
-            }
-        }
+        $tags = $this->encodeList($tagsValue);
+        $media = $this->encodeList($mediaValue);
         if ($media === null) {
             $cleanedContent = $content;
             $mediaItems = Enhancement_Plugin::extractMediaFromContent($content, $cleanedContent);
@@ -309,8 +250,7 @@ class Enhancement_Memos_Action extends Typecho_Widget implements Widget_Interfac
             }
         }
 
-        $sourceDefault = 'api';
-        $source = Enhancement_Plugin::normalizeMomentSource($sourceValue, $sourceDefault);
+        $source = Enhancement_Plugin::normalizeMomentSource($sourceValue, 'api');
         $status = Enhancement_Plugin::normalizeMomentStatus($statusValue, 'public');
         $latitude = Enhancement_Plugin::normalizeMomentLatitude($latitudeValue);
         $longitude = Enhancement_Plugin::normalizeMomentLongitude($longitudeValue);
@@ -335,10 +275,7 @@ class Enhancement_Memos_Action extends Typecho_Widget implements Widget_Interfac
         try {
             $mid = $this->db->query($this->db->insert($this->prefix . 'moments')->rows($moment));
         } catch (Exception $e) {
-            $this->response->setStatus(500)->throwJson(array(
-                'success' => false,
-                'message' => _t('数据库写入失败')
-            ));
+            $this->fail(500, _t('数据库写入失败'));
             return;
         }
 

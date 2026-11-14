@@ -62,15 +62,23 @@ class Enhancement_RestApi_Action extends Typecho_Widget implements Widget_Interf
         return [$page, $per, $offset];
     }
 
+    private function site_text($cfg, $key, $fallback)
+    {
+        return isset($cfg->{$key}) && trim((string)$cfg->{$key}) !== '' ? trim((string)$cfg->{$key}) : $fallback;
+    }
+
+    private function json_list($items, $count, $per)
+    {
+        header('X-WP-Total: ' . (int)$count);
+        header('X-WP-TotalPages: ' . (int)ceil($count / $per));
+        $this->json($items);
+    }
+
     public function root()
     {
         $cfg = Enhancement_Plugin::runtimeSettings();
-        $title = isset($cfg->rest_api_site_title) && trim((string)$cfg->rest_api_site_title) !== ''
-            ? trim((string)$cfg->rest_api_site_title)
-            : $this->options->title;
-        $description = isset($cfg->rest_api_site_description) && trim((string)$cfg->rest_api_site_description) !== ''
-            ? trim((string)$cfg->rest_api_site_description)
-            : $this->options->description;
+        $title = $this->site_text($cfg, 'rest_api_site_title', $this->options->title);
+        $description = $this->site_text($cfg, 'rest_api_site_description', $this->options->description);
 
         $base = rtrim($this->options->siteUrl, '/');
         $this->json([
@@ -123,12 +131,8 @@ class Enhancement_RestApi_Action extends Typecho_Widget implements Widget_Interf
     public function settings()
     {
         $cfg = Enhancement_Plugin::runtimeSettings();
-        $title = isset($cfg->rest_api_site_title) && trim((string)$cfg->rest_api_site_title) !== ''
-            ? trim((string)$cfg->rest_api_site_title)
-            : $this->options->title;
-        $description = isset($cfg->rest_api_site_description) && trim((string)$cfg->rest_api_site_description) !== ''
-            ? trim((string)$cfg->rest_api_site_description)
-            : $this->options->description;
+        $title = $this->site_text($cfg, 'rest_api_site_title', $this->options->title);
+        $description = $this->site_text($cfg, 'rest_api_site_description', $this->options->description);
         $headHtml = isset($cfg->rest_api_head_html) ? (string)$cfg->rest_api_head_html : '';
         $footerText = isset($cfg->rest_api_site_footer_text) ? (string)$cfg->rest_api_site_footer_text : '';
         $icp = isset($cfg->rest_api_site_icp) ? (string)$cfg->rest_api_site_icp : '';
@@ -202,10 +206,7 @@ class Enhancement_RestApi_Action extends Typecho_Widget implements Widget_Interf
                 ];
             }
 
-            header('X-WP-Total: ' . (int)$count);
-            header('X-WP-TotalPages: ' . (int)ceil($count / $per));
-            header('Access-Control-Expose-Headers: X-WP-Total, X-WP-TotalPages');
-            $this->json($items);
+            $this->json_list($items, $count, $per);
         } catch (Exception $e) {
             // Table missing or other issue → return empty array per requirement
             header('X-WP-Total: 0');
@@ -229,12 +230,11 @@ class Enhancement_RestApi_Action extends Typecho_Widget implements Widget_Interf
 
     public function comments()
     {
-        if ($this->request->isPost()) {
-            return $this->create_comment();
-        }
-
-        list($page, $per, $offset) = $this->get_pagination();
         try {
+            if ($this->request->isPost()) {
+                return $this->create_comment();
+            }
+            list($page, $per, $offset) = $this->get_pagination();
             $select = Enhancement_RestApi_CommentHelper::query($this->request);
             $orderby = strtolower(trim((string)$this->request->get('orderby', 'date')));
             $order = strtolower(trim((string)$this->request->get('order', 'desc')));
@@ -246,9 +246,7 @@ class Enhancement_RestApi_Action extends Typecho_Widget implements Widget_Interf
             foreach ($rows as $row) {
                 $items[] = Enhancement_RestApi_CommentHelper::format($row);
             }
-            header('X-WP-Total: ' . (int)$count);
-            header('X-WP-TotalPages: ' . (int)ceil($count / $per));
-            $this->json($items);
+            $this->json_list($items, $count, $per);
         } catch (Typecho_Widget_Exception $e) {
             $this->json(['code' => 'rest_comment_invalid', 'message' => $e->getMessage()],
                 in_array((int)$e->getCode(), [400, 401, 403, 404, 429, 503], true) ? (int)$e->getCode() : 400);
@@ -265,21 +263,14 @@ class Enhancement_RestApi_Action extends Typecho_Widget implements Widget_Interf
                 $this->json(['code' => 'rest_invalid_json', 'message' => 'Invalid JSON body.'], 400);
             }
         }
-        try {
-            $row = Enhancement_RestApi_CommentHelper::create($this->request, $payload);
-            $this->json(Enhancement_RestApi_CommentHelper::format($row), 201);
-        } catch (Typecho_Widget_Exception $e) {
-            $this->json(['code' => 'rest_comment_invalid', 'message' => $e->getMessage()],
-                in_array((int)$e->getCode(), [400, 401, 403, 404, 429, 503], true) ? (int)$e->getCode() : 400);
-        }
+        $row = Enhancement_RestApi_CommentHelper::create($this->request, $payload);
+        $this->json(Enhancement_RestApi_CommentHelper::format($row), 201);
     }
 
     public function users()
     {
         list($page, $per, $offset) = $this->get_pagination();
-        $select = $this->db->select()->from('table.users')
-            ->order('uid', Typecho_Db::SORT_ASC)
-            ->limit($per)->offset($offset);
+        $select = $this->db->select()->from('table.users');
 
         $search = trim((string)$this->request->get('search', ''));
         if ($search !== '') {
@@ -287,36 +278,16 @@ class Enhancement_RestApi_Action extends Typecho_Widget implements Widget_Interf
             $select->where('(name LIKE ? OR screenName LIKE ?)', $kw, $kw);
         }
 
-        $rows = $this->db->fetchAll($select);
-        $countSelect = $this->db->select(['COUNT(1)' => 'cnt'])->from('table.users');
-        if ($search !== '') {
-            $kw = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $search) . '%';
-            $countSelect->where('(name LIKE ? OR screenName LIKE ?)', $kw, $kw);
-        }
-        $count = $this->db->fetchObject($countSelect)->cnt;
+        $countSelect = clone $select;
+        $count = $this->db->fetchObject($countSelect->select(['COUNT(1)' => 'cnt']))->cnt;
+        $rows = $this->db->fetchAll($select->order('uid', Typecho_Db::SORT_ASC)->limit($per)->offset($offset));
 
         $items = [];
         foreach ($rows as $u) {
-            $items[] = [
-                'id' => (int)$u['uid'],
-                'name' => $u['screenName'],
-                'slug' => $u['name'],
-                'url' => $u['url'],
-                'description' => '',
-                'link' => $u['url'],
-                'avatar_urls' => [
-                    '24' => $this->gravatar($u['mail'], 24),
-                    '48' => $this->gravatar($u['mail'], 48),
-                    '96' => $this->gravatar($u['mail'], 96),
-                ],
-                'meta' => (object)[],
-            ];
+            $items[] = $this->build_user_row($u, '');
         }
 
-        header('X-WP-Total: ' . (int)$count);
-        header('X-WP-TotalPages: ' . (int)ceil($count / $per));
-        header('Access-Control-Expose-Headers: X-WP-Total, X-WP-TotalPages');
-        $this->json($items);
+        $this->json_list($items, $count, $per);
     }
 
     private function gravatar($mail, $size)
@@ -332,12 +303,17 @@ class Enhancement_RestApi_Action extends Typecho_Widget implements Widget_Interf
         if (!$u) {
             $this->json(['code' => 'not_found', 'message' => 'User not found'], 404);
         }
-        $this->json([
+        $this->json($this->build_user_row($u, isset($u['screenName']) ? $u['screenName'] : ''));
+    }
+
+    private function build_user_row($u, $description)
+    {
+        return [
             'id' => (int)$u['uid'],
             'name' => $u['screenName'],
             'slug' => $u['name'],
             'url' => $u['url'],
-            'description' => isset($u['screenName']) ? $u['screenName'] : '',
+            'description' => $description,
             'link' => $u['url'],
             'avatar_urls' => [
                 '24' => $this->gravatar($u['mail'], 24),
@@ -345,7 +321,7 @@ class Enhancement_RestApi_Action extends Typecho_Widget implements Widget_Interf
                 '96' => $this->gravatar($u['mail'], 96),
             ],
             'meta' => (object)[],
-        ]);
+        ];
     }
 
     private function content_permalink($row)
@@ -529,14 +505,13 @@ class Enhancement_RestApi_Action extends Typecho_Widget implements Widget_Interf
                 $parts[] = "(table.metas.type = 'tag' AND table.metas.slug = ?)";
                 $binds[] = $tagSlug;
             }
-            if (!empty($parts)) {
-                $expr = '(' . implode(' OR ', $parts) . ')';
-                if (!empty($binds)) {
-                    $select->where($expr, ...$binds);
-                } else {
-                    $select->where($expr);
-                }
-            }
+            $select->where('(' . implode(' OR ', $parts) . ')', ...$binds);
+        }
+
+        // total count (respect filters, avoid duplicates via DISTINCT)
+        $countSelect = clone $select;
+        $count = $this->db->fetchObject($countSelect->select(['COUNT(DISTINCT table.contents.cid)' => 'cnt']))->cnt;
+        if ($needsTermJoin) {
             $select->group('table.contents.cid');
         }
 
@@ -554,67 +529,12 @@ class Enhancement_RestApi_Action extends Typecho_Widget implements Widget_Interf
         $select->limit($per)->offset($offset);
 
         $rows = $this->db->fetchAll($select);
-        // total count (respect filters, avoid duplicates via DISTINCT)
-        $countSelect = $this->db->select(['COUNT(DISTINCT table.contents.cid)' => 'cnt'])->from('table.contents')
-            ->where('table.contents.type = ?', $type)
-            ->where('table.contents.status = ?', 'publish')
-            ->where('(table.contents.password IS NULL OR table.contents.password = ?)', '')
-            ->where('table.contents.created <= ?', time());
-        if ($search !== '') {
-            $kw = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $search) . '%';
-            $countSelect->where("(title LIKE ? OR text LIKE ?)", $kw, $kw);
-        }
-        if ($slug !== '') {
-            $countSelect->where('table.contents.slug = ?', $slug);
-        }
-        if ($authorId > 0) {
-            $countSelect->where('table.contents.authorId = ?', $authorId);
-        }
-        if (!empty($includeIds)) {
-            $countSelect->where('table.contents.cid IN (' . implode(',', array_map('intval', $includeIds)) . ')');
-        }
-        if (!empty($excludeIds)) {
-            $countSelect->where('NOT(table.contents.cid IN (' . implode(',', array_map('intval', $excludeIds)) . '))');
-        }
-        if ($needsTermJoin) {
-            $countSelect->join('table.relationships', 'table.relationships.cid = table.contents.cid')
-                ->join('table.metas', 'table.metas.mid = table.relationships.mid');
-            $parts = [];
-            $binds = [];
-            if (!empty($catIds)) {
-                $in = implode(',', array_map('intval', $catIds));
-                $parts[] = "(table.metas.type = 'category' AND table.metas.mid IN ($in))";
-            }
-            if (!empty($tagIds)) {
-                $in = implode(',', array_map('intval', $tagIds));
-                $parts[] = "(table.metas.type = 'tag' AND table.metas.mid IN ($in))";
-            }
-            if ($tagSlug !== '') {
-                $parts[] = "(table.metas.type = 'tag' AND table.metas.slug = ?)";
-                $binds[] = $tagSlug;
-            }
-            if (!empty($parts)) {
-                $expr = '(' . implode(' OR ', $parts) . ')';
-                if (!empty($binds)) {
-                    $countSelect->where($expr, ...$binds);
-                } else {
-                    $countSelect->where($expr);
-                }
-            }
-        }
-        $count = $this->db->fetchObject($countSelect)->cnt;
-
         $items = [];
         foreach ($rows as $row) {
             $items[] = $this->build_post_row($row);
         }
 
-        // WP style headers
-        header('X-WP-Total: ' . (int)$count);
-        header('X-WP-TotalPages: ' . (int)ceil($count / $per));
-        header('Access-Control-Expose-Headers: X-WP-Total, X-WP-TotalPages');
-
-        $this->json($items);
+        $this->json_list($items, $count, $per);
     }
 
     private function get_content_item($cid, $type)
@@ -632,31 +552,20 @@ class Enhancement_RestApi_Action extends Typecho_Widget implements Widget_Interf
     public function pages() { $this->list_contents('page'); }
     public function page() { $this->get_content_item((int)$this->request->get('cid'), 'page'); }
 
-    public function post_by_slug()
+    private function get_content_by_slug($type)
     {
-        $slug = $this->request->get('slug');
         $row = $this->db->fetchRow($this->db->select()->from('table.contents')
-            ->where('type = ?', 'post')
-            ->where('slug = ?', $slug)
+            ->where('type = ?', $type)
+            ->where('slug = ?', $this->request->get('slug'))
             ->limit(1));
-        if (!$this->public_content($row, 'post')) {
+        if (!$this->public_content($row, $type)) {
             $this->json(['code' => 'not_found', 'message' => 'Not found'], 404);
         }
         $this->json($this->build_post_row($row));
     }
 
-    public function page_by_slug()
-    {
-        $slug = $this->request->get('slug');
-        $row = $this->db->fetchRow($this->db->select()->from('table.contents')
-            ->where('type = ?', 'page')
-            ->where('slug = ?', $slug)
-            ->limit(1));
-        if (!$this->public_content($row, 'page')) {
-            $this->json(['code' => 'not_found', 'message' => 'Not found'], 404);
-        }
-        $this->json($this->build_post_row($row));
-    }
+    public function post_by_slug() { $this->get_content_by_slug('post'); }
+    public function page_by_slug() { $this->get_content_by_slug('page'); }
 
     public function posts_by_tag()
     {
@@ -670,33 +579,19 @@ class Enhancement_RestApi_Action extends Typecho_Widget implements Widget_Interf
             ->join('table.relationships', 'table.relationships.cid = table.contents.cid')
             ->join('table.metas', 'table.metas.mid = table.relationships.mid')
             ->where('table.metas.type = ?', 'tag')
-            ->where('table.metas.slug = ?', $slug)
-            ->order('table.contents.created', Typecho_Db::SORT_DESC)
-            ->limit($per)->offset($offset);
+            ->where('table.metas.slug = ?', $slug);
 
-        $rows = $this->db->fetchAll($select);
-
-        $count = $this->db->fetchObject(
-            $this->db->select(['COUNT(1)' => 'cnt'])->from('table.contents')
-                ->where('table.contents.type = ?', 'post')
-                ->where('table.contents.status = ?', 'publish')
-                ->where('(table.contents.password IS NULL OR table.contents.password = ?)', '')
-                ->where('table.contents.created <= ?', time())
-                ->join('table.relationships', 'table.relationships.cid = table.contents.cid')
-                ->join('table.metas', 'table.metas.mid = table.relationships.mid')
-                ->where('table.metas.type = ?', 'tag')
-                ->where('table.metas.slug = ?', $slug)
-        )->cnt;
+        $countSelect = clone $select;
+        $count = $this->db->fetchObject($countSelect->select(['COUNT(1)' => 'cnt']))->cnt;
+        $rows = $this->db->fetchAll($select->order('table.contents.created', Typecho_Db::SORT_DESC)
+            ->limit($per)->offset($offset));
 
         $items = [];
         foreach ($rows as $row) {
             $items[] = $this->build_post_row($row);
         }
 
-        header('X-WP-Total: ' . (int)$count);
-        header('X-WP-TotalPages: ' . (int)ceil($count / $per));
-        header('Access-Control-Expose-Headers: X-WP-Total, X-WP-TotalPages');
-        $this->json($items);
+        $this->json_list($items, $count, $per);
     }
 
     private function build_term_row($row, $taxonomy)
@@ -763,8 +658,14 @@ class Enhancement_RestApi_Action extends Typecho_Widget implements Widget_Interf
         $postId = (int)$this->request->get('post', 0);
         if ($postId > 0) {
             $select->join('table.relationships', 'table.relationships.mid = table.metas.mid')
-                   ->where('table.relationships.cid = ?', $postId)
-                   ->group('table.metas.mid');
+                   ->where('table.relationships.cid = ?', $postId);
+        }
+
+        // count with same filters
+        $countSelect = clone $select;
+        $count = $this->db->fetchObject($countSelect->select(['COUNT(DISTINCT table.metas.mid)' => 'cnt']))->cnt;
+        if ($postId > 0) {
+            $select->group('table.metas.mid');
         }
 
         // orderby/order
@@ -772,23 +673,12 @@ class Enhancement_RestApi_Action extends Typecho_Widget implements Widget_Interf
         $order = strtolower(trim((string)$this->request->get('order', 'asc')));
         $orderDir = ($order === 'desc') ? Typecho_Db::SORT_DESC : Typecho_Db::SORT_ASC;
 
-        if ($orderby === 'id') {
-            $select->order('table.metas.mid', $orderDir);
-        } else if ($orderby === 'slug') {
-            $select->order('table.metas.slug', $orderDir);
-        } else if ($orderby === 'count') {
-            $select->order('table.metas.count', $orderDir);
-        } else if ($orderby === 'description') {
-            $select->order('table.metas.description', $orderDir);
-        } else if ($orderby === 'include' && !empty($includeIds)) {
-            // We'll sort in PHP after fetch to respect include order
-        } else {
-            $select->order('table.metas.name', $orderDir);
-        }
-
+        // The include order is applied in PHP after fetching.
         $sortByInclude = $orderby === 'include' && !empty($includeIds);
         if (!$sortByInclude) {
-            $select->limit($per)->offset($offset);
+            $orderCols = ['id' => 'mid', 'slug' => 'slug', 'count' => 'count', 'description' => 'description'];
+            $select->order('table.metas.' . (isset($orderCols[$orderby]) ? $orderCols[$orderby] : 'name'), $orderDir)
+                ->limit($per)->offset($offset);
         }
         $rows = $this->db->fetchAll($select);
 
@@ -803,42 +693,12 @@ class Enhancement_RestApi_Action extends Typecho_Widget implements Widget_Interf
             $rows = array_slice($rows, $offset, $per);
         }
 
-        // count with same filters
-        $countSelect = $this->db->select(['COUNT(DISTINCT table.metas.mid)' => 'cnt'])->from('table.metas')
-            ->where('table.metas.type = ?', $taxonomy);
-        if ($search !== '') {
-            $kw = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $search) . '%';
-            $countSelect->where('(table.metas.name LIKE ? OR table.metas.slug LIKE ? OR table.metas.description LIKE ?)', $kw, $kw, $kw);
-        }
-        if (!empty($includeIds)) {
-            $in = implode(',', array_map('intval', $includeIds));
-            $countSelect->where("table.metas.mid IN ($in)");
-        }
-        if (!empty($excludeIds)) {
-            $in = implode(',', array_map('intval', $excludeIds));
-            $countSelect->where("NOT(table.metas.mid IN ($in))");
-        }
-        if (!empty($slugs)) {
-            $ph = implode(',', array_fill(0, count($slugs), '?'));
-            $countSelect->where('table.metas.slug IN (' . $ph . ')', ...$slugs);
-        }
-        if ($hideEmpty === '1' || $hideEmpty === 'true' || $hideEmpty === 1) {
-            $countSelect->where('table.metas.count > 0');
-        }
-        if ($postId > 0) {
-            $countSelect->join('table.relationships', 'table.relationships.mid = table.metas.mid')
-                        ->where('table.relationships.cid = ?', $postId);
-        }
-        $count = $this->db->fetchObject($countSelect)->cnt;
-
         $items = [];
         foreach ($rows as $row) {
             $items[] = $this->build_term_row($row, $taxonomy === 'category' ? 'category' : 'tag');
         }
 
-        header('X-WP-Total: ' . (int)$count);
-        header('X-WP-TotalPages: ' . (int)ceil($count / $per));
-        $this->json($items);
+        $this->json_list($items, $count, $per);
     }
 
     private function get_term_item($mid, $taxonomy)
